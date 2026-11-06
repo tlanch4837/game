@@ -1,0 +1,46 @@
+<!DOCTYPE html><html><head><meta charset=utf-8><title>CS2 trees</title>
+<style>body{margin:0;overflow:hidden}#ui{position:fixed;top:8px;left:10px;font:13px sans-serif;background:#fffc;padding:6px 8px;border-radius:6px}
+#ui select,#ui button{font:inherit}</style></head><body>
+<div id=ui><select id=sel></select> <button id=lod>LOD0 (close-up)</button> <span id=info></span></div>
+<script type=importmap>{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type=module>
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const D=__DATA__;
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);r.shadowMap.enabled=true;
+r.shadowMap.type=THREE.PCFSoftShadowMap;r.outputColorSpace=THREE.SRGBColorSpace;document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0xbcd6e8);s.fog=new THREE.Fog(0xbcd6e8,250,600);
+const c=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,600);
+const o=new OrbitControls(c,r.domElement);
+s.add(new THREE.HemisphereLight(0xe6f2ff,0x4a4030,1.2));
+const L=new THREE.DirectionalLight(0xfff0d0,2.6);L.position.set(60,100,40);L.castShadow=true;L.shadow.mapSize.set(4096,4096);
+Object.assign(L.shadow.camera,{left:-110,right:110,top:110,bottom:-110,far:300});s.add(L);
+const gr=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:0x6f8f4a,roughness:1}));
+gr.rotation.x=-Math.PI/2;gr.receiveShadow=true;s.add(gr);
+const tl=new THREE.TextureLoader(), names=Object.keys(D), groups={LOD0:new THREE.Group(),LOD1:new THREE.Group()}, pos={};
+s.add(groups.LOD0,groups.LOD1);
+names.forEach((n,i)=>{
+  const tex=tl.load(`cs2/${n}/${n}_BaseColor.png`);tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=8;
+  const mat=new THREE.MeshStandardMaterial({map:tex,alphaTest:.5,side:THREE.DoubleSide,roughness:.85});
+  const x=(i%5-2)*32, z=(Math.floor(i/5)-1)*32; pos[n]=[x,z];
+  for(const lod of ['LOD0','LOD1']){
+    const m=D[n][lod],p=[],uv=[],nn=[];
+    for(const tri of m.f) for(const [a,b,cc] of tri){p.push(...m.v[a-1]);uv.push(...m.t[b-1]);nn.push(...m.n[cc-1]);}
+    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+    g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setAttribute('normal',new THREE.Float32BufferAttribute(nn,3));
+    const me=new THREE.Mesh(g,mat);me.position.set(x,0,z);me.castShadow=me.receiveShadow=true;me.userData.tris=m.f.length;me.name=n;groups[lod].add(me);}
+  const op=document.createElement('option');op.textContent=n;sel.appendChild(op);});
+const all=document.createElement('option');all.textContent='— all 15 —';sel.prepend(all);sel.value=all.textContent;
+let lod='LOD0';groups.LOD1.visible=false;
+function focus(){const n=sel.value;
+  if(!D[n]){c.position.set(0,70,140);o.target.set(0,8,0);info.textContent='';}
+  else{const [x,z]=pos[n];c.position.set(x+18,9,z+22);o.target.set(x,8,z);
+       info.textContent=`${n}: ${D[n][lod].f.length} triangles`;}
+  o.update();}
+sel.onchange=focus;
+document.getElementById('lod').onclick=()=>{lod=lod==='LOD0'?'LOD1':'LOD0';groups.LOD0.visible=lod==='LOD0';groups.LOD1.visible=lod==='LOD1';
+  document.getElementById('lod').textContent=lod==='LOD0'?'LOD0 (close-up)':'LOD1 (far)';focus();};
+focus();
+addEventListener('resize',()=>{c.aspect=innerWidth/innerHeight;c.updateProjectionMatrix();r.setSize(innerWidth,innerHeight)});
+(function a(){requestAnimationFrame(a);o.update();r.render(s,c)})();
+</script></body></html>

@@ -1,0 +1,13 @@
+# build output
+bin/
+obj/
+*.pdb
+*.dmp
+*.log
+*.log.old
+# big / downloaded files (too large for GitHub)
+assets/
+makehuman.zip
+*.whl
+# local Claude settings
+.claude/settings.local.json

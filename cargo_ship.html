@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Cargo Ship</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#9fc4dd}#i{position:fixed;left:10px;top:8px;font:13px sans-serif;color:#123}</style>
+</head><body><div id="i">Low-poly container ship + port · drag to orbit, scroll to zoom</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(devicePixelRatio);R.setSize(innerWidth,innerHeight);
+R.shadowMap.enabled=true;document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x9fc4dd);S.fog=new THREE.Fog(0x9fc4dd,420,1100);
+const C=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.5,2000);
+S.add(new THREE.HemisphereLight(0xdfefff,0x335566,0.7));
+const sun=new THREE.DirectionalLight(0xfff2dd,0.9);sun.position.set(80,120,60);sun.castShadow=true;
+sun.shadow.mapSize.set(4096,4096);Object.assign(sun.shadow.camera,{left:-200,right:200,top:200,bottom:-200,far:500});S.add(sun);
+const M={};const mat=(c)=>M[c]||(M[c]=new THREE.MeshStandardMaterial({color:c,flatShading:true,roughness:.8,metalness:.1}));
+const ship=new THREE.Group();S.add(ship);
+function box(w,h,d,c,x,y,z,p=ship){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;p.add(m);return m}
+function cyl(rt,rb,h,c,x,y,z,seg=6,p=ship){const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg),mat(c));m.position.set(x,y,z);m.castShadow=true;p.add(m);return m}
+
+// canvas texture helper (detail lives in textures, not polygons)
+function ctx2(w,h,f,rx=1){const cv=document.createElement('canvas');cv.width=w;cv.height=h;const x=cv.getContext('2d');f(x,w,h);
+  const t=new THREE.CanvasTexture(cv);t.wrapS=THREE.RepeatWrapping;t.repeat.x=rx;t.anisotropy=4;return t;}
+const tmat=(t,o={})=>new THREE.MeshStandardMaterial(Object.assign({map:t,flatShading:true,roughness:.8},o));
+// ---- HULL: lofted cross-sections (x along length) ----
+const L=140,B=11; // half beam
+function halfWidth(t){ // t 0=stern,1=bow
+  if(t<0.08) return B*(0.75+t/0.08*0.25);
+  if(t<0.72) return B;
+  const u=(t-0.72)/0.28; return B*Math.max(0.02,Math.cos(u*Math.PI/2)**0.9);
+}
+const N=24,prof=[[0,-9],[0.55,-9],[0.9,-7.5],[1,-4],[1.04,0],[1.08,6]]; // (width factor, y)
+const pos=[],idx=[];
+for(let i=0;i<=N;i++){const t=i/N,x=-L/2+t*L,hw=halfWidth(t);
+  const bowRise=t>0.85?(t-0.85)*12:0, keel=t>0.9?(t-0.9)*40:0; // keel rises at bow
+  for(let s=-1;s<=1;s+=2)for(const [f,y] of prof){
+    let yy=y;if(y<-5)yy=Math.min(y+keel,-3);if(y>5)yy+=bowRise;
+    pos.push(x+(t>0.93&&y<-5?(t-0.93)*-20:0),yy,s*hw*f*(y<-5&&t<0.06?0.6:1));}
+}
+const P=prof.length;
+for(let i=0;i<N;i++)for(let s=0;s<2;s++)for(let k=0;k<P-1;k++){
+  const a=(i*2+s)*P+k,b=((i+1)*2+s)*P+k;
+  if(s)idx.push(a,b,a+1,b,b+1,a+1);else idx.push(a,a+1,b,b,a+1,b+1);}
+for(let i=0;i<N;i++){const a=i*2*P,b=(i+1)*2*P;idx.push(a,b,a+P,b,b+P,a+P);} // keel
+idx.push(0,P,P-1,P,2*P-1,P-1); // transom
+let hg=new THREE.BufferGeometry();hg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));hg.setIndex(idx);
+hg=hg.toNonIndexed();hg.computeVertexNormals();
+// colors: red antifouling below waterline, dark blue topsides, white boot stripe
+const col=[],pa=hg.attributes.position;
+for(let i=0;i<pa.count;i+=3){let y=(pa.getY(i)+pa.getY(i+1)+pa.getY(i+2))/3;
+  const c=new THREE.Color(y<-4.2?0x9a2a22:y<-3?0xeeeeee:0x1d3557);for(let j=0;j<3;j++)col.push(c.r,c.g,c.b);}
+hg.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+const hull=new THREE.Mesh(hg,new THREE.MeshStandardMaterial({vertexColors:true,flatShading:true,side:THREE.DoubleSide,roughness:.7}));
+hull.castShadow=hull.receiveShadow=true;ship.add(hull);
+// bulbous bow
+const bulb=new THREE.Mesh(new THREE.SphereGeometry(2.2,6,4),mat(0x9a2a22));bulb.scale.set(3,1,1);bulb.position.set(L/2-2,-7,0);ship.add(bulb);
+// deck
+{const DL=102.2,deckT=ctx2(1024,192,(x,w,h)=>{x.fillStyle='#5b6b5a';x.fillRect(0,0,w,h);
+  const px=v=>(v+11.1+DL/2)/DL*w;
+  for(let b=0;b<12;b+=2){const x0=px(-34+b*6.25+3.12-6.2),x1=px(-34+b*6.25+3.12+6.2);x.fillStyle='#4a5a49';x.fillRect(x0,14,x1-x0,h-28);
+    x.strokeStyle='#38463a';x.lineWidth=2;for(let k=1;k<4;k++){x.beginPath();x.moveTo(x0,14+k*(h-28)/4);x.lineTo(x1,14+k*(h-28)/4);x.stroke();}x.strokeRect(x0,14,x1-x0,h-28);}
+  x.fillStyle='#222';for(const v of[L/2-24,L/2-23])for(const yy of[8,h-14])x.beginPath(),x.arc(px(v),yy,5,0,7),x.fill();});
+ const d=new THREE.Mesh(new THREE.BoxGeometry(DL,0.4,B*2-0.6),[mat(0x5b6b5a),mat(0x5b6b5a),tmat(deckT),mat(0x5b6b5a),mat(0x5b6b5a),mat(0x5b6b5a)]);
+ d.position.set(-11.1,5.8,0);d.receiveShadow=true;ship.add(d);}
+
+// forecastle
+{// raised forecastle following the hull outline (tapers to the stem)
+ const x0=L/2-30,pts=[];for(let i=0;i<=12;i++){const x=x0+(L/2-x0)*i/12;pts.push([x,halfWidth((x+L/2)/L)*1.03]);}
+ const sh=new THREE.Shape();sh.moveTo(pts[0][0],-pts[0][1]);pts.forEach(([x,w])=>sh.lineTo(x,-w));for(let i=pts.length-1;i>=0;i--)sh.lineTo(pts[i][0],pts[i][1]);
+ const fg=new THREE.ExtrudeGeometry(sh,{depth:3.6,bevelEnabled:false,curveSegments:1});fg.rotateX(-Math.PI/2);
+ const fc=new THREE.Mesh(fg,[mat(0x5b6b5a),mat(0x1d3557)]);fc.position.y=5.8;fc.castShadow=fc.receiveShadow=true;ship.add(fc);
+ box(.3,1.2,B*2-1,0x1d3557,x0-0.15,10,0); // breakwater-style front wall lip
+}
+const railM=new THREE.MeshStandardMaterial({map:ctx2(64,32,(x,w,h)=>{x.clearRect(0,0,w,h);x.fillStyle='#ddd';x.fillRect(0,0,w,4);x.fillRect(0,h/2-1,w,2);x.fillRect(0,0,4,h);},60),transparent:true,alphaTest:.5,side:THREE.DoubleSide});
+// bulwark + railing along sides
+for(let s=-1;s<=1;s+=2){box(L*0.8,1.2,0.25,0x1d3557,-6,6.6,s*(B-0.1));
+  const r=new THREE.Mesh(new THREE.PlaneGeometry(L*0.78,1.4),railM);r.position.set(-6,7.9,s*(B-0.2));ship.add(r);}
+
+// ---- CONTAINERS ----
+const pal=[0xc0392b,0x2e86c1,0x27ae60,0xf39c12,0x8e44ad,0x7f8c8d,0xd35400,0x16a085,0xecf0f1,0x34495e,0xb7950b];
+const cont=new THREE.Group();ship.add(cont);
+// container textures: one atlas (door | side | top), tinted by vertex colour -> whole cargo load is 1 draw call
+const ATL=(()=>{const cv=document.createElement('canvas');cv.width=384;cv.height=64;const x=cv.getContext('2d');
+  const tile=(i,f)=>{x.save();x.translate(i*128,0);x.fillStyle='#fff';x.fillRect(0,0,128,64);f(x);x.strokeStyle='#777';x.lineWidth=3;x.strokeRect(1,1,126,62);x.restore();};
+  tile(0,x=>{x.fillStyle='#c4c4c4';for(let i=6;i<128;i+=10)x.fillRect(i,3,4,58);x.fillStyle='#555';x.fillRect(63,2,2,60);for(const lx of[44,54,74,84])x.fillRect(lx,4,3,56);});
+  tile(1,x=>{for(let i=4;i<128;i+=8){x.fillStyle='#b8b8b8';x.fillRect(i,3,4,58);}});
+  tile(2,x=>{x.fillStyle='#ccc';for(let i=10;i<128;i+=16)x.fillRect(i,2,2,60);});
+  const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;})();
+const CARGO_MAT=new THREE.MeshStandardMaterial({map:ATL,vertexColors:true,flatShading:true,roughness:.8});
+const boxes=[]; // container records only; geometry is baked below
+function container(x,y,z,c,cell){boxes.push({x,y,z,c,cell,k:y*100+rnd()});}
+let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+for(let bay=0;bay<12;bay++){const x=-34+bay*6.25;if(bay==6)continue;
+  const tiers=2+Math.floor(rnd()*4);
+  for(let row=-3;row<=3;row++){const h=Math.max(1,tiers-(Math.abs(row)==3?1:0)-Math.floor(rnd()*1.6));
+    for(let t=0;t<h;t++)container(x,7.3+t*2.52,row*2.44,pal[Math.floor(rnd()*pal.length)],[bay,row,t]);}
+  // lashing bridge
+  box(0.2,3,B*2-1,0xf1c40f,x+3.12,7.5,0);}
+// hatch coamings
+
+
+// ---- CRANES (gantry-style ship cranes) ----
+function crane(x,s){const g=new THREE.Group();g.position.set(x,6,s*0);ship.add(g);
+  cyl(1.1,1.3,10,0xf1c40f,0,5,s*(B-2),8,g);box(3,2.6,3,0xf1c40f,0,11,s*(B-2),g);
+  box(1.6,1.2,1.4,0x2c3e50,.4,11.8,s*(B-2),g);
+  const jib=box(1,1,22,0xf1c40f,0,13,s*(B-2)-s*10,g);jib.rotation.x=s*0.35;
+  cyl(.05,.05,10,0x222222,0,8,s*(B-2)-s*20,3,g);box(1.2,.6,1.2,0x222222,0,3,s*(B-2)-s*20,g);}
+crane(-1,1);crane(29,-1);
+
+// ---- SUPERSTRUCTURE (aft) ----
+const sx=-52;
+function supT(win,stairs){return ctx2(256,256,(x,w,h)=>{x.fillStyle='#f4f4f0';x.fillRect(0,0,w,h);const rh=h/6;
+  for(let d=0;d<6;d++){const y=d*rh;x.fillStyle='#c8c8c0';x.fillRect(0,y,w,4);x.fillStyle='#1b2838';
+    for(let k=0;k<win;k++)x.fillRect(8+k*(w-16)/win,y+rh*.35,(w-16)/win-6,rh*.35);
+    if(stairs&&d<5){x.strokeStyle='#888';x.lineWidth=3;x.beginPath();x.moveTo(6,y+rh);x.lineTo(30,y+4);x.stroke();}}});}
+{const sf=supT(12,0),ss=supT(6,1),top=mat(0xc8c8c0);
+ const blk=new THREE.Mesh(new THREE.BoxGeometry(11,16.2,B*2),[tmat(sf),tmat(sf),top,top,tmat(ss),tmat(ss)]);blk.position.set(sx,14.1,0);blk.castShadow=blk.receiveShadow=true;ship.add(blk);
+ const bT=ctx2(256,32,(x,w,h)=>{x.fillStyle='#f4f4f0';x.fillRect(0,0,w,h);x.fillStyle='#c8c8c0';x.fillRect(0,0,w,3);x.fillStyle='#14202e';x.fillRect(4,9,w-8,15);x.fillStyle='#2a3a4e';for(let k=0;k<w;k+=16)x.fillRect(k,9,1,15);});
+ const brg=new THREE.Mesh(new THREE.BoxGeometry(9,2.8,B*2+6),[tmat(bT),tmat(bT),top,top,tmat(bT),tmat(bT)]);brg.position.set(sx+1,24.6,0);brg.castShadow=true;ship.add(brg);}
+// mast + radar + antennas
+cyl(.25,.3,7,0xeeeeee,sx-1,29.6,0,6);box(.3,.3,5,0xeeeeee,sx-1,31.5,0);
+const radar=box(4,.25,.5,0x222222,sx+2,27.8,-3);const radar2=box(3,.25,.4,0x222222,sx+2,27.8,3);
+cyl(.4,.4,.8,0xdddddd,sx+2,27,-3,6);cyl(.4,.4,.8,0xdddddd,sx+2,27,3,6);
+for(const z of[-2,0,2])cyl(.04,.04,3,0x999999,sx-3,28.7,z,3);
+const dome=new THREE.Mesh(new THREE.SphereGeometry(.7,6,4),mat(0xffffff));dome.position.set(sx-2,27.2,-4);ship.add(dome);
+// funnel
+const fun=box(5,7,5.5,0x1d3557,sx-8,22,0);fun.rotation.z=0.12;
+box(5.1,1.2,5.6,0xc0392b,sx-8.4,24,0).rotation.z=.12;box(5.1,.8,5.6,0x111111,sx-8.8,25.7,0).rotation.z=.12;
+cyl(.6,.6,2,0x222222,sx-9.2,26.5,1.2,6);cyl(.6,.6,2,0x222222,sx-9.2,26.5,-1.2,6);
+// lifeboats (enclosed, orange) on davits
+for(let s=-1;s<=1;s+=2){const lb=new THREE.Mesh(new THREE.SphereGeometry(1.2,5,3),mat(0xff7a1a));
+  lb.scale.set(2.2,1,1);lb.position.set(sx-2,15.5,s*(B+1.2));ship.add(lb);
+  box(5,.6,2,0xffffff,sx-2,16.3,s*(B+1.2));
+  box(.3,3,.3,0xdddddd,sx-4.5,15,s*(B+.4));box(.3,3,.3,0xdddddd,sx+.5,15,s*(B+.4));
+  // liferaft canisters
+  box(2.6,1,1,0xffffff,sx+4.2,13.3,s*(B+.2));
+  // exterior stairs
+}
+// stern deck: mooring winches, bollards, ensign
+box(10,.4,B*2-1,0x5b6b5a,-L/2+6,6,0);
+for(let s=-1;s<=1;s+=2){cyl(.9,.9,2,0x2c3e50,-L/2+8,7.2,s*5,5).rotation.x=Math.PI/2;
+  for(const x of[-L/2+3,-L/2+12])box(1.6,.8,.6,0x222222,x+.5,6.6,s*(B-1.5));}
+cyl(.08,.08,4,0xdddddd,-L/2+1,8,0,4);box(.05,1.2,2,0xc0392b,-L/2+1,9.4,1);
+// bow: anchor windlass, hawse pipes, anchors, foremast, bulb mark
+for(let s=-1;s<=1;s+=2){cyl(.8,.8,1.6,0x2c3e50,L/2-20,10.2,s*3,5).rotation.x=Math.PI/2;
+  {const hw=halfWidth((L/2-11+L/2)/L);cyl(.6,.6,.3,0x222222,L/2-11,5,s*(hw+.25),5).rotation.x=Math.PI/2;
+  const an=box(1.4,2.4,.4,0x222222,L/2-11,3.4,s*(hw+.45));an.rotation.y=-s*.45;}
+  box(8,.2,.3,0x333333,L/2-15,9.5,s*3);}
+cyl(.2,.25,8,0xf1c40f,L/2-14,13.4,0,6);box(.2,.2,3,0xf1c40f,L/2-14,16.4,0);
+const lt=new THREE.Mesh(new THREE.SphereGeometry(.3,5,3),new THREE.MeshBasicMaterial({color:0xffffaa}));lt.position.set(L/2-14,17.6,0);ship.add(lt);
+
+
+// ---- LOAD SLIDER + POLY COUNT ----
+boxes.sort((a,b)=>a.k-b.k); // bottom tiers load first
+// ---- BAKE 5 CARGO MESHES (20/40/60/80/100%) with hidden-face culling ----
+const HX=3,HY=1.25,HZ=1.2;
+function bakeBoxes(set){const occ=new Set(set.map(b=>b.cell.join()));
+  const has=(a,r,t)=>occ.has([a,r,t].join()),P=[],U=[],Cc=[];let faces=0;
+  // face: axis 0/1/2, sign, atlas tile
+  const F=[[0,1,0,[1,0,0]],[0,-1,1,[-1,0,0]],[1,1,2,[0,0,1]],[1,-1,2,[0,-1,0]],[2,1,1,[0,0,0]],[2,-1,1,[0,0,0]]];
+  for(const b of set){const[bay,r,t]=b.cell,col=new THREE.Color(b.c);
+    const nb=[has(bay+1,r,t),has(bay-1,r,t),has(bay,r,t+1),true /*bottom: deck or box below*/,has(bay,r+1,t),has(bay,r-1,t)];
+    F.forEach(([ax,sg,tile],fi)=>{if(nb[fi])return;faces++;
+      const h=[HX,HY,HZ],ua=ax==1?0:(ax==0?2:0),va=ax==1?2:1; // in-plane axes
+      const q=[[-1,-1],[1,-1],[1,1],[-1,1]].map(([u,v])=>{const p=[b.x,b.y,b.z];p[ax]+=sg*h[ax];p[ua]+=u*h[ua];p[va]+=v*h[va];return[p,(tile+(u+1)/2)/3,(v+1)/2];});
+      // winding so the normal points outward
+      const a=q[0][0],bb=q[1][0],c=q[2][0],e1=[bb[0]-a[0],bb[1]-a[1],bb[2]-a[2]],e2=[c[0]-a[0],c[1]-a[1],c[2]-a[2]];
+      const nx=[e1[1]*e2[2]-e1[2]*e2[1],e1[2]*e2[0]-e1[0]*e2[2],e1[0]*e2[1]-e1[1]*e2[0]][ax]*sg;
+      const ord=nx>0?[0,1,2,0,2,3]:[0,2,1,0,3,2];
+      for(const o of ord){P.push(...q[o][0]);U.push(q[o][1],q[o][2]);Cc.push(col.r,col.g,col.b);}});}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
+  g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));g.setAttribute('color',new THREE.Float32BufferAttribute(Cc,3));g.computeVertexNormals();
+  const m=new THREE.Mesh(g,CARGO_MAT);m.castShadow=m.receiveShadow=true;m.userData={faces,naive:set.length*12};return m;}
+function bakeCargo(n){const m=bakeBoxes(boxes.slice(0,n));m.visible=false;m.userData.n=n;cont.add(m);return m;}
+const LEVELS=[1,2,3,4,5].map(i=>bakeCargo(Math.round(boxes.length*i/5)));
+let draft=0;
+function triCount(o){let n=0;o.traverseVisible(m=>{if(m.isMesh){const g=m.geometry;n+=(g.index?g.index.count:g.attributes.position.count)/3;}});return n;}
+function setLoad(lv){LEVELS.forEach((m,i)=>m.visible=i==lv-1);draft=(1-lv/5)*3.2;
+  const m=LEVELS[lv-1],tris=m?m.userData.faces*2:0;
+  document.getElementById('lv').textContent=(lv*20)+'% · '+(m?m.userData.n:0)+'/'+boxes.length+' containers';
+  document.getElementById('pc').innerHTML='Cargo mesh: '+tris.toLocaleString()+' tris'+(m?' (unculled '+m.userData.naive.toLocaleString()+')':'')+', 1 draw call<br>Whole ship: '+triCount(ship).toLocaleString()+' tris · port: '+(window.PT||'')+' tris (yard boxes: '+(window.YB||'')+')<br><span id="dc"></span>';}
+const ui=document.createElement('div');ui.style.cssText='position:fixed;left:10px;top:30px;font:13px sans-serif;color:#123;background:#fffc;padding:8px 10px;border-radius:6px';
+ui.innerHTML='Empty <input id="ld" type="range" min="0" max="5" step="1" value="5" style="vertical-align:middle;width:180px"> Full<div id="lv"></div><div id="pc"></div>';
+document.body.appendChild(ui);ui.addEventListener('pointerdown',e=>e.stopPropagation());
+document.getElementById('ld').oninput=e=>setLoad(+e.target.value);setLoad(5);
+
+// =================== PORT ===================
+// everything static is built from primitives in a temp group, then baked into ONE vertex-coloured mesh
+function bakeGroup(g,material){g.updateMatrixWorld(true);const P=[],Cc=[];
+  g.traverse(m=>{if(!m.isMesh)return;const geo=(m.geometry.index?m.geometry.toNonIndexed():m.geometry.clone()).applyMatrix4(m.matrixWorld);
+    const a=geo.attributes.position.array,c=m.material.color;
+    for(let i=0;i<a.length;i+=9){const y=Math.max(a[i+1],a[i+4],a[i+7]);
+      const ny=(a[i+3]-a[i])*(a[i+8]-a[i+2])-(a[i+5]-a[i+2])*(a[i+6]-a[i]); // y of face normal (unnormalised, sign only)
+      if(ny>1e-6&&y<=QY+0.25)continue; // downward face on the ground: never visible
+      for(let j=0;j<9;j++)P.push(a[i+j]);for(let j=0;j<3;j++)Cc.push(c.r,c.g,c.b);}});
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(P,3));geo.setAttribute('color',new THREE.Float32BufferAttribute(Cc,3));geo.computeVertexNormals();
+  const m=new THREE.Mesh(geo,material||new THREE.MeshStandardMaterial({vertexColors:true,flatShading:true,roughness:.85}));m.castShadow=m.receiveShadow=true;return m;}
+// beam between two points (stays, diagonals, mooring lines)
+function beam(a,b,t,c,p){const A=new THREE.Vector3(...a),B2=new THREE.Vector3(...b),d=B2.clone().sub(A);
+  const m=new THREE.Mesh(new THREE.BoxGeometry(t,d.length(),t),mat(c));m.position.copy(A).addScaledVector(d,.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());p.add(m);return m;}
+const port=new THREE.Group();S.add(port);const PG=new THREE.Group();
+const pb=(w,h,d,c,x,y,z)=>box(w,h,d,c,x,y,z,PG),pc=(rt,rb,h,c,x,y,z,seg)=>cyl(rt,rb,h,c,x,y,z,seg||6,PG);
+const QZ=12.6,QY=4; // quay edge (ship's side is at z=11) and quay top height
+// quay slab with painted concrete texture on top
+{const qt=ctx2(256,256,(x,w,h)=>{x.fillStyle='#9a9a94';x.fillRect(0,0,w,h);x.strokeStyle='#878781';x.lineWidth=2;
+   for(let i=0;i<=w;i+=64){x.beginPath();x.moveTo(i,0);x.lineTo(i,h);x.stroke();x.beginPath();x.moveTo(0,i);x.lineTo(w,i);x.stroke();}
+   for(let k=0;k<30;k++){x.fillStyle='rgba(60,60,55,.12)';x.fillRect(Math.random()*w,Math.random()*h,8,5);}});
+ qt.wrapT=THREE.RepeatWrapping;qt.repeat.set(8,3);
+ const ft=ctx2(64,64,(x,w,h)=>{x.fillStyle='#6d6d66';x.fillRect(0,0,w,h);x.fillStyle='#5f5f59';x.fillRect(0,0,w,3);x.fillStyle='#1a1a1a';x.fillRect(24,4,16,34);x.fillStyle='#2a2a2a';x.fillRect(22,4,20,4);},31);
+ const q=new THREE.Mesh(new THREE.BoxGeometry(340,10,125),[mat(0x77776f),mat(0x77776f),tmat(qt),mat(0x77776f),mat(0x6d6d66),tmat(ft)]);
+ q.position.set(0,QY-5,QZ+62.5);q.receiveShadow=true;port.add(q);}
+// quay edge: yellow safety line, rubber fenders, bollards, crane rails
+pb(340,.05,.6,0xd8b21c,0,QY+.03,QZ+1.2);
+for(const x of[-72,-61,61,72])pb(.9,.8,.9,0x2a2a2a,x,QY+.4,QZ+.9);
+for(const z of[QZ+4,QZ+28])pb(340,.25,.4,0x55524c,0,QY+.12,z);
+// mooring lines ship -> bollards
+for(const [sx2,qx] of[[-62,-72],[-58,-61],[55,61],[50,72]])beam([sx2,6.8,10.6],[qx,QY+.8,QZ+.9],.12,0xe8d8a0,PG);
+// ---- ship-to-shore gantry cranes ----
+function sts(x){const c=0xc8402f,w=0xe6e6e2,z0=QZ+4,z1=QZ+28,H=34;
+  for(const dx of[-7,7]){for(const z of[z0,z1]){pb(1.4,H,1.4,c,x+dx,QY+H/2,z);pb(3,1.2,2.4,0x333333,x+dx,QY+.6,z);}
+    pb(1.2,1.2,z1-z0,c,x+dx,QY+H-1,(z0+z1)/2);pb(1,1,z1-z0,c,x+dx,QY+12,(z0+z1)/2);beam([x+dx,QY+12,z0],[x+dx,QY+H-1,z1],.7,c,PG);}
+  for(const z of[z0,z1])pb(15.4,1.4,1.4,c,x,QY+H-1,z);
+  pb(3.4,2.4,92,w,x,QY+H+1.2,z0+3); // boom: reaches 40 m over the water
+  pb(6,4,8,w,x,QY+H+4.4,z1+8);pb(6.2,.4,8.2,0x888888,x,QY+H+6.5,z1+8); // machinery house
+  pb(3,2.6,3,0x2b3f55,x,QY+H-1.6,z0-8);pb(3.1,1,3.1,0x8fb6d8,x,QY+H-1.4,z0-8.1); // operator cab + glass
+  for(const dx of[-1.4,1.4]){beam([x+dx,QY+H+2,z1],[x+dx*.4,QY+H+16,z1-2],.8,c,PG);beam([x+dx,QY+H+2,z0+2],[x+dx*.4,QY+H+16,z1-2],.8,c,PG);
+    beam([x+dx*.4,QY+H+16,z1-2],[x+dx,QY+H+2.4,z0-38],.25,0x555555,PG);beam([x+dx*.4,QY+H+16,z1-2],[x+dx,QY+H+2.4,z1+16],.25,0x555555,PG);}
+  const tz=z0-14;pb(4,1.6,4,0x333333,x,QY+H-.4,tz);
+  for(const dx of[-1,1])pc(.06,.06,18,0x222222,x+dx,QY+H-10,tz,3);
+  pb(6.4,.6,2.6,0xf1c40f,x,QY+H-19.4,tz);pb(6,2.5,2.4,0x2e86c1,x,QY+H-21,tz);}
+sts(-38);sts(-2);sts(34);
+// ---- container yard (baked + face-culled like the cargo) ----
+const yard=[];let ys=99;const yr=()=>(ys=(ys*16807)%2147483647)/2147483647;
+for(let b=0;b<8;b++){const bx=-140+b*38;
+  for(const [z0,maxH,ro] of[[QZ+48,4.2,0],[QZ+68,3.6,20]])
+  for(let bay=0;bay<5;bay++)for(let row=0;row<6;row++){const h=Math.floor(yr()*maxH);
+    for(let t=0;t<h;t++)yard.push({x:bx+bay*6.25,y:QY+1.25+t*2.52,z:z0+row*2.44,c:pal[Math.floor(yr()*pal.length)],cell:[b*100+bay,row+ro,t]});}}
+// Yard stacks baked as columns: each exposed column face is ONE quad whose texture is a painted strip of
+// 4 stacked containers (16 random strips, side + door variants) -> per-container detail, per-column cost.
+const NS=16,TW=64,TH=32,STRIP=(()=>{const cv=document.createElement('canvas');cv.width=NS*2*TW;cv.height=4*TH;const x=cv.getContext('2d');
+  for(let k=0;k<NS;k++)for(let t=0;t<4;t++){const c='#'+new THREE.Color(pal[Math.floor(yr()*pal.length)]).getHexString(),y=(3-t)*TH;
+    for(const door of[0,1]){const x0=(k*2+door)*TW;x.fillStyle=c;x.fillRect(x0,y,TW,TH);x.fillStyle='rgba(0,0,0,.18)';
+      if(door){for(let i=3;i<TW;i+=6)x.fillRect(x0+i,y+2,2,TH-4);x.fillStyle='rgba(0,0,0,.5)';x.fillRect(x0+31,y+2,2,TH-4);for(const lx of[22,27,37,42])x.fillRect(x0+lx,y+3,1.5,TH-6);}
+      else for(let i=2;i<TW;i+=4)x.fillRect(x0+i,y+2,2,TH-4);
+      x.strokeStyle='rgba(0,0,0,.45)';x.lineWidth=2;x.strokeRect(x0+1,y+1,TW-2,TH-2);}}
+  const t=new THREE.CanvasTexture(cv);t.anisotropy=4;return t;})();
+function bakeStacks(list){const H=new Map(),key=(a,b)=>a+','+b;
+  for(const c of list){const k=key(c.cell[0],c.cell[1]);const o=H.get(k)||{x:c.x,z:c.z,h:0,b:c.cell[0],r:c.cell[1],k:Math.floor(yr()*NS)};o.h++;H.set(k,o);}
+  const P=[],U=[],h=(a,b)=>(H.get(key(a,b))||{h:0}).h,T=2.52;
+  const quad=(cs,uv,n)=>{const[a,b,c]=cs,e1=b.map((v,i)=>v-a[i]),e2=c.map((v,i)=>v-a[i]);
+    const cr=[e1[1]*e2[2]-e1[2]*e2[1],e1[2]*e2[0]-e1[0]*e2[2],e1[0]*e2[1]-e1[1]*e2[0]],ord=cr[0]*n[0]+cr[1]*n[1]+cr[2]*n[2]>0?[0,1,2,0,2,3]:[0,2,1,0,3,2];
+    for(const o of ord){P.push(...cs[o]);U.push(...uv[o]);}};
+  for(const o of H.values()){const{x,z,b,r}=o,y0=QY,top=QY+o.h*T,tu=(o.k*2)/(NS*2),du=1/(NS*2);
+    const sides=[[[1,0,0],h(b+1,r),1],[[-1,0,0],h(b-1,r),0],[[0,0,1],h(b,r+1),0],[[0,0,-1],h(b,r-1),0]];
+    for(const[n,nh,door]of sides){if(nh>=o.h)continue;const lo=QY+nh*T,u0=tu+door*du,u1=u0+du,v0=nh/4,v1=o.h/4;
+      const ex=n[0]?n[0]*3:0,ez=n[2]?n[2]*1.2:0,sx=n[0]?0:3,sz=n[0]?1.2:0;
+      quad([[x+ex-sx,lo,z+ez-sz],[x+ex+sx,lo,z+ez+sz],[x+ex+sx,top,z+ez+sz],[x+ex-sx,top,z+ez-sz]],[[u0,v0],[u1,v0],[u1,v1],[u0,v1]],n);}
+    const vt=(o.h-.5)/4;quad([[x-3,top,z-1.2],[x+3,top,z-1.2],[x+3,top,z+1.2],[x-3,top,z+1.2]],[[tu,vt-.08],[tu+du,vt-.08],[tu+du,vt+.08],[tu,vt+.08]],[0,1,0]);}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(U,2));g.computeVertexNormals();
+  const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({map:STRIP,flatShading:true,roughness:.8}));m.castShadow=m.receiveShadow=true;return m;}
+const yardM=bakeStacks(yard);port.add(yardM);
+// rubber-tyred gantries over two yard blocks
+function rtg(x,z){const c=0xf1c40f;for(const dx of[-2,15])for(const dz of[-1.6,15.2]){pb(.9,13,.9,c,x+dx,QY+6.5,z+dz);pb(1.4,1.2,1.8,0x222222,x+dx,QY+.6,z+dz);}
+  for(const dx of[-2,15])pb(.9,.9,17,c,x+dx,QY+3,z+6.8);for(const dz of[-1.6,15.2])pb(18,1.2,1,c,x+6.5,QY+13,z+dz);
+  pb(3,2,3,0x444444,x+6.5,QY+14.4,z+6);pb(2,1.6,2,0x2b3f55,x+15,QY+10,z+14);}
+rtg(-102,QZ+47);rtg(12,QZ+67);
+for(const z of[QZ+40,QZ+63,QZ+84])pb(330,.04,.3,0xeeeeee,0,QY+.02,z);
+// trucks carrying boxes
+function truck(x,z,c,dir,box2){pb(2.4,2.6,2.4,c,x+dir*5,QY+1.9,z);pb(.1,1,2,0x223344,x+dir*6.25,QY+2.3,z);pb(10,.4,2.4,0x333333,x,QY+1,z);
+  for(const dx of[-4,-2.8,3,4.4])pb(1,1,2.6,0x111111,x+dx*dir,QY+.5,z);pb(6,2.5,2.4,box2,x-dir*1.5,QY+2.5,z);}
+truck(-60,QZ+36,0xffffff,1,0xc0392b);truck(20,QZ+38,0x2e86c1,-1,0x7f8c8d);truck(70,QZ+42,0xd35400,1,0x27ae60);truck(-110,QZ+88,0x27ae60,-1,0xf39c12);
+// straddle carriers
+for(const [x,z] of[[-20,QZ+20],[50,QZ+22]]){const c=0xe67e22;for(const dx of[-3.5,3.5]){pb(.6,8,.6,c,x+dx,QY+4,z-2);pb(.6,8,.6,c,x+dx,QY+4,z+2);pb(.8,.8,5,c,x+dx,QY+.6,z);}
+  pb(8,.8,5,c,x,QY+8.4,z);pb(2,1.6,2,0x2b3f55,x+3,QY+9.6,z);pb(6,2.5,2.4,0x16a085,x,QY+5,z);}
+// flood-light masts
+for(let x=-150;x<=150;x+=50)for(const z of[QZ+44,QZ+86]){pb(.6,26,.6,0x9a9a9a,x+18,QY+13,z);pb(3,.8,1,0x666666,x+18,QY+26.4,z);}
+// ---- buildings (textured walls) ----
+const shedT=ctx2(256,64,(x,w,h)=>{x.fillStyle='#b7c0c4';x.fillRect(0,0,w,h);x.fillStyle='#a2abaf';for(let i=0;i<w;i+=6)x.fillRect(i,0,3,h);
+  x.fillStyle='#5d6a70';for(let i=20;i<w;i+=60)x.fillRect(i,h-38,30,38);x.fillStyle='#8a2d22';x.fillRect(0,0,w,6);});
+const roofT=ctx2(64,64,(x,w,h)=>{x.fillStyle='#7d878c';x.fillRect(0,0,w,h);x.fillStyle='#6f797e';for(let i=0;i<w;i+=8)x.fillRect(i,0,4,h);x.fillStyle='#cfe3ee';x.fillRect(28,0,8,h);});
+function shed(x,z,w,d,h){const wall=tmat(shedT),m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),[wall,wall,tmat(roofT),wall,wall,wall]);
+  m.position.set(x,QY+h/2,z);m.castShadow=m.receiveShadow=true;port.add(m);}
+shed(-95,QZ+110,70,24,12);shed(-15,QZ+110,70,24,12);
+{const f1=tmat(supT(9,0)),f2=tmat(supT(6,0)),of=new THREE.Mesh(new THREE.BoxGeometry(22,16.2,14),[f1,f1,mat(0xc8c8c0),mat(0xc8c8c0),f2,f2]);
+ of.position.set(70,QY+8.1,QZ+108);of.castShadow=true;port.add(of);pb(23,.6,15,0x2b3f55,70,QY+16.5,QZ+108);pc(.1,.1,6,0xdddddd,76,QY+19.6,QZ+105,3);}
+// road + gate
+{const rt=ctx2(64,32,(x,w,h)=>{x.fillStyle='#3b3b3b';x.fillRect(0,0,w,h);x.fillStyle='#eee';x.fillRect(0,15,24,2);x.fillStyle='#d8b21c';x.fillRect(0,1,w,1);x.fillRect(0,30,w,1);},13);
+ const rd=new THREE.Mesh(new THREE.PlaneGeometry(340,10),tmat(rt));rd.rotation.x=-Math.PI/2;rd.position.set(0,QY+.03,QZ+96);rd.receiveShadow=true;port.add(rd);}
+pb(6,6,.6,0x2c3e50,120,QY+3,QZ+92);pb(6,6,.6,0x2c3e50,132,QY+3,QZ+92);pb(18,1.2,3,0xf1c40f,126,QY+6.6,QZ+92);
+// ---- tug boat at the bow ----
+{const tug=new THREE.Group();const tb=(w,h,d,c,x,y,z)=>box(w,h,d,c,x,y,z,tug);
+ const th2=new THREE.Mesh(new THREE.CylinderGeometry(4,4,3,5),mat(0x1f3a5c));th2.scale.set(2.2,1,1);th2.position.y=-1.6;tug.add(th2);
+ tb(10,.5,6,0xc0392b,0,0,0);tb(5,3,4.4,0xf4f4f0,-1,1.7,0);tb(3.4,2,3.6,0xf4f4f0,-.4,4.2,0);tb(3.5,.8,3.7,0x14202e,-.4,4.4,0);
+ tb(1.2,3,1.2,0xf1c40f,-3.2,3,0);tb(1.3,.6,1.3,0x111111,-3.2,4.7,0);for(const z of[-3,3])tb(9,1,.6,0x111111,0,-.5,z);
+ tug.position.set(84,-1,-10);tug.rotation.y=.5;PG.add(tug);}
+const portMesh=bakeGroup(PG);port.add(portMesh);
+const portTris=triCount(port);
+window.PT=portTris.toLocaleString();window.YB=yard.length;setLoad(+document.getElementById('ld').value);
+
+// ---- WATER ----
+const wg=new THREE.PlaneGeometry(1400,1400,70,70);wg.rotateX(-Math.PI/2);
+const water=new THREE.Mesh(wg,new THREE.MeshStandardMaterial({color:0x2f6f8f,flatShading:true,roughness:.4,metalness:.2,transparent:true,opacity:.92}));
+water.position.y=-3.6;water.receiveShadow=true;S.add(water);const wp=wg.attributes.position,base=wp.array.slice();
+
+// ---- orbit controls (minimal) ----
+let th=-1.1,ph=0.5,dist=300,drag=false,lx,ly;
+addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY});addEventListener('pointerup',()=>drag=false);
+addEventListener('pointermove',e=>{if(!drag)return;th-=(e.clientX-lx)*.006;ph=Math.min(1.4,Math.max(.05,ph+(e.clientY-ly)*.006));lx=e.clientX;ly=e.clientY});
+addEventListener('wheel',e=>{dist=Math.min(900,Math.max(40,dist*(1+e.deltaY*.001)))});
+addEventListener('resize',()=>{C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix();R.setSize(innerWidth,innerHeight)});
+const clk=new THREE.Clock();
+(function loop(){const t=clk.getElapsedTime();
+  for(let i=0;i<wp.count;i++){const x=base[i*3],z=base[i*3+2];wp.setY(i,Math.sin(x*.05+t)*.6+Math.cos(z*.07+t*1.3)*.5);}wp.needsUpdate=true;wg.computeVertexNormals();
+  ship.rotation.x=Math.sin(t*.6)*.015;ship.rotation.z=Math.sin(t*.4)*.008;ship.position.y=draft+Math.sin(t*.8)*.25;
+  radar.rotation.y=t*2;radar2.rotation.y=-t*1.5;lt.visible=(t%1.5)<.2;
+  C.position.set(Math.cos(th)*Math.cos(ph)*dist,Math.sin(ph)*dist,40+Math.sin(th)*Math.cos(ph)*dist);C.lookAt(0,6,40);
+  R.render(S,C);const dc=document.getElementById('dc');if(dc)dc.textContent=R.info.render.calls+' draw calls/frame';requestAnimationFrame(loop)})();
+</script></body></html>

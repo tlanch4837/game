@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8"><title>Crane (SPOM preview)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#8aa0b4;font:12px sans-serif;overflow:hidden}#ui{position:fixed;top:6px;left:6px;background:#000a;color:#fff;padding:6px;border-radius:4px}button{margin:1px}</style>
+<div id="ui"></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {patchSpom} from '/assets/buildings/spom_preview.js';
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0x8aa0b4);
+const cam=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.05,800);
+const oc=new OrbitControls(cam,r.domElement);
+s.add(new THREE.HemisphereLight(0xdfe8ff,0x6b6a58,0.8));
+const sun=new THREE.DirectionalLight(0xfff0d8,2.2);sun.position.set(-12,20,16);s.add(sun);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),new THREE.MeshStandardMaterial({color:0x6d7f52}));ground.rotation.x=-Math.PI/2;s.add(ground);
+const views={far:[[70,48,95],[6,28,0]],mast:[[3.2,12,4.2],[0,12,0]],jib:[[18,50,6],[20,47.4,0]],cab:[[7,49,6],[0,46.5,0]],top:[[-16,55,16],[-3,47,0]]};
+function go(k){const [p,t]=views[k];cam.position.set(...p);oc.target.set(...t);oc.update();}
+const ui=document.getElementById('ui');ui.innerHTML=Object.keys(views).map(k=>`<button data-k="${k}">${k}</button>`).join('')+' <span id="t"></span>';
+ui.onclick=e=>{if(e.target.dataset.k)go(e.target.dataset.k);};
+window.go=go;
+new GLTFLoader().load('crane.glb?t='+Date.now(),g=>{const cur=g.scene;patchSpom(cur,sun.position);s.add(cur);let tris=0;cur.traverse(o=>{if(o.isMesh)tris+=o.geometry.index?o.geometry.index.count/3:o.geometry.attributes.position.count/3});document.getElementById('t').textContent=tris+' tris';window.__ready=true;});
+go(location.hash.slice(1)||'far');
+r.setAnimationLoop(()=>{const w=innerWidth||800,h=innerHeight||600;if(r.domElement.width!==w||r.domElement.height!==h){r.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();}oc.update();r.render(s,cam)});
+</script>

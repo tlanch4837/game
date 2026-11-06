@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Passenger boat – low poly, high detail</title>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#bcd3e6;overflow:hidden}
+#cap{position:absolute;bottom:12px;left:12px;font-size:14px;background:#fffffff0;padding:8px 12px;border-radius:8px}
+#ui{position:absolute;top:12px;left:12px;display:flex;gap:8px}
+button{font:inherit;font-size:14px;padding:8px 14px;border:1px solid #b4b2a9;border-radius:8px;background:#fffffff0;cursor:pointer}
+canvas{display:block;cursor:grab}
+</style></head><body>
+<div id="ui"><button id="bWire">Wireframe</button><button id="bSpin">Auto-rotate</button><button id="bWater">Water</button><button id="bPort">Port</button></div><div id="cap"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(devicePixelRatio);R.shadowMap.enabled=true;R.shadowMap.type=THREE.PCFSoftShadowMap;
+R.toneMapping=THREE.ACESFilmicToneMapping;R.outputEncoding=THREE.sRGBEncoding;document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0xbcd3e6);S.fog=new THREE.Fog(0xbcd3e6,90,200);
+const C=new THREE.PerspectiveCamera(36,1,0.1,400);
+function resize(){R.setSize(innerWidth,innerHeight);C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix()}addEventListener('resize',resize);resize();
+S.add(new THREE.HemisphereLight(0xdfefff,0x3d5a70,0.8));
+const sun=new THREE.DirectionalLight(0xfff1dc,1.5);sun.position.set(25,40,18);sun.castShadow=true;sun.shadow.mapSize.set(4096,4096);
+Object.assign(sun.shadow.camera,{left:-40,right:40,top:40,bottom:-40,near:1,far:120});sun.shadow.bias=-0.0005;S.add(sun);
+
+// flat-shaded materials = the low-poly look
+const mats=[];const M=(c,r=0.8,m=0,o)=>{const x=new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m,flatShading:true,...o});mats.push(x);return x};
+const P={hullW:M(0xf4f4f0,0.55),hullB:M(0x1f4f86,0.5),anti:M(0x9b2f25,0.8),boot:M(0x222326,0.6),deck:M(0xa87b4f,0.9),deckG:M(0x6e7479,0.9),
+white:M(0xf3f3ef,0.6),cream:M(0xe6e1d3,0.7),glass:M(0x223a50,0.12,0.6),glassL:M(0x3e6584,0.15,0.5),steel:M(0x9aa0a6,0.4,0.7),steelD:M(0x4b5156,0.5,0.6),
+yellow:M(0xe5b52a,0.6),red:M(0xc0392b,0.6),orange:M(0xe2711d,0.6),blue:M(0x2c6eb5,0.5),black:M(0x18191b,0.7),seat:M(0x2f5f9e,0.7),rope:M(0xc9b48a,1),
+green:M(0x2fa84f,0.4,0,{emissive:0x115522}),redL:M(0xd02a2a,0.4,0,{emissive:0x551111}),wood:M(0x7a5634,0.9)};
+const boat=new THREE.Group();S.add(boat);
+function add(geo,mat,x=0,y=0,z=0,parent=boat){const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;parent.add(m);return m}
+const box=(w,h,d,mat,x,y,z,p)=>add(new THREE.BoxGeometry(w,h,d),mat,x,y,z,p);
+const cyl=(rt,rb,h,mat,x,y,z,seg=8,p)=>add(new THREE.CylinderGeometry(rt,rb,h,seg),mat,x,y,z,p);
+
+// ---------- HULL: lofted cross-sections (x = length, y = up, z = beam) ----------
+const L=24,B=6.4,D=2.6; // length, beam, depth
+const TS=[0,0.035,0.35,0.62,0.72,0.8,0.87,0.93,0.97,1],NS=TS.length-1; // stations: dense only where the hull curves (bow), none along the straight midbody
+function section(t){ // t:0 stern .. 1 bow -> half-beam, keel depth, sheer height
+  const bowT=Math.max(0,(t-0.62)/0.38), sternT=Math.max(0,(0.06-t)/0.06);
+  const hb=B/2*(1-Math.pow(bowT,1.8))*(1-0.12*sternT);
+  const keel=-D*(1-0.55*Math.pow(bowT,1.3)) + 0.25*sternT;
+  const sheer=0.15+0.9*Math.pow(t,3);
+  return {hb:Math.max(hb,0.04),keel,sheer};
+}
+// profile around half-section: from deck edge down to keel (normalized), slight flare + chine
+const prof=[[1.0,1],[1.02,0.62],[0.82,0.18],[0,0]]; // deck edge, flare, bilge chine, keel: the hidden bottom gets just one facet per side
+function buildHull(){
+  const pos=[],idx=[],cols=[];const rows=[];
+  for(let i=0;i<=NS;i++){const t=TS[i],s=section(t),x=-L/2+t*L,row=[];
+    const pts=[];for(const [w,h] of prof)pts.push([w*s.hb,s.keel+h*(s.sheer-s.keel)]);
+    // left side reversed + right side
+    const ring=[...pts.map(p=>[p[0],p[1]])];const full=[...ring.map(p=>[-p[0],p[1]]),...ring.slice(0,-1).reverse().map(p=>[p[0],p[1]])]; // port deck edge → keel → starboard deck edge
+    for(const [z,y] of full){row.push(pos.length/3);pos.push(x,y,z)}rows.push(row)}
+  const n=rows[0].length;
+  for(let i=0;i<NS;i++)for(let j=0;j<n-1;j++){const a=rows[i][j],b=rows[i+1][j],c=rows[i+1][j+1],d=rows[i][j+1];idx.push(a,b,d,b,c,d)}
+  // transom
+  const r0=rows[0];for(let j=1;j<n-1;j++)idx.push(r0[0],r0[j+1],r0[j]);
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setIndex(idx);
+  g.computeVertexNormals();return g.toNonIndexed();
+}
+const hullGeo=buildHull();
+// paint crisp horizontal bands per pixel (by hull-local height), so faces crossing a waterline don't streak
+const hullMat=M(0xffffff,0.55,0,{side:THREE.DoubleSide});
+hullMat.onBeforeCompile=sh=>{
+  sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying float vHy;varying vec3 vHp;').replace('#include <begin_vertex>','#include <begin_vertex>\nvHy=position.y;vHp=position;');
+  sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vHy;varying vec3 vHp;').replace('vec4 diffuseColor = vec4( diffuse, opacity );',
+   `vec3 hc=vHy<-1.15?vec3(0.33,0.03,0.02):vHy<-0.95?vec3(0.016,0.017,0.02):vHy<-0.12?vec3(0.013,0.08,0.24):vHy<0.0?vec3(0.78,0.46,0.02):vec3(0.9,0.9,0.87);
+    float ps=1.55,px=mod(vHp.x+12.0,ps)-ps*0.5,pd=length(vec2(px,vHy+0.55));
+    if(vHp.x>-8.8&&vHp.x<4.5&&abs(vHp.z)>1.5){hc=pd<0.15?mix(vec3(0.03,0.06,0.1),vec3(0.2,0.3,0.4),smoothstep(-0.15,0.15,vHy+0.55)):pd<0.2?vec3(0.55,0.57,0.6):hc;}
+    float wl=smoothstep(0.0,0.06,abs(vHy+1.0));hc*=0.82+0.18*wl; // grime line at waterline
+    vec4 diffuseColor = vec4( hc, opacity );`)};
+add(hullGeo,hullMat);
+// transom rub rail + stern name plate
+{const s=section(0);box(0.12,0.18,s.hb*2+0.2,P.black,-L/2-0.04,s.sheer-0.55,0);box(0.04,0.3,2.4,P.white,-L/2-0.02,s.sheer-0.95,0);}
+
+// main deck plate following the sheer
+const deckG=new THREE.BufferGeometry();{const pos=[],idx=[];
+  for(let i=0;i<=NS;i++){const t=TS[i],s=section(t),x=-L/2+t*L,y=s.sheer-0.05;pos.push(x,y,-s.hb*0.99,x,y,s.hb*0.99)}
+  for(let i=0;i<NS;i++){const a=i*2;idx.push(a,a+1,a+2,a+1,a+3,a+2)}
+  deckG.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));deckG.setIndex(idx);deckG.computeVertexNormals();}
+add(deckG,M(0xa87b4f,0.9,0,{side:THREE.DoubleSide}));
+
+// rub rail & bulwark rail
+for(const sgn of[-1,1]){const pts=[];for(let i=0;i<=NS;i++){const t=TS[i],s=section(t);pts.push(new THREE.Vector3(-L/2+t*L,s.sheer-0.55,sgn*(s.hb+0.03)))}
+  add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),14,0.09,3),P.black);
+
+  // fenders
+  for(const fx of[-6,-1,4]){const s=section((fx+L/2)/L);const f=cyl(0.18,0.18,0.7,P.blue,fx,-0.2,sgn*(s.hb+0.2),5);box(0.02,0.5,0.02,P.rope,fx,0.25,sgn*(s.hb+0.2))}
+}
+
+// ---------- SUPERSTRUCTURE ----------
+const y0=0.2;
+// window band texture: framed panes with sky reflection + interior hint (2 tris per side instead of dozens of boxes)
+function winTex(n,aspect){const c=document.createElement('canvas'),W=c.width=512,H=c.height=Math.max(32,Math.round(512/aspect));const x=c.getContext('2d');
+  x.fillStyle='#eeeeea';x.fillRect(0,0,W,H);const pw=W/n;
+  for(let i=0;i<n;i++){const px=i*pw+pw*0.07,w=pw*0.86,py=H*0.08,h=H*0.84;
+    const g=x.createLinearGradient(0,py,0,py+h);g.addColorStop(0,'#5d84a3');g.addColorStop(0.45,'#2b465e');g.addColorStop(1,'#18293a');x.fillStyle=g;
+    x.beginPath();x.roundRect?x.roundRect(px,py,w,h,h*0.18):x.rect(px,py,w,h);x.fill();
+    x.fillStyle='rgba(255,255,255,0.18)';x.beginPath();x.moveTo(px+w*0.15,py);x.lineTo(px+w*0.4,py);x.lineTo(px+w*0.1,py+h);x.lineTo(px-w*0.15+w*0.1,py+h);x.fill();
+    x.strokeStyle='#cfd2d3';x.lineWidth=Math.max(2,H*0.03);x.stroke();}
+  const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=8;return t}
+function winBand(x0,x1,y,h,z,s,n,g){const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,h),new THREE.MeshStandardMaterial({map:winTex(n,(x1-x0)/h),roughness:0.25,metalness:0.2}));
+  m.position.set((x0+x1)/2,y,z);if(s<0)m.rotation.y=Math.PI;(g||boat).add(m);mats.push(m.material);return m}
+function cabin(x0,x1,hw,h,yb,mat,winRows){ // box cabin with window band, slanted front
+  const g=new THREE.Group();boat.add(g);
+  box(x1-x0,h,hw*2,mat,(x0+x1)/2,yb+h/2,0,g);
+  const wn=Math.floor((x1-x0)/1.1);
+  for(const s of[-1,1])winBand(x0+0.25,x1-0.25,yb+h*0.58,h*0.5,s*(hw+0.005),s,wn,g);
+  box(x1-x0+0.1,0.06,hw*2+0.1,P.steelD,(x0+x1)/2,yb+h*0.28,0,g); // trim stripe
+  box(x1-x0+0.3,0.1,hw*2+0.3,P.white,(x0+x1)/2,yb+h+0.05,0,g); // roof lip
+  return g}
+// main passenger saloon
+cabin(-8.5,6.5,2.65,2.2,y0,P.white,1);
+// slanted front windscreen of saloon
+{const w=add(new THREE.BoxGeometry(0.1,1.3,5.0),P.glassL,6.75,y0+1.35,0);w.rotation.z=-0.35;box(0.5,0.9,5.3,P.white,6.65,y0+0.45,0)}
+// blue livery stripe on saloon
+for(const s of[-1,1])box(15,0.22,0.03,P.blue,-1,y0+0.35,s*2.67);
+// (no side doors: boarding happens off-model)
+// upper deck
+const y1=y0+2.3;
+box(16.5,0.12,5.8,P.deckG,-1.2,y1,0);
+// wheelhouse (bridge)
+cabin(1.8,6.0,2.0,1.7,y1+0.06,P.white,1);
+{const w=add(new THREE.BoxGeometry(0.08,1.0,3.8),P.glass,6.15,y1+1.05,0);w.rotation.z=-0.3;
+  for(let i=-1;i<=1;i++)box(0.1,1.05,0.06,P.white,6.15,y1+1.05,i*1.3);
+  box(4.6,0.12,4.6,P.white,4.0,y1+1.92,0); // overhanging roof
+  for(const s of[-1,1]){box(0.9,0.7,0.6,P.white,5.2,y1+0.5,s*2.45);box(0.6,0.35,0.03,P.glass,5.2,y1+0.7,s*2.76)} // bridge wings
+}
+// mast + radar + nav lights
+const mx=3.0,my=y1+1.98;
+cyl(0.07,0.09,2.4,P.white,mx,my+1.2,0,6);box(0.08,0.08,1.4,P.white,mx,my+1.7,0);
+add(new THREE.SphereGeometry(0.1,6,3),P.yellow,mx,my+2.45,0);
+for(const s of[-1,1])add(new THREE.SphereGeometry(0.07,5,3),s>0?P.green:P.redL,mx,my+1.7,s*0.7);
+const radar=new THREE.Group();radar.position.set(mx+0.9,my+0.6,0);boat.add(radar);cyl(0.08,0.12,0.5,P.steelD,mx+0.9,my+0.25,0,6);
+box(0.12,0.08,1.6,P.white,0,0,0,radar);
+for(const s of[-1,1]){box(0.12,0.25,0.12,P.redL,6.2,y0+0.9,s*2.6);} // side lights
+// horn & antennas
+cyl(0.05,0.12,0.35,P.steel,2.4,my+0.2,0.5,6).rotation.z=Math.PI/2;
+cyl(0.015,0.015,1.8,P.white,2.2,my+0.9,-1.4,4);cyl(0.015,0.015,1.4,P.white,2.2,my+0.7,1.4,3);
+// funnel
+{const f=cyl(0.55,0.75,1.6,P.white,-1.0,y1+0.8,0,8);f.scale.set(1.5,1,1);f.rotation.z=0.12;
+ const band=cyl(0.62,0.66,0.35,P.blue,-1.1,y1+1.25,0,8);band.scale.set(1.5,1,1);band.rotation.z=0.12;
+ const top=cyl(0.56,0.56,0.12,P.black,-1.18,y1+1.62,0,8);top.scale.set(1.5,1,1);top.rotation.z=0.12;
+ for(const zz of[-0.25,0.25])cyl(0.08,0.08,0.4,P.black,-1.2,y1+1.75,zz,6);}
+// life rings on saloon walls, life raft canisters
+for(const s of[-1,1]){for(const lx of[-5,0.5]){const lr=add(new THREE.TorusGeometry(0.28,0.08,3,6),P.orange,lx,y0+1.25,s*2.72);
+    for(let q=0;q<4;q++){const st=box(0.1,0.17,0.17,P.white,lx+Math.cos(q*Math.PI/2+0.78)*0.28,y0+1.25+Math.sin(q*Math.PI/2+0.78)*0.28,s*2.74)}}
+  for(const lx of[-7.6,-6.6]){const c=cyl(0.3,0.3,1.0,P.white,lx,y1+0.35,s*2.4,6);c.rotation.x=Math.PI/2;cyl(0.31,0.31,0.08,P.red,lx,y1+0.35,s*2.4,6).rotation.x=Math.PI/2;}
+}
+// (no stairs, rails, doors or seating: no walkable outdoor passenger areas)
+// aft deck: bollards, capstan, flag
+for(const s of[-1,1]){for(const bx of[-11,9.5]){cyl(0.12,0.14,0.35,P.black,bx,section((bx+L/2)/L).sheer+0.12,s*1.6,6);cyl(0.17,0.17,0.05,P.black,bx,section((bx+L/2)/L).sheer+0.3,s*1.6,6)}}
+cyl(0.03,0.03,2.0,P.white,-11.7,1.2,0,3);box(0.9,0.55,0.02,P.red,-11.25,1.9,0);box(0.9,0.12,0.03,P.white,-11.25,1.9,0);
+// foredeck: anchor winch, hatch, anchor
+{const s=section(0.88);box(0.9,0.4,1.1,P.steelD,8.5,s.sheer+0.2,0);cyl(0.25,0.25,1.4,P.black,8.5,s.sheer+0.45,0,8).rotation.x=Math.PI/2;
+ box(1.2,0.12,1.2,P.deckG,7.3,section(0.8).sheer+0.06,0);
+ const anc=box(0.08,0.6,0.08,P.black,10.6,section(0.94).sheer-0.6,1.0);box(0.4,0.08,0.08,P.black,10.6,section(0.94).sheer-0.9,1.0);}
+// passenger name board
+for(const s of[-1,1])box(3.2,0.4,0.03,P.blue,4,y1+1.6,s*2.02);
+// tender boat on davits (stern upper deck)
+{const t=new THREE.Group();t.position.set(-8.2,y1+1.3,-1.6);boat.add(t);
+ const tg=new THREE.CylinderGeometry(0.42,0.42,2.0,6,1,false,Math.PI/2,Math.PI);const th=add(tg,P.orange,0,0,0,t);th.rotation.z=Math.PI/2; // half-hex hull
+ box(2.0,0.06,0.86,P.white,0,0.0,0,t);box(0.5,0.08,0.7,P.wood,0.2,0.05,0,t); // gunwale cap + thwart
+ for(const dx of[-0.8,0.8]){cyl(0.04,0.04,1.3,P.steel,-8.2+dx,y1+0.65,-1.6,4);box(0.06,0.06,0.5,P.steel,-8.2+dx,y1+1.32,-1.6)}}
+
+// ---------- PORT: enclosed ferry terminal (no open-air passenger areas; boarding via covered gangway) ----------
+const port=new THREE.Group();S.add(port);
+const Q={conc:M(0xbdb8ad,0.95),concD:M(0x8c887f,0.95),asph:M(0x3d3f42,0.95),rub:M(0x1d1e20,0.8),stone:M(0x7d786e,1),roof:M(0x55606a,0.6,0.3),
+ clad:M(0xdcdcd6,0.6),blue:M(0x2c6eb5,0.5),yel:M(0xe5b52a,0.6),steel:M(0x9aa0a6,0.4,0.7),grass:M(0x6f9a43,1)};
+const pb=(w,h,d,m,x,y,z)=>box(w,h,d,m,x,y,z,port), pc=(r,h,m,x,y,z,seg=6)=>cyl(r,r,h,m,x,y,z,seg,port);
+// quay painted top: kerb line, yellow safety edge, mooring markings in one texture (2 tris)
+function quayTex(){const c=document.createElement('canvas');c.width=1024;c.height=256;const x=c.getContext('2d');
+  x.fillStyle='#b9b4a9';x.fillRect(0,0,1024,256);for(let i=0;i<1024;i+=64){x.fillStyle=i%128?"#b3aea3":"#bfbaaf";x.fillRect(i,0,64,256)}
+  x.strokeStyle='#a6a197';x.lineWidth=2;for(let i=0;i<1024;i+=64){x.beginPath();x.moveTo(i,0);x.lineTo(i,256);x.stroke()}
+  x.fillStyle='#e5b52a';x.fillRect(0,0,1024,14);for(let i=0;i<1024;i+=40){x.fillStyle='#222';x.beginPath();x.moveTo(i,14);x.lineTo(i+20,14);x.lineTo(i+30,24);x.lineTo(i+10,24);x.fill()}
+  x.fillStyle='#f2efe6';x.font='bold 40px sans-serif';x.fillText('BERTH 1',440,120);
+  const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=8;return t}
+const qz0=3.75,qz1=20,qy=1.3,QL=60;
+pb(QL,4.6,37-qz0,Q.concD,0,qy-2.3,(qz0+37)/2); // quay + landside block (one box) (face below water stays hidden: just one box)
+{const top=new THREE.Mesh(new THREE.PlaneGeometry(QL,qz1-qz0),new THREE.MeshStandardMaterial({map:quayTex(),roughness:0.95}));
+ top.rotation.x=-Math.PI/2;top.position.set(0,qy+0.01,(qz0+qz1)/2);top.receiveShadow=true;port.add(top);mats.push(top.material);}
+pb(QL,0.25,0.3,Q.conc,0,qy+0.12,qz0+0.15); // cope edge
+// tide stain + rubber fenders on quay face
+pb(QL,0.9,0.02,M(0x3e4a3e,1),0,-0.7,qz0-0.01);
+for(let i=-6;i<=6;i++){pb(0.5,1.8,0.35,Q.rub,i*4.4,0.1,qz0-0.17);}
+// bollards with mooring lines to the boat
+for(const bx of[-10.5,-4,4,10]){pc(0.18,0.45,Q.rub,bx,qy+0.22,qz0+0.6,6);pc(0.26,0.07,Q.rub,bx,qy+0.46,qz0+0.6,6)}
+const line=(a,b)=>{const m=new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);m.y-=0.35;add(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(a,m,b),6,0.03,3),P.rope,0,0,0,port)};
+line(new THREE.Vector3(-10.5,qy+0.4,qz0+0.6),new THREE.Vector3(-11,section(0.04).sheer+0.3,1.6));
+line(new THREE.Vector3(10,qy+0.4,qz0+0.6),new THREE.Vector3(9.5,section(0.89).sheer+0.3,1.6));
+line(new THREE.Vector3(-4,qy+0.4,qz0+0.6),new THREE.Vector3(-11,section(0.04).sheer+0.3,1.6));
+line(new THREE.Vector3(4,qy+0.4,qz0+0.6),new THREE.Vector3(9.5,section(0.89).sheer+0.3,1.6));
+// terminal building: glazed ground floor, clad upper floor, deep roof overhang
+const tx0=-9,tx1=9,tz0=9,tz1=17;
+pb(tx1-tx0,3.4,tz1-tz0,Q.clad,0,qy+1.7,(tz0+tz1)/2);
+winBand(tx0+0.3,tx1-0.3,qy+1.4,2.2,tz0-0.005,-1,10,port);
+pb(tx1-tx0,1.6,tz1-tz0,Q.clad,0,qy+4.2,(tz0+tz1)/2);
+winBand(tx0+0.5,tx1-0.5,qy+4.2,0.9,tz0-0.005,-1,14,port);
+pb(tx1-tx0+2,0.3,tz1-tz0+2,Q.roof,0,qy+5.15,(tz0+tz1)/2); // roof slab w/ overhang
+pb(tx1-tx0+2.02,0.12,0.06,Q.blue,0,qy+5.0,tz0-1.0);
+for(const s of[-1,1]){const w=winBand(-3.6,3.6,qy+1.4,2.2,0,1,6,port);w.rotation.y=s*Math.PI/2;w.position.set(s*(tx1+0.005),qy+1.4,(tz0+tz1)/2)} // end glazing
+// rooftop plant
+pb(2.5,0.9,1.6,Q.steel,4,qy+5.75,14);pb(1.6,0.7,1.6,Q.steel,-3,qy+5.65,15);pc(0.35,0.3,Q.concD,-3,qy+6.15,15,6);
+// name sign on roof edge
+{const c=document.createElement('canvas');c.width=512;c.height=64;const x=c.getContext('2d');x.fillStyle='#2c6eb5';x.fillRect(0,0,512,64);x.fillStyle='#fff';x.font='bold 40px sans-serif';x.textAlign='center';x.fillText('FERRY TERMINAL',256,46);
+ const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;const sg=new THREE.Mesh(new THREE.PlaneGeometry(7,0.9),new THREE.MeshStandardMaterial({map:t,roughness:0.5}));sg.position.set(0,qy+5.75,tz0-1.03);sg.rotation.y=Math.PI;port.add(sg);mats.push(sg.material);
+ pb(7.2,1.0,0.1,Q.steel,0,qy+5.75,tz0-0.97);}
+// enclosed boarding bridge: terminal -> boat saloon roof level (fully covered, glazed band)
+{const gx=-1.5,y=qy+1.3,z0=tz0,z1=2.75,len=z0-z1,g=new THREE.Group();g.position.set(gx,y,(z0+z1)/2);port.add(g);
+ box(2.0,2.3,len,Q.clad,0,0,0,g);box(2.2,0.15,len+0.1,Q.roof,0,1.22,0,g);box(2.05,0.2,len,Q.blue,0,-1.05,0,g);
+ for(const s of[-1,1]){const w=winBand(-len/2+0.3,len/2-0.3,0.25,0.9,0,s,4,g);w.rotation.y=s>0?-Math.PI/2:Math.PI/2;w.position.set(s*1.005,0.25,0)}
+ box(2.4,2.6,0.6,Q.rub,0,0,-len/2+0.1,g); // bellows docking collar against the saloon
+ pc(0.18,y-qy-1.15,Q.steel,gx-0.7,qy+(y-qy-1.15)/2,(z0+z1)/2+1.5,6);pc(0.18,y-qy-1.15,Q.steel,gx+0.7,qy+(y-qy-1.15)/2,(z0+z1)/2+1.5,6);}
+// landside: road + car park, all markings in one texture (2 tris), low-poly cars, planted islands
+const LZ0=20.3,LZ1=36,LD=LZ1-LZ0,pxm=2048/QL; // texture px per metre along x
+function lotTex(){const c=document.createElement('canvas');c.width=2048;c.height=Math.round(LD*pxm);const x=c.getContext('2d'),m=v=>v*pxm,H=c.height;
+  x.fillStyle='#45474a';x.fillRect(0,0,2048,H);
+  for(let i=0;i<5000;i++){x.fillStyle=Math.random()<0.5?'rgba(255,255,255,0.035)':'rgba(0,0,0,0.05)';x.fillRect(Math.random()*2048,Math.random()*H,3,3)} // aggregate speckle
+  x.fillStyle='rgba(0,0,0,0.12)';for(let bx=2;bx<QL-2;bx+=2.5){x.beginPath();x.ellipse(m(bx+1.25),m(10),m(0.45),m(1.1),0,0,7);x.fill()} // oil stains centred in bays
+  x.strokeStyle='#efece2';x.fillStyle='#efece2';x.lineWidth=m(0.12);
+  // no road: the strip next to the quay is paved like the quay, kerbed off from the car park
+  x.fillStyle='#b9b4a9';x.fillRect(0,0,2048,m(7));x.strokeStyle='#a6a197';x.lineWidth=2;for(let i=0;i<2048;i+=m(2)){x.beginPath();x.moveTo(i,0);x.lineTo(i,m(7));x.stroke()}
+  x.strokeStyle='#efece2';x.lineWidth=m(0.12);
+  // bays: row A (z 7..12) and row B (z 12.5..15.7 against back kerb) both off the aisle
+  const bayW=2.5;
+  for(let bx=2;bx<=QL-2;bx+=bayW){x.beginPath();x.moveTo(m(bx),m(7.6));x.lineTo(m(bx),m(12.4));x.stroke()}
+  x.beginPath();x.moveTo(m(2),m(12.4));x.lineTo(m(QL-2),m(12.4));x.stroke();
+  // accessible + EV bays
+  x.fillStyle='#2f6fb3';x.fillRect(m(2.1),m(7.7),m(2.3),m(4.6));x.fillStyle='#3e9a4f';x.fillRect(m(QL-4.4),m(7.7),m(2.3),m(4.6));
+  x.fillStyle='#efece2';x.font=`bold ${m(1)}px sans-serif`;x.textAlign='center';x.fillText('EV',m(QL-3.25),m(10.3));x.fillText('P',m(3.25),m(10.3));
+  const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=8;return t}
+{const lot=new THREE.Mesh(new THREE.PlaneGeometry(QL,LD),new THREE.MeshStandardMaterial({map:lotTex(),roughness:0.95}));
+ lot.rotation.x=-Math.PI/2;lot.position.set(0,qy+0.02,(LZ0+LZ1)/2);lot.receiveShadow=true;port.add(lot);mats.push(lot.material);}
+// car park perimeter: kerb closed on all four sides.
+// Entry/exit gaps are cut procedurally by the engine from road placement: setLotOpenings([{side:'n'|'s'|'e'|'w', at:metres from side centre, width}])
+const lotEdge=new THREE.Group();port.add(lotEdge);
+const LOT={x0:-QL/2,x1:QL/2,z0:LZ0+7,z1:LZ1}; // n = quay side (z0), s = back (z1), w = x0, e = x1
+function setLotOpenings(openings=[]){
+  while(lotEdge.children.length)lotEdge.remove(lotEdge.children[0]);
+  const sides={n:[LOT.x0,LOT.x1,LOT.z0,'x',-1],s:[LOT.x0,LOT.x1,LOT.z1,'x',1],w:[LOT.z0,LOT.z1,LOT.x0,'z',-1],e:[LOT.z0,LOT.z1,LOT.x1,'z',1]};
+  for(const [k,[a0,a1,c,ax,out]] of Object.entries(sides)){
+    const mid=(a0+a1)/2,gaps=openings.filter(o=>o.side===k).map(o=>[mid+o.at-(o.width||6)/2,mid+o.at+(o.width||6)/2]).sort((p,q)=>p[0]-q[0]);
+    let cur=a0;const segs=[];for(const [g0,g1] of gaps){if(g0>cur)segs.push([cur,g0]);cur=Math.max(cur,g1)}if(cur<a1)segs.push([cur,a1]);
+    for(const [s0,s1] of segs){const len=s1-s0,m=(s0+s1)/2;
+      if(ax==='x'){box(len,0.15,0.3,Q.conc,m,qy+0.08,c,lotEdge)}
+      else{box(0.3,0.15,len,Q.conc,c,qy+0.08,m,lotEdge)}}}
+}
+setLotOpenings([]); // closed by default
+window.setLotOpenings=setLotOpenings;
+
+// planted islands at row ends + middle
+for(const ix of[-29,29]){pb(1.6,0.2,4.6,Q.conc,ix,qy+0.1,LZ0+10);pb(1.4,0.06,4.4,Q.grass,ix,qy+0.22,LZ0+10)}
+for(const lx of[-24,-16,16,24]){pc(0.06,4.5,Q.steel,lx,qy+2.25,19.6,4);pb(0.9,0.1,0.25,Q.steel,lx,qy+4.5,19.3);}
+for(const lx of[-29,29]){pc(0.07,6,Q.steel,lx,qy+3,LZ0+10,4);pb(2.0,0.12,0.3,Q.steel,lx,qy+6,LZ0+10)} // car park masts on islands
+const tree=(x,z)=>{pc(0.15,1.4,P.wood,x,qy+0.7,z,5);const c=add(new THREE.IcosahedronGeometry(1.0,0),M(0x4f8a35,0.9),x,qy+2.1,z,port);c.scale.y=1.2};
+for(const x of[-22,-14,13,21])tree(x,18.5);for(const ix of[-29,29])tree(ix,LZ0+10);
+// sea wall / breakwater beyond
+for(let i=0;i<8;i++){const r=add(new THREE.DodecahedronGeometry(1.2+0.4*((i*7)%3)/3,0),Q.stone,-29-i*0.2,-0.9,qz0+0.8+i*2,port);r.rotation.set(i,i*2,0)}
+pb(1.2,0.6,1.2,Q.yel,28,qy+0.3,qz0+1);pb(0.3,2.2,0.3,Q.steel,28,qy+1.4,qz0+1);add(new THREE.SphereGeometry(0.18,5,3),P.green,28,qy+2.6,qz0+1,port); // berth light
+
+// ---------- WATER ----------
+const wg=new THREE.PlaneGeometry(200,200,60,60);wg.rotateX(-Math.PI/2);
+const water=add(wg,M(0x2f6f8f,0.25,0.1,{transparent:true,opacity:0.85}),0,-1.0,0,S);water.castShadow=false;
+const wbase=Float32Array.from(wg.attributes.position.array);
+
+// ---------- camera orbit ----------
+let yaw=-2.5,pitch=0.32,dist=55,drag=null,spin=true;
+R.domElement.onpointerdown=e=>{drag=[e.clientX,e.clientY];R.domElement.style.cursor='grabbing'};
+onpointerup=()=>{drag=null;R.domElement.style.cursor='grab'};
+onpointermove=e=>{if(!drag)return;yaw-=(e.clientX-drag[0])*0.006;pitch=Math.min(1.4,Math.max(-0.1,pitch+(e.clientY-drag[1])*0.004));drag=[e.clientX,e.clientY]};
+onwheel=e=>{dist=Math.min(90,Math.max(10,dist*(1+e.deltaY*0.001)))};
+bWire.onclick=()=>mats.forEach(m=>m.wireframe=!m.wireframe);bSpin.onclick=()=>spin=!spin;bWater.onclick=()=>water.visible=!water.visible;bPort.onclick=()=>port.visible=!port.visible;
+let tris=0,ptris=0;port.traverse(o=>{if(o.isMesh){const g=o.geometry;ptris+=(g.index?g.index.count:g.attributes.position.count)/3}});boat.traverse(o=>{if(o.isMesh){const g=o.geometry;tris+=(g.index?g.index.count:g.attributes.position.count)/3}});
+cap.textContent=`Passenger ferry · ${boat.children.length} parts · ${Math.round(tris).toLocaleString()} triangles (port ${Math.round(ptris).toLocaleString()} more) · drag to orbit, scroll to zoom`;
+function loop(t){t*=0.001;if(spin&&!drag)yaw+=0.002;
+  C.position.set(Math.sin(yaw)*Math.cos(pitch)*dist,Math.sin(pitch)*dist+1,Math.cos(yaw)*Math.cos(pitch)*dist);C.lookAt(0,1,port.visible?(window.lookZ??6):0);
+  radar.rotation.y=t*2;boat.position.y=Math.sin(t*0.9)*0.08;boat.rotation.x=Math.sin(t*0.7)*0.015;boat.rotation.z=Math.sin(t*0.5)*0.008;
+  const p=wg.attributes.position;for(let i=0;i<p.count;i++){const x=wbase[i*3],z=wbase[i*3+2];p.setY(i,Math.sin(x*0.25+t)*0.12+Math.cos(z*0.3+t*1.3)*0.1)}
+  p.needsUpdate=true;wg.computeVertexNormals();
+  R.render(S,C);requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script></body></html>

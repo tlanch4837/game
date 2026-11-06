@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cities: Skylines II - Full Systems Flowchart</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2230; --line:#34445c; --txt:#e6edf5; --muted:#8fa3bd; --accent:#4fb3ff; --ok:#5fd38d; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:24px 32px 8px; }
+  h1 { margin:0 0 4px; font-size:26px; }
+  .sub { color:var(--muted); font-size:14px; }
+  .controls { display:flex; gap:10px; padding:12px 32px; align-items:center; flex-wrap:wrap; }
+  input[type=search] { flex:1; min-width:240px; padding:8px 12px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--txt); font-size:14px; }
+  button { padding:8px 14px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--txt); cursor:pointer; font-size:13px; }
+  button:hover { border-color:var(--accent); }
+  h2 { font-size:18px; margin:28px 32px 10px; color:var(--accent); }
+  .loop { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:0 32px; }
+  .step { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; font-size:13px; max-width:220px; }
+  .step b { display:block; color:var(--ok); margin-bottom:3px; }
+  .arrow { color:var(--accent); font-size:20px; padding:0 2px; }
+  main { padding:0 32px 60px; }
+  details { margin:6px 0; border-left:2px solid var(--line); padding-left:12px; }
+  details > summary { cursor:pointer; padding:6px 4px; border-radius:4px; list-style:none; }
+  details > summary::-webkit-details-marker { display:none; }
+  details > summary::before { content:"\25B8"; display:inline-block; width:16px; color:var(--accent); transition:transform .15s; }
+  details[open] > summary::before { transform:rotate(90deg); }
+  .l0 > summary { font-size:17px; font-weight:600; background:var(--panel); border:1px solid var(--line); margin-top:10px; }
+  .l1 > summary { font-size:15px; font-weight:600; }
+  .l2 > summary { font-size:14px; }
+  .desc { color:var(--muted); font-size:13px; font-weight:normal; margin-left:6px; }
+  .leaf { font-size:13px; padding:3px 0 3px 24px; color:var(--txt); }
+  .hidden { display:none !important; }
+  .st-done { border-left-color:#5fd38d !important; }
+  .st-done > summary, .leaf.st-done { color:#5fd38d; }
+  .st-partial { border-left-color:#e0b44c !important; }
+  .st-partial > summary, .leaf.st-partial { color:#e0b44c; }
+  .st-todo > summary, .leaf.st-todo { color:#6b7a90; }
+  .legend { font-size:13px; padding:0 32px 4px; color:var(--muted); }
+  .legend span { font-weight:600; }
+  footer { color:var(--muted); font-size:12px; padding:0 32px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cities: Skylines II - Full Systems Flowchart</h1>
+  <div class="sub">Every system, its subsystems, and the details inside each. Expand any node to drill in. Use search to jump to a topic.</div>
+</header>
+
+<div class="controls">
+  <input type="search" id="q" placeholder="Search systems, e.g. traffic, water, budget, train...">
+  <button id="expandAll">Expand all</button>
+  <button id="collapseAll">Collapse all</button>
+</div>
+
+<h2>1. Core game loop</h2>
+<div class="loop">
+  <div class="step"><b>Player input</b>Tools, camera, menus, hotkeys</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Tool / command layer</b>Places roads, zones, buildings, services, policies</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Simulation tick</b>Fixed-step update of all systems (pausable, speed-scalable)</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Agent simulation</b>Citizens, households, vehicles, cargo, pathfinding</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Building &amp; service state</b>Growth, decline, coverage, utilities, pollution</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Economy &amp; budget</b>Taxes, expenses, trade, goods, cash flow</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Feedback</b>Statistics, overlays, notifications, advisors, milestones</div><div class="arrow">&rarr;</div>
+  <div class="step"><b>Player decisions</b>Back to input (closes the loop)</div>
+</div>
+
+<h2>2. Full system breakdown</h2>
+<div class="legend"><span style="color:#5fd38d">Green = built in the project</span> &middot; <span style="color:#e0b44c">Amber = partly built</span> &middot; <span style="color:#6b7a90">Grey = not started</span>. Based on the project's source, asset and docs folders as of 2026-11-06.</div>
+<main id="tree"></main>
+
+<footer>
+  Built from general knowledge of the genre and the game's public systems. Items marked (verify) may differ by game version or may not be present. Check exact values, unlock levels and mechanics against the current patch notes and in-game data before relying on them.
+</footer>
+
+<script>
+/*
+  Compact format:
+  S(name, desc, children)            -> a system or subsystem with children
+  "Name|description"                 -> a leaf detail
+*/
+function S(n, d, c){ return { n, d, c }; }
+
+const SYSTEMS = [
+
+S("Engine & Platform","Foundation everything runs on",[
+  S("Entity & data architecture","How game objects are stored and updated",[
+    "Entity-component storage|Game objects are entities holding plain data components",
+    "Archetypes & chunks|Entities grouped by component layout for fast iteration",
+    "Systems & update order|Each simulation system runs in a fixed order per tick",
+    "Structural changes|Adding/removing components is batched to avoid mid-frame chaos",
+    "Prefab / template instancing|Spawning copies of a building or vehicle definition"
+  ]),
+  S("Job system & threading","Parallel simulation work",[
+    "Worker threads|Job scheduler across CPU cores",
+    "Dependencies between jobs|Jobs declare what data they read and write",
+    "Determinism rules|Same inputs produce same results, needed for save/replay",
+    "Main-thread sync points|Places where results are merged back to the render thread"
+  ]),
+  S("Rendering pipeline","Drawing the world",[
+    "Deferred / HDRP-style lighting|Light passes on G-buffers (verify exact pipeline)",
+    "Frustum & occlusion culling|Skip objects outside or hidden behind others",
+    "LOD selection|Swap model detail by distance and screen size",
+    "GPU instancing|Draw many identical props or buildings in one call",
+    "Shadow cascades|Multiple shadow maps for near and far distances",
+    "Post-processing|Bloom, tone mapping, color grading, AA, depth of field",
+    "Render quality presets|Scaling resolution, shadows, draw distance per setting"
+  ]),
+  S("Input system","Controls and bindings",[
+    "Device abstraction|Keyboard, mouse, gamepad treated uniformly",
+    "Action maps|Named actions like Place, Rotate, Cancel mapped to keys",
+    "Rebinding|Player remaps keys; conflicts are detected",
+    "Camera input curves|Sensitivity, inversion, edge scrolling",
+    "Modifier keys & chords|Shift for multi-place, Ctrl for alternates"
+  ]),
+  S("UI framework","HUD, menus, data binding",[
+    "Web-based UI layer|HTML/CSS-style UI rendered over the 3D view (verify tech)",
+    "C# to UI data binding|Simulation values pushed into UI bindings",
+    "Input focus & navigation|Keyboard/controller navigation between panels",
+    "Scaling & safe areas|Resolution and aspect ratio support"
+  ]),
+  S("Audio engine","Sound playback and mixing",[
+    "Mixer buses|Master, music, SFX, ambient, UI, voice",
+    "Spatial audio|Volume and panning based on camera distance",
+    "Audio event system|Game events trigger named sound events",
+    "Voice limiting|Caps how many sounds play at once"
+  ]),
+  S("Localization","Translating the game",[
+    "String tables|All player-facing text keyed by ID",
+    "Fonts & glyph coverage|Scripts that need extra characters (CJK, Cyrillic, etc.)",
+    "Number, currency & date formats|Formatted per locale"
+  ]),
+  S("Settings","Player options",[
+    "Graphics options|Resolution, quality presets, individual toggles",
+    "Audio options|Per-bus volume",
+    "Gameplay options|Difficulty and simulation toggles where offered (verify)",
+    "Accessibility|Colorblind palettes, text scale, subtitle options (verify)"
+  ]),
+  S("Platform services","Store and OS integration",[
+    "Achievements|Unlock on milestones and special conditions",
+    "Cloud saves|Sync via platform service where supported",
+    "Storefront overlay & updates|Patching and DLC/content entitlements",
+    "Controller and platform rules|Certification-driven behavior per console"
+  ]),
+  S("Telemetry & diagnostics","Internal health tools",[
+    "Crash reporting|Stack traces and game state at crash",
+    "Performance counters|Frame time, simulation time per system",
+    "Debug overlays|Developer-only views (hidden in release)"
+  ])
+]),
+
+S("Simulation Core","Time, randomness, events",[
+  S("Fixed simulation tick","Deterministic time step",[
+    "Tick rate|Simulation runs in fixed steps independent of frame rate",
+    "Interpolation for display|Rendering blends between ticks for smooth motion",
+    "Tick budget|Work spread across frames when the CPU is slow"
+  ]),
+  S("Game speed & pause","Time control",[
+    "Pause|Freezes all simulation ticks",
+    "Speed levels|1x, 2x, 3x multipliers",
+    "Frame stepping|Advance one tick at a time for debugging"
+  ]),
+  S("Seeded randomness","Reproducible randomness",[
+    "Global seed|Set at new game or map creation",
+    "Per-system RNG streams|Each system has its own stream so changes don't cascade",
+    "Save-safe state|RNG state stored in saves so reloads replay identically"
+  ]),
+  S("Game clock & calendar","Time of day, date, seasons",[
+    "Minutes, hours, days|Base time units",
+    "Months & years|Calendar progression",
+    "Season boundaries|Changes weather, daylight and some demand",
+    "Time-of-day triggers|Schools open, shops close, commute peaks"
+  ]),
+  S("Event bus","Messages between systems",[
+    "Event types|Building completed, citizen moved, vehicle arrived, service failed",
+    "Subscribers|Systems react without direct coupling",
+    "Event queue ordering|Deterministic processing order"
+  ]),
+  S("Update scheduling","Spreading work across frames",[
+    "Batched updates|Process N buildings or citizens per tick",
+    "Priority updates|Important entities updated more often",
+    "Dirty flags|Only recompute what changed"
+  ]),
+  S("Save-game state hooks","Serialization",[
+    "Per-system save data|Each system writes its own state block",
+    "Version tags|Each block versioned for migration",
+    "Reference fix-up|Links between entities restored after load"
+  ])
+]),
+
+S("Terrain & Map","The physical world",[
+  S("Heightmap & terrain mesh","Elevation data",[
+    "Height samples|Grid of elevation values",
+    "Slope calculation|Used for building placement and road grading",
+    "Terrain LOD|Lower detail far away",
+    "Terrain flattening on build|Ground leveled under roads and buildings"
+  ]),
+  S("Terrain tools","Player shaping tools",[
+    "Raise / lower brush|Edit elevation with falloff",
+    "Smooth brush|Average heights",
+    "Flatten / level tool|Set a target height",
+    "Paint & texture brush|Ground materials (grass, rock, sand)",
+    "Undo for terrain edits|Stack of previous heightmap states"
+  ]),
+  S("Water bodies","Rivers, lakes, ocean",[
+    "Water level & depth|Per-cell water height",
+    "Shoreline generation|Mesh and shader edge",
+    "River flow|Direction and speed (verify)",
+    "Water placement rules|Buildings and roads near water"
+  ]),
+  S("Natural resources","Resources that drive industry",[
+    "Ore deposits|Mining sites",
+    "Oil deposits|Drilling sites",
+    "Fertile land|Farming yield",
+    "Forest|Logging yield",
+    "Fishing spots|Water-based extraction (verify)",
+    "Resource depletion|Yield drops over time (verify)"
+  ]),
+  S("Climate & biomes","Environment type",[
+    "Temperature|Affects seasons and some demand",
+    "Precipitation|Rain and snow frequency",
+    "Vegetation|Trees and ground cover by biome",
+    "Snow line|Elevation where snow appears"
+  ]),
+  S("Map size & boundaries","Playable area",[
+    "Map tiles|Map divided into tiles for loading",
+    "Playable border|Limits on where building can happen",
+    "Expansion|Additional land unlocked via progression (verify)"
+  ]),
+  S("Map import","Importing terrain data",[
+    "Heightmap import|Grayscale image to terrain (verify availability)",
+    "Geo data import|Real-world data import (verify availability)"
+  ]),
+  S("Trees & props","Natural and placed props",[
+    "Tree placement|Procedural and hand-placed",
+    "Tree clearing rules|Required before building",
+    "Prop placement|Decorative objects"
+  ])
+]),
+
+S("Roads & Transport Network","Movement infrastructure",[
+  S("Road types","Road families",[
+    "Local street|Narrow, low capacity, cheap",
+    "Avenue|Two lanes each way, medium capacity",
+    "Boulevard|Wide, median, high capacity",
+    "Highway|Controlled access, high speed",
+    "One-way street|Single direction",
+    "Bike lane|Cycling infrastructure",
+    "Sidewalk|Pedestrian path beside roads",
+    "Street parking lane|Curbside parking"
+  ]),
+  S("Lane model","How lanes work",[
+    "Lane definition|Speed, width, capacity, allowed vehicles",
+    "Lane direction|One-way vs two-way",
+    "Turn lanes|Left, right, straight, shared",
+    "Lane connections|Lanes join across intersections"
+  ]),
+  S("Intersections & junctions","Where roads meet",[
+    "Node types|Simple, merge/split, crossing",
+    "Roundabouts|Circular junction type",
+    "Overpasses|Roads crossing without connecting",
+    "Interchanges|Highway ramps and merges",
+    "Junction geometry|Curves and corner radius"
+  ]),
+  S("Traffic control","Managing flow at junctions",[
+    "Traffic lights|Signal cycles and timings",
+    "Priority signs|Yield, stop, priority",
+    "Lane signals|Per-lane allowed movements",
+    "Signal timing editor|Player adjusts phase lengths (verify)"
+  ]),
+  S("Public transit lines","Transit network",[
+    "Bus lines|Routes with stops",
+    "Tram lines|Rails in road lanes",
+    "Metro / subway lines|Underground routes with stations",
+    "Train lines|Passenger rail routes",
+    "Ferry lines|Water routes between piers",
+    "Stops & stations|Passenger pickup points",
+    "Line map & naming|Visual route editing"
+  ]),
+  S("Transit scheduling","Operations",[
+    "Timetables|Departure times per stop",
+    "Depots|Where vehicles are stored and serviced",
+    "Vehicle count per line|Number of vehicles assigned",
+    "Frequency control|Service interval"
+  ]),
+  S("Rail network","Tracks and trains",[
+    "Track types|Single, double, elevated, underground",
+    "Switches & crossovers|Lets trains change tracks",
+    "Cargo rail|Freight lines to industry",
+    "Passenger rail|Routes for passenger trains",
+    "Train stations|Platforms and boarding",
+    S("Passenger train - 3D model","Asset side of one train",[
+      "Consist layout|Locomotive/power car + passenger cars; car length, coupler points",
+      "Meshes & LODs|LOD0 close, LOD1/LOD2 far for body, bogies, pantographs, doors",
+      "Materials & textures|Livery variants, PBR maps, dirt/wear layer, emissive windows and headlights",
+      "Animated parts|Bogie wheels, pantograph, doors, wipers",
+      "Interior|Seats and passenger silhouettes visible through windows (optional, costly)",
+      "Attachment points|Named sockets for lights, sound emitters, couplers, door positions",
+      "Collision & bounds|Simplified bounds for culling and station clearance",
+      "Asset metadata|Name, unlock tier, capacity, speed, year, maintenance cost"
+    ]),
+    S("Passenger train - script / logic","Behavior side of one train",[
+      "Vehicle prefab definition|Links model, capacity, max speed, acceleration, braking, sound set",
+      "Spawn & depot release|Created at depot, assigned to a line and timetable",
+      "Route following|Follows track lanes/splines, respects signals and switches",
+      "Speed control|Accel/brake curves, speed limits on curves and junctions, collision avoidance",
+      "Stop behaviour|Halt at platform marker, align doors, dwell time",
+      "Passenger boarding|Citizens path to doors, load/unload counts, capacity checks",
+      "Timetable adherence|Early/late tracking, delays, skipping stops when overloaded",
+      "Animation & audio triggers|Doors, horn, brake squeal, announcements from state changes",
+      "Breakdown & maintenance|Wear, depot service, failure events (verify)",
+      "Despawn & return|Route end, return to depot, cleanup of agent references",
+      "Save/load state|Track position, current stop, passengers aboard, timetable progress"
+    ])
+  ]),
+  S("Airports","Air transport",[
+    "Runways & taxiways|Aircraft movement surfaces",
+    "Terminals|Passenger processing",
+    "Cargo airports|Freight flights",
+    "Flight routes|Connections to other cities or off-map",
+    "Airspace & noise|Noise impact on nearby land"
+  ]),
+  S("Seaports","Maritime transport",[
+    "Docks & berths|Ship mooring points",
+    "Cargo ships|Freight arrival and departure",
+    "Ferry terminals|Passenger connections",
+    "Harbor shipping lanes|Water routes"
+  ]),
+  S("Parking","Vehicle storage",[
+    "Street parking|Curbside spaces and turnover",
+    "Parking lots|Surface lots, capacity",
+    "Parking garages|Multi-level capacity",
+    "Parking demand|Driven by car trips and destinations"
+  ]),
+  S("Road upkeep & condition","Maintenance",[
+    "Road wear|Condition declines with use (verify)",
+    "Repair cost|Ongoing expense to maintain",
+    "Damage events|Disasters or accidents affecting roads"
+  ])
+]),
+
+S("Traffic & Movement Simulation","Agents on the network",[
+  S("Pathfinding","Route calculation",[
+    "Cost model|Distance, speed, congestion, tolls, transfers",
+    "Shortest-path search|A*-style search on the road graph",
+    "Transit transfers|Switching lines with a time penalty",
+    "Path caching|Reuse recent routes to save CPU"
+  ]),
+  S("Vehicle agents","Vehicles on the network",[
+    "Cars|Private citizen vehicles",
+    "Trucks|Freight from industry and warehouses",
+    "Buses|Scheduled road transit",
+    "Trams & trains|Rail-bound transit",
+    "Ships & planes|Water and air transit",
+    "Emergency vehicles|Fire, police, ambulance with priority"
+  ]),
+  S("Congestion model","Traffic jams",[
+    "Lane capacity|Vehicles per lane per time",
+    "Speed reduction|Slower traffic when lanes fill",
+    "Queueing|Vehicles waiting at lights and junctions",
+    "Gridlock recovery|Jams clear as demand drops"
+  ]),
+  S("Vehicle spawning & despawning","Entry and exit",[
+    "Entry points|Map edge or highway connections",
+    "Off-map traffic|External vehicles passing through",
+    "Despawn rules|Vehicle removed after arrival"
+  ]),
+  S("Pedestrian movement","Walking citizens",[
+    "Sidewalk walking|Pedestrians use sidewalks and crossings",
+    "Crowd density|Busy stations and shopping areas",
+    "Station boarding|Waiting and entering transit"
+  ]),
+  S("Commute modelling","How citizens choose transport",[
+    "Mode choice|Car, transit, walk, bike based on time and cost",
+    "Trip generation|Home to work, school, shops, leisure",
+    "Time budget|Maximum acceptable commute"
+  ]),
+  S("Freight & logistics","Goods movement",[
+    "Truck routes|Industry to warehouse to consumer",
+    "Warehouse dispatch|Trucks loaded and released",
+    "Port & rail freight|Shifting cargo to other modes"
+  ])
+]),
+
+S("Zoning & Buildings","Where and what gets built",[
+  S("Zone types","Zoning categories",[
+    "Residential low density|Houses and small apartments",
+    "Residential high density|Apartment towers",
+    "Commercial low density|Shops, small offices",
+    "Commercial high density|Malls and big stores",
+    "Office|White-collar buildings",
+    "Industrial - general|Factories and warehouses",
+    "Industrial - ore, oil, forest, farming|Specialized extraction and processing",
+    "Unzoned|Land with no zone assigned"
+  ]),
+  S("Zoning tools","Applying zones",[
+    "Brush zoning|Paint zones freehand",
+    "Area zoning|Draw a shape and fill it",
+    "Zone shape & depth|How far from the road a zone reaches",
+    "Road adjacency rule|Zones need road access to grow"
+  ]),
+  S("Lot / plot system","Parcels",[
+    "Lot subdivision|Land split along roads into lots",
+    "Lot sizes|Small, medium, large by zone",
+    "Corner & frontage lots|Special layouts (verify)"
+  ]),
+  S("Building spawning","Growth of buildings",[
+    "Spawn probability|Based on demand, land value, services",
+    "Prefab selection|Pick a building that fits the lot size",
+    "Spawn delay|Time before a new building appears"
+  ]),
+  S("Building levels","Upgrades",[
+    "Level 1 to 5|Each level more capacity",
+    "Upgrade conditions|Land value, services, happiness, demand",
+    "Downgrade conditions|Pollution, crime, decline, lost services"
+  ]),
+  S("Construction","Building process",[
+    "Construction time|Stages from foundation to finished",
+    "Construction cost|Paid from budget",
+    "Construction states|Under construction, operational, abandoned"
+  ]),
+  S("Abandonment & demolition","End of building life",[
+    "Abandonment triggers|No occupants, no services, decay",
+    "Decay|Building condition declines",
+    "Bulldoze rules|Remove buildings and roads, refunds"
+  ]),
+  S("Building capacity","What buildings hold",[
+    "Residents|Housing capacity per building",
+    "Jobs|Workplace capacity per building",
+    "Goods output|Production per building (industry)",
+    "Visitors|Shops, parks and tourist sites"
+  ]),
+  S("Landmarks & unique buildings","Special buildings",[
+    "Landmarks|Unique buildings with bonuses",
+    "Unlock conditions|Progression-gated availability"
+  ])
+]),
+
+S("Demand & Growth","What the city needs",[
+  S("Residential demand","Housing need",[
+    "Job availability|More jobs raise demand",
+    "Service coverage|Good services raise demand",
+    "Housing availability|Vacancies reduce demand",
+    "Land value effect|Higher value raises demand"
+  ]),
+  S("Commercial / office / industrial demand","Business need",[
+    "Workforce|Available workers",
+    "Goods demand|Shops need goods",
+    "Population demand|More people, more shops",
+    "Industrial inputs|Factories need raw goods"
+  ]),
+  S("Worker and job matching","Labor market",[
+    "Education match|Skilled jobs need educated workers",
+    "Commute distance|Far jobs less attractive",
+    "Unemployment effects|Unemployed citizens reduce demand"
+  ]),
+  S("Growth conditions","What makes zones grow",[
+    "Land value threshold|Minimum value to grow",
+    "Service requirements|Needed coverage",
+    "Pollution limits|High pollution blocks growth",
+    "Transit access|Nearby transit increases appeal"
+  ])
+]),
+
+S("Land Value & Attractiveness","Desirability of places",[
+  S("Land value calculation","How value is computed",[
+    "Road access|Better roads raise value",
+    "Service coverage|Schools, parks, health add value",
+    "Pollution penalty|Air, noise, ground pollution reduce value",
+    "Crime penalty|High crime lowers value",
+    "Transit proximity|Stations add value"
+  ]),
+  S("Attractiveness","Appeal score",[
+    "Residential attractiveness|Drives housing demand",
+    "Commercial attractiveness|Drives shop appeal",
+    "Tourist attractiveness|Drives visitor traffic"
+  ]),
+  S("Land value overlay","Visual map",[
+    "Color scale|Low to high value",
+    "Per-parcel display|Hover to read value"
+  ])
+]),
+
+S("Citizens & Households","People as agents",[
+  S("Citizen agents","Individual people",[
+    "Identity|Name, age, gender, education",
+    "Home & workplace|Assigned building references",
+    "Needs state|Health, education, leisure, commute",
+    "Mood / wellbeing|Overall happiness score"
+  ]),
+  S("Household model","Family units",[
+    "Household members|Adults and children together",
+    "Shared income & housing|One home and combined wealth",
+    "Moving together|Households relocate as a unit"
+  ]),
+  S("Ageing & life stages","Life cycle",[
+    "Child|Attends school",
+    "Student|Education stage",
+    "Adult|Works and pays taxes",
+    "Senior|Retirement and health needs",
+    "Births & deaths|Population change over time"
+  ]),
+  S("Education levels","Skill tiers",[
+    "Uneducated|Eligible for basic jobs",
+    "Educated|Eligible for skilled work",
+    "Highly educated|Eligible for specialist work",
+    "Education progression|Schools and universities raise levels"
+  ]),
+  S("Employment & unemployment","Work status",[
+    "Job search|Unemployed citizens look for work",
+    "Layoffs|Job losses when businesses decline",
+    "Retirement|Leaving the workforce"
+  ]),
+  S("Moving in & out","Migration",[
+    "Move-in attraction|Pulled by jobs, housing and services",
+    "Move-out causes|Pollution, crime, poor services, no jobs",
+    "Emigration|Leaving the city entirely"
+  ]),
+  S("Needs & wellbeing","Satisfaction systems",[
+    "Health|Access to clinics and hospitals",
+    "Education access|Nearby school coverage",
+    "Leisure|Parks, sports and entertainment",
+    "Commute quality|Travel time and comfort",
+    "Housing quality|Building condition and space"
+  ]),
+  S("Daily routine & schedule","Citizen day",[
+    "Work hours|Shifts and commuting",
+    "School hours|Students attend daily",
+    "Shopping trips|Trips to stores",
+    "Leisure trips|Parks and entertainment"
+  ]),
+  S("Homelessness","No housing",[
+    "Homeless households|Households without a home",
+    "Shelter need|Services used by homeless citizens"
+  ]),
+  S("Population statistics","Counts and breakdowns",[
+    "Population total|Overall count",
+    "Age distribution|Child, adult, senior shares",
+    "Employment rate|Share of working-age people employed"
+  ])
+]),
+
+S("Services","Public and private services",[
+  S("Education","Schools and learning",[
+    "Elementary school|Basic schooling",
+    "High school|Secondary education",
+    "University|Higher education",
+    "Library|Community learning",
+    "Coverage radius|Distance services reach",
+    "Staffing & budget|Teachers and funding levels"
+  ]),
+  S("Healthcare","Medical services",[
+    "Clinic|Basic medical care",
+    "Hospital|Full medical care",
+    "Emergency service|Ambulances and response",
+    "Capacity & load|Patients per facility"
+  ]),
+  S("Fire & rescue","Fire response",[
+    "Fire station|Response base",
+    "Hazard response|Fires in buildings and disasters",
+    "Coverage|Station reach"
+  ]),
+  S("Police & crime","Law enforcement",[
+    "Police station|Response base",
+    "Crime rate|Crimes per area",
+    "Prison|Holds criminals",
+    "Response time|Speed of police reaction"
+  ]),
+  S("Garbage & waste","Waste management",[
+    "Collection|Garbage trucks pick up",
+    "Landfill|Waste disposal site",
+    "Recycling center|Reduces landfill need",
+    "Transfer station|Waste staging",
+    "Incinerator|Burns waste (verify)"
+  ]),
+  S("Parks & leisure","Recreation",[
+    "Parks|Green space for leisure",
+    "Sports facilities|Active recreation",
+    "Entertainment|Venues for evening activity",
+    "Tourism draws|Attractions for visitors"
+  ]),
+  S("Death care","End-of-life services",[
+    "Morgue|Temporary body storage",
+    "Cemetery|Burial",
+    "Crematorium|Cremation"
+  ]),
+  S("Service coverage","How services reach buildings",[
+    "Service radius|Area served by each facility",
+    "Coverage quality|Better when close and sufficiently staffed",
+    "Demand per building|Each building's need for each service"
+  ]),
+  S("Service staffing & budget","Operations",[
+    "Budget level|Spending per service",
+    "Staff needs|Workers required",
+    "Efficiency|Output relative to budget"
+  ])
+]),
+
+S("Utilities & Networks","Infrastructure grids",[
+  S("Electricity grid","Power generation and delivery",[
+    "Coal power plant|Fuel-based generation",
+    "Gas power plant|Cleaner fuel generation",
+    "Nuclear power plant|High output, special rules (verify)",
+    "Solar farm|Daytime renewable output",
+    "Wind turbines|Weather-dependent output",
+    "Hydro plant|Water-based generation",
+    "Geothermal plant|Heat-based generation (verify)",
+    "Power lines & substations|Delivery network",
+    "Batteries|Storage for surplus power"
+  ]),
+  S("Water supply","Water delivery",[
+    "Water pumps|Draw water from sources",
+    "Water towers|Pressure and storage",
+    "Water treatment|Makes water safe",
+    "Water pipes|Delivery network",
+    "Capacity & pressure|Shortage when demand exceeds supply"
+  ]),
+  S("Sewage & wastewater","Waste water",[
+    "Sewage pipes|Collects waste water",
+    "Sewage outlets|Discharge points",
+    "Wastewater treatment plant|Cleans water before discharge"
+  ]),
+  S("Heating (verify)","Heat supply",[
+    "Heating plants|Central heat source",
+    "District heating network|Pipes to buildings"
+  ]),
+  S("Utility placement rules","Where utilities go",[
+    "Road adjacency|Utilities placed along roads",
+    "Pipe routing|Underground routes",
+    "Underground placement|Hidden infrastructure"
+  ]),
+  S("Shortage & overload","Failure states",[
+    "Power shortage|Buildings lose power",
+    "Water shortage|Buildings lose water",
+    "Overload|Capacity exceeded, damage or blackout"
+  ]),
+  S("Telecom / internet (verify)","Connectivity",[
+    "Coverage|Towers or cables reaching buildings",
+    "Effects|Job and happiness impacts, if present"
+  ])
+]),
+
+S("Industry & Production Chains","Goods and industrial economy",[
+  S("Extraction","Raw resource collection",[
+    "Mining ore|From ore deposits",
+    "Drilling oil|From oil deposits",
+    "Forestry|From forest areas",
+    "Farming|From fertile land",
+    "Fishing|From water (verify)"
+  ]),
+  S("Processing","Turning inputs into goods",[
+    "Factories|General and specialized manufacturing",
+    "Refineries|Oil to refined products",
+    "Input requirements|What each factory needs",
+    "Output chains|Goods produced"
+  ]),
+  S("Goods types","Products",[
+    "Raw goods|Ore, oil, wood, food (verify list)",
+    "Manufactured goods|Metal, plastics, electronics (verify list)",
+    "Input/output chain map|Which goods feed which buildings"
+  ]),
+  S("Warehouses & storage","Stockpiling",[
+    "Capacity|Storage space",
+    "Stock levels|Goods on hand",
+    "Shortage signals|Low stock alerts"
+  ]),
+  S("Freight routing","Moving goods",[
+    "Truck dispatch|Goods moved by road",
+    "Rail cargo|Goods moved by rail",
+    "Port & airport cargo|Goods moved by sea or air"
+  ]),
+  S("Industry specialization","Focus areas",[
+    "Industrial district focus|Clusters of one industry",
+    "Building types by focus|Which buildings appear"
+  ]),
+  S("Pollution from industry","Industrial impact",[
+    "Air output|Emissions from factories",
+    "Water output|Discharge into water bodies",
+    "Ground output|Soil contamination"
+  ])
+]),
+
+S("Economy & Budget","Money and markets",[
+  S("City budget","Finances",[
+    "Income categories|Taxes, exports, fees",
+    "Expense categories|Services, policies, loans",
+    "Cash balance|Current funds",
+    "Budget planning|Setting limits per category"
+  ]),
+  S("Taxes","Tax system",[
+    "Residential tax rate|Per zone type",
+    "Commercial tax rate|Per zone type",
+    "Industrial tax rate|Per zone type",
+    "Office tax rate|Per zone type",
+    "District tax overrides|Local rates"
+  ]),
+  S("Service expenses","Cost of running services",[
+    "Operating cost|Per service",
+    "Maintenance cost|Per building or line",
+    "Budget slider|Spending level per service"
+  ]),
+  S("Loans & debt","Borrowing",[
+    "Borrowing|Take a loan",
+    "Interest|Cost of debt",
+    "Repayment|Scheduled payments",
+    "Credit rating|Affects future borrowing (verify)"
+  ]),
+  S("Market & prices","Goods pricing",[
+    "Supply and demand|Prices move with stock levels",
+    "Price effects|Impact on businesses"
+  ]),
+  S("Import & export","Trade",[
+    "Export routes|Sending goods out",
+    "Import routes|Bringing goods in",
+    "Export income|Revenue from exports",
+    "Import costs|Price of bought goods"
+  ]),
+  S("Tariffs & trade routes","Trade rules (verify)",[
+    "Tariff rates|Taxes on trade",
+    "Trade agreements|Preferential terms (verify)"
+  ]),
+  S("Economic statistics","Reporting",[
+    "Income graph|Over time",
+    "Expense graph|Over time",
+    "Economic output metrics|City-wide totals"
+  ])
+]),
+
+S("Environment & Pollution","The city's footprint",[
+  S("Air pollution","Air quality",[
+    "Sources|Factories, traffic, power plants",
+    "Dispersion|Spread across nearby cells",
+    "Effects|Health and land value"
+  ]),
+  S("Noise pollution","Sound impact",[
+    "Sources|Roads, airports, industry",
+    "Effects|Residents and land value"
+  ]),
+  S("Ground / soil pollution","Contamination",[
+    "Sources|Industry and landfill",
+    "Cleanup|Removing contaminated soil"
+  ]),
+  S("Water pollution","Water contamination",[
+    "Sources|Sewage and industry discharge",
+    "Spread|Downstream effects in water bodies"
+  ]),
+  S("CO2 & climate effects","Emissions",[
+    "Emissions tracking|Total output per source",
+    "Consequences|Effects on the city (verify)"
+  ]),
+  S("Green space & trees","Mitigation",[
+    "Pollution reduction|Trees and parks absorb pollution",
+    "Land value and wellbeing boost|Green areas add appeal"
+  ])
+]),
+
+S("Weather, Seasons & Disasters","Environmental events",[
+  S("Seasons & weather","Weather cycle",[
+    "Rain|Affects traffic and outdoor demand",
+    "Snow|Road and power effects",
+    "Heat & cold|Demand for heating and cooling"
+  ]),
+  S("Day/night cycle","Time of day",[
+    "Lighting|Visual change",
+    "Citizen schedules|Work and leisure timing"
+  ]),
+  S("Natural disasters","Disaster types (verify list)",[
+    "Fire|Spreads through buildings",
+    "Flood|Water damage to low ground",
+    "Storm|Wind and rain damage",
+    "Earthquake|Structural damage",
+    "Tornado|Localized destruction"
+  ]),
+  S("Disaster response","Recovery",[
+    "Fire response|Fire stations deploy",
+    "Police response|Crowd and security",
+    "Healthcare response|Injured citizens treated",
+    "Rebuild|Repair and reconstruction"
+  ]),
+  S("Random city events","Events",[
+    "Festivals|Temporary boosts",
+    "Incidents|Local problems",
+    "News events|Notifications and effects"
+  ])
+]),
+
+S("Districts & Areas","Grouping and local rules",[
+  S("District creation","Drawing districts",[
+    "Boundary drawing|Shape of each district",
+    "Naming & color|Labels and map colors"
+  ]),
+  S("District policies","Local rules",[
+    "Tax modifiers|Change local tax rates",
+    "Traffic rules|Local vehicle rules",
+    "Service modifiers|Change local service levels",
+    "Industry modifiers|Change local production rules"
+  ]),
+  S("District specialization","Focus",[
+    "Industry focus|Factory cluster",
+    "Tourism focus|Attractions",
+    "Residential focus|Housing emphasis"
+  ]),
+  S("District statistics","Reporting",[
+    "Population|Residents per district",
+    "Jobs|Workers per district",
+    "Income|Tax and trade per district"
+  ])
+]),
+
+S("Policies & Ordinances","Rules the player sets",[
+  S("City-wide policies","Global rules",[
+    "Budget policies|Affect income and expense",
+    "Citizen policies|Affect happiness and demand",
+    "Industry policies|Affect production and goods"
+  ]),
+  S("Policy costs & upkeep","Expenses",[
+    "Adoption cost|One-time cost",
+    "Upkeep cost|Ongoing per-turn or per-month cost"
+  ]),
+  S("Policy unlock conditions","Gating",[
+    "Milestone requirements|Reach a population or goal",
+    "Prerequisites|Other policies needed first"
+  ]),
+  S("Stacking & conflicts","Interactions",[
+    "Stacking rules|Which effects add together",
+    "Conflict rules|Mutually exclusive policies"
+  ])
+]),
+
+S("Progression & Unlocks","Pacing and rewards",[
+  S("Milestones","Progress markers",[
+    "Population milestones|Reach population thresholds",
+    "Achievement milestones|Reach specific goals",
+    "Milestone rewards|Unlocks and points"
+  ]),
+  S("Unlock points / XP","Currency",[
+    "Earning points|From milestones",
+    "Spending points|Buying unlocks"
+  ]),
+  S("Unlock tree","What's gated",[
+    "Roads|Unlocked by tier",
+    "Buildings|Unlocked by tier",
+    "Services|Unlocked by tier",
+    "Policies & tools|Unlocked by tier"
+  ]),
+  S("Achievements","Platform achievements",[
+    "Goal definitions|Conditions for each achievement",
+    "Platform sync|Reporting to the store"
+  ])
+]),
+
+S("Tools & Player Interaction","How the player acts",[
+  S("Camera controls","View control",[
+    "Pan|Move across the map",
+    "Zoom|Close and far views",
+    "Rotate & tilt|Angle of view",
+    "Follow object|Track a vehicle or citizen"
+  ]),
+  S("Build tools","Placing things",[
+    "Road tool|Draw roads with snapping",
+    "Rail tool|Draw tracks",
+    "Utility tool|Place pipes and lines",
+    "Zoning tool|Apply zones",
+    "Service tool|Place service buildings",
+    "Bulldoze tool|Remove structures"
+  ]),
+  S("Terrain tools","Shaping the ground",[
+    "Elevation brush|Raise or lower",
+    "Water tool|Create or edit water",
+    "Paint brush|Change ground type"
+  ]),
+  S("Selection & info panels","Inspection",[
+    "Click-to-select|Pick a building, citizen or vehicle",
+    "Info panel|Details shown for selection",
+    "Follow & navigate|Jump to related objects"
+  ]),
+  S("Overlays","Data views",[
+    "Traffic overlay|Congestion heatmap",
+    "Land value overlay|Value heatmap",
+    "Pollution overlay|Pollution heatmap",
+    "Crime overlay|Crime heatmap",
+    "Coverage overlay|Service reach",
+    "Zone overlay|Zone types"
+  ]),
+  S("Undo / cancel rules","Editing safety",[
+    "Placement preview|Ghost version before placing",
+    "Refund rules|Cost returned when cancelling",
+    "Invalid placement feedback|Why a spot is blocked"
+  ])
+]),
+
+S("Information & Feedback UI","Telling the player what is happening",[
+  S("HUD & toolbar","Main interface",[
+    "Toolbar|Tool buttons",
+    "Time and money display|Top bar",
+    "Menu access|Panels and settings"
+  ]),
+  S("Notifications","Alerts",[
+    "Problem alerts|Fire, shortage, crime",
+    "Milestone alerts|Progress notices"
+  ]),
+  S("Advisors","Context hints",[
+    "Budget advisor|Financial guidance",
+    "Traffic advisor|Congestion hints",
+    "Service advisor|Coverage gaps"
+  ]),
+  S("Statistics & graphs","Charts",[
+    "Population graph|Over time",
+    "Income graph|Over time",
+    "Traffic graph|Over time",
+    "Service graph|Over time"
+  ]),
+  S("Tooltips & localization","Explanations",[
+    "Hover tips|Explain data",
+    "Translated labels|Language support"
+  ])
+]),
+
+S("Save, Load & Persistence","Keeping the city",[
+  S("Save format","Data format",[
+    "Serialized state|All system data",
+    "Versioning|Format version number",
+    "Compatibility|Which versions load"
+  ]),
+  S("Autosave & manual save","Saving",[
+    "Autosave interval|How often",
+    "Manual save slots|Named saves",
+    "Save metadata|Name, date, population",
+    "Thumbnail|Preview image"
+  ]),
+  S("Load & migration","Loading",[
+    "Restore state|Rebuild all systems",
+    "Migration|Upgrade older saves"
+  ]),
+  S("Cloud saves","Sync",[
+    "Platform sync|Where supported",
+    "Conflict handling|Which save wins"
+  ])
+]),
+
+S("Audio","Sound",[
+  S("Ambient sound","Background",[
+    "Nature layer|Birds, wind, water",
+    "City layer|Crowds, machinery",
+    "Weather layer|Rain, snow",
+    "Time-of-day layer|Night vs day"
+  ]),
+  S("Traffic & vehicle audio","Vehicles",[
+    "Engine sounds|Per vehicle type",
+    "Horns|Traffic horns",
+    "Transit sounds|Trains, trams, buses"
+  ]),
+  S("Music","Soundtrack",[
+    "Adaptive music|Changes with game state",
+    "Looped tracks|Background loops"
+  ]),
+  S("UI sounds","Interface",[
+    "Button clicks|Menu feedback",
+    "Tool sounds|Placement and bulldoze",
+    "Notification sounds|Alerts"
+  ])
+]),
+
+S("Rendering & Visual Feedback","What the player sees",[
+  S("Building visuals","Buildings",[
+    "Model variants|Different looks per building",
+    "Construction states|Scaffolding and progress",
+    "Decay states|Weathered or abandoned look"
+  ]),
+  S("Vehicle & citizen visuals","Moving things",[
+    "Vehicle animation|Wheels, doors",
+    "Citizen models|Crowd rendering",
+    "LOD|Simpler models far away"
+  ]),
+  S("Weather & lighting visuals","Sky and light",[
+    "Rain & snow|Particle effects",
+    "Fog|Distance haze",
+    "Shadows|Sun and moon",
+    "Sky|Day, night, cloud cover"
+  ]),
+  S("Water & terrain visuals","Ground and water",[
+    "Water shader|Surface look",
+    "Shoreline blending|Edge look",
+    "Terrain textures|Blended ground materials"
+  ]),
+  S("Effects","Particles",[
+    "Smoke|Chimneys and fires",
+    "Pollution plumes|Visible emissions",
+    "Disaster effects|Explosions, flood water"
+  ])
+]),
+
+S("Content, Assets & Editors","Building the game's content",[
+  S("Asset pipeline","Content production",[
+    "Models|Meshes and LODs",
+    "Textures|Material maps",
+    "Prefabs|Reusable definitions",
+    "Metadata|Names, costs, sizes"
+  ]),
+  S("Asset editor / mod tools","Custom content",[
+    "Building creator|Make new buildings",
+    "Prop creator|Make decorative items",
+    "Road creator|Make new road types",
+    "Import tools|Bring in models (verify)"
+  ]),
+  S("Map editor","Map creation",[
+    "Terrain editing|Shape the land",
+    "Starting conditions|Pre-placed content",
+    "Map publishing|Sharing maps"
+  ]),
+  S("Localization assets","Translations",[
+    "Translated strings|Per language",
+    "Fonts|Glyph sets per language"
+  ])
+]),
+
+S("Mods & Community","Extending the game",[
+  S("Mod loading & load order","Activation",[
+    "Discovery|Find installed mods",
+    "Enable / disable|Turn mods on or off",
+    "Load order|Which mod runs first",
+    "Dependencies|Required mods"
+  ]),
+  S("Scripting API","Hooks",[
+    "Simulation hooks|React to game events",
+    "UI hooks|Add panels or buttons",
+    "Data access|Read and write game state"
+  ]),
+  S("Workshop / mod distribution","Publishing",[
+    "Upload|Publish a mod",
+    "Updates|Version management",
+    "Ratings & comments|Community feedback"
+  ]),
+  S("Compatibility checks","Safety",[
+    "Version check|Mod matches game version",
+    "Save compatibility|Mods present in a save"
+  ])
+]),
+
+S("Multiplayer (verify)","Not in the base game as released",[
+  S("Shared-city sessions","Only if your target build adds it",[
+    "Session hosting|Host a shared city",
+    "State sync|Keep all players in step",
+    "Conflict rules|Who can edit what"
+  ])
+])
+
+];
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// Normalize: strings "Name|desc" become leaves, S() objects become nodes
+function norm(item){
+  if (typeof item === "string") {
+    const [n, d] = item.split("|");
+    return { n, d: d || "" };
+  }
+  return item;
+}
+
+function textOf(node){
+  let t = node.n + " " + (node.d||"");
+  if (node.c) node.c.map(norm).forEach(ch => t += " " + textOf(ch));
+  return t.toLowerCase();
+}
+
+// Status per node, from the project's own files (src/, assets/, docs/). Anything not listed is "todo".
+// done = built and wired in; partial = some pieces exist (assets, prototype, preview) but gameplay/logic is missing.
+const STATUS = {
+  "Engine & Platform":"partial", "Entity & data architecture":"partial", "Job system & threading":"done",
+  "Rendering pipeline":"done", "Input system":"done", "UI framework":"done", "Audio engine":"done",
+  "Telemetry & diagnostics":"done",
+  "Simulation Core":"partial", "Fixed simulation tick":"partial", "Save-game state hooks":"partial",
+  "Terrain & Map":"partial", "Heightmap & terrain mesh":"done", "Terrain tools":"partial", "Water bodies":"partial",
+  "Map size & boundaries":"partial", "Trees & props":"partial",
+  "Roads & Transport Network":"partial", "Road types":"done", "Lane model":"done", "Intersections & junctions":"done",
+  "Public transit lines":"partial", "Rail network":"partial", "Passenger train - 3D model":"done",
+  "Airports":"partial", "Seaports":"partial",
+  "Traffic & Movement Simulation":"partial", "Pathfinding":"done", "Vehicle agents":"partial", "Pedestrian movement":"partial",
+  "Zoning & Buildings":"partial", "Zone types":"partial", "Building levels":"partial", "Landmarks & unique buildings":"partial",
+  "Services":"partial", "Education":"partial", "Healthcare":"partial", "Fire & rescue":"partial", "Police & crime":"partial",
+  "Death care":"partial",
+  "Utilities & Networks":"partial", "Electricity grid":"partial", "Water supply":"partial", "Sewage & wastewater":"partial",
+  "Telecom / internet (verify)":"partial",
+  "Save, Load & Persistence":"partial", "Save format":"partial", "Load & migration":"partial",
+  "Build tools":"done", "Camera controls":"partial", "Selection & info panels":"partial",
+  "Tools & Player Interaction":"partial",
+  "Information & Feedback UI":"partial", "HUD & toolbar":"partial",
+  "Audio":"partial",
+  "Rendering & Visual Feedback":"partial", "Building visuals":"partial", "Vehicle & citizen visuals":"partial",
+  "Weather & lighting visuals":"partial", "Water & terrain visuals":"partial",
+  "Content, Assets & Editors":"partial", "Asset pipeline":"done", "Asset editor / mod tools":"partial", "Map editor":"partial"
+};
+
+function render(raw, depth){
+  const node = norm(raw);
+  const kids = node.c ? node.c.map(norm) : null;
+  const hasKids = kids && kids.length;
+  const st = STATUS[node.n.replace(/^\d+\.\s/, "")] || "todo";
+  const wrap = document.createElement(hasKids ? "details" : "div");
+  wrap.className = (hasKids ? ("l" + Math.min(depth,2)) : "leaf") + " st-" + st;
+  wrap.dataset.text = textOf(node);
+  const label = esc(node.n) + (node.d ? ' <span class="desc">' + esc(node.d) + '</span>' : '');
+  if (hasKids) {
+    if (depth === 0) wrap.open = false;
+    const s = document.createElement("summary");
+    s.innerHTML = label;
+    wrap.appendChild(s);
+    kids.forEach(ch => wrap.appendChild(render(ch, depth+1)));
+  } else {
+    wrap.innerHTML = label;
+  }
+  return wrap;
+}
+
+const tree = document.getElementById("tree");
+SYSTEMS.forEach((s, i) => {
+  const top = Object.assign({}, s, { n: (i+1) + ". " + s.n });
+  tree.appendChild(render(top, 0));
+});
+
+function allDetails(){ return document.querySelectorAll("#tree details"); }
+document.getElementById("expandAll").onclick = () => allDetails().forEach(d => d.open = true);
+document.getElementById("collapseAll").onclick = () => allDetails().forEach(d => d.open = false);
+
+document.getElementById("q").addEventListener("input", e => {
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll("#tree details, #tree .leaf").forEach(el => {
+    const match = !q || el.dataset.text.includes(q);
+    el.classList.toggle("hidden", !match);
+    if (q && el.tagName === "DETAILS" && match) el.open = true;
+  });
+});
+</script>
+</body>
+</html>

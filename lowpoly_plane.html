@@ -1,0 +1,157 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Low Poly Airliner</title>
+<style>html,body{margin:0;height:100%;background:#1b2330;overflow:hidden;font-family:sans-serif}#i{position:fixed;left:12px;top:10px;color:#cfd8e3;font-size:13px}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head><body><div id="i">Drag to orbit · scroll to zoom · <span id="tc"></span></div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const R=new THREE.WebGLRenderer({antialias:true});R.setSize(innerWidth,innerHeight);R.setPixelRatio(devicePixelRatio);R.shadowMap.enabled=true;document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x1b2330);S.fog=new THREE.Fog(0x1b2330,60,140);
+const C=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,500);C.position.set(26,16,30);
+const O=new OrbitControls(C,R.domElement);O.enableDamping=true;O.target.set(0,1.5,0);O.autoRotate=true;O.autoRotateSpeed=.6;window.cam={C,O};
+S.add(new THREE.HemisphereLight(0xdfe8ff,0x334,1.1));const sun=new THREE.DirectionalLight(0xfff2dd,2.2);sun.position.set(20,30,15);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-30,right:30,top:30,bottom:-30});S.add(sun);
+const M=c=>new THREE.MeshStandardMaterial({color:c,flatShading:true,roughness:.6,metalness:.1});
+const white=M(0xf2f4f7),blue=M(0x1f4fa3),grey=M(0x9aa3ad),dark=M(0x2a2f36),glass=M(0x0e1622),red=M(0xd23a3a),metal=M(0xc8ccd2),tire=M(0x111111),gold=M(0xf2b632);
+const plane=new THREE.Group();S.add(plane);
+const add=(g,m,p=[0,0,0],r=[0,0,0],par=plane)=>{const o=new THREE.Mesh(g,m);o.position.set(...p);o.rotation.set(...r);o.castShadow=o.receiveShadow=true;par.add(o);return o};
+
+// Fuselage: lathe profile along X (nose +X)
+const prof=[[0,0],[.35,.15],[.75,.6],[1.05,1.4],[1.2,2.6],[1.25,4],[1.25,16.5],[1.22,18.3],[1.13,19.5],[.98,20.4],[.78,21.1],[.52,21.6],[.26,21.9],[0,22.0]].map(([r,y])=>new THREE.Vector2(r,y-11));
+// Livery texture: u = station along body, v = angle around body (-90 belly .. +90 crown, mirrored both sides)
+const X0=-11,X1=11.5,TW=2048,TH=512;
+const cv=document.createElement('canvas');cv.width=TW;cv.height=TH;const g2=cv.getContext('2d');
+const tx=x=>(x-X0)/(X1-X0)*TW, ty=a=>(90-a)/180*TH; // a in degrees
+g2.fillStyle='#f2f4f7';g2.fillRect(0,0,TW,TH);
+g2.fillStyle='#b9c0c8';g2.fillRect(0,ty(-60),TW,TH);
+g2.fillStyle='#1f4fa3';g2.fillRect(tx(-8.5),ty(-14),tx(8.3)-tx(-8.5),ty(-36)-ty(-14));
+g2.fillStyle='#f2b632';g2.fillRect(tx(-8.5),ty(-6),tx(8.0)-tx(-8.5),ty(-14)-ty(-6));
+const rr=(x,y,w,h,r)=>{g2.beginPath();g2.roundRect(x,y,w,h,r);g2.fill()};
+g2.fillStyle='#22272e';
+for(let i=0;i<40;i++){const x=7.7-i*.4;if(Math.abs(x-0.6)<.5||Math.abs(x-7.6)<.4||x<-7.4)continue;rr(tx(x)-6,ty(30),12,ty(16)-ty(30),5)}
+// doors
+g2.strokeStyle='#8f98a3';g2.lineWidth=3;
+for(const x of[7.6,0.6,-7.9]){g2.beginPath();g2.roundRect(tx(x)-16,ty(36),32,ty(-28)-ty(36),8);g2.stroke();g2.fillStyle='#555';g2.fillRect(tx(x)+8,ty(4),5,8)}
+// cockpit windows (dark glass with frames)
+g2.fillStyle='#0e1622';
+// side windows: 3 panes rising toward the nose, then 2 front panes either side of centre
+// cockpit glazing, rasterised in world space so the band is level from the side and wraps the nose like a real airliner
+{const P=prof.map(v=>[v.x,v.y]);const rAt=x=>{for(let i=0;i<P.length-1;i++){const[a,b]=[P[i],P[i+1]];if(x>=a[1]&&x<=b[1])return a[0]+(b[0]-a[0])*(x-a[1])/(b[1]-a[1])}return 0};
+ const droop=x=>x>7?((x-7)/4.2)**2*.55:0;
+ const id=g2.getImageData(0,0,TW,TH),d=id.data;
+ for(let px=Math.floor(tx(8.9));px<tx(10.9);px++)for(let py=0;py<TH;py++){
+  const x=X0+(px+.5)/TW*(X1-X0),a=(90-(py+.5)/TH*180)*Math.PI/180,r=rAt(x),y=r*Math.sin(a)-droop(x),z=r*Math.cos(a);
+  const yb=.1,yt=.34;
+  if(x<9.2||y<yb||y>yt)continue;
+  const fr=.035; // frame
+  if(y<yb+fr*.6||y>yt-fr*.6)continue;
+  if(z<.06||Math.abs(z-.36)<fr||(z>.36&&Math.abs(x-9.62)<fr))continue;
+  const k=(py*TW+px)*4,sh=y>yt-.08?28:14;d[k]=sh;d[k+1]=sh+8;d[k+2]=sh+18;d[k+3]=255}
+ g2.putImageData(id,0,0)}
+// panel seams
+g2.strokeStyle='rgba(0,0,0,.08)';g2.lineWidth=1;for(let x=-10;x<11;x+=1.6){g2.beginPath();g2.moveTo(tx(x),0);g2.lineTo(tx(x),TH);g2.stroke()}
+const tex=new THREE.CanvasTexture(cv);tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=R.capabilities.getMaxAnisotropy();
+const SEG=16;const fg=new THREE.LatheGeometry(prof,SEG);fg.rotateZ(-Math.PI/2);
+const pos=fg.attributes.position,uv=fg.attributes.uv;
+for(let i=0;i<pos.count;i++){const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i);
+ const a=(y===0&&z===0)?0:Math.atan2(y,Math.abs(z))*180/Math.PI;uv.setXY(i,(x-X0)/(X1-X0),(a+90)/180);
+ if(x<-6){const t=(-6-x)/5.5;pos.setY(i,y+t*t*.9)}
+ if(x>7){const t=(x-7)/4.2;pos.setY(i,pos.getY(i)-t*t*.55)}}
+fg.computeVertexNormals();
+const fusMat=new THREE.MeshStandardMaterial({map:tex,flatShading:true,roughness:.5,metalness:.1});add(fg,fusMat,[0,2.5,0]);
+
+// Wings
+function wing(side){
+ const sh=new THREE.Shape();sh.moveTo(0,0);sh.lineTo(-2.9,0);sh.lineTo(-7.1,11);sh.lineTo(-5.9,11);sh.lineTo(1.8,1.2);sh.lineTo(2.6,0);
+ const g=new THREE.ExtrudeGeometry(sh,{depth:.22,bevelEnabled:true,bevelThickness:.08,bevelSize:.06,bevelSegments:1});
+ const w=add(g,white,[1.8,1.55,side*1.0],[side*Math.PI/2-(side>0?Math.PI:0)+Math.PI/2*0,0,0]);
+ w.rotation.set(Math.PI/2*side* -1,0,0);w.rotation.x=-side*Math.PI/2;w.rotation.y=0;
+ w.rotateOnAxis(new THREE.Vector3(1,0,0),side*-.09); // dihedral
+ if(side<0){w.scale.z=-1} return w;
+}
+// simpler explicit wing build per side
+function wingSide(s){
+ const g=new THREE.Group();plane.add(g);g.position.set(1.4,1.75,s*1.0);g.rotation.x=s*-.08;
+ const sh=new THREE.Shape();sh.moveTo(2.8,0);sh.lineTo(-2.8,0);sh.lineTo(-6.6,10.8);sh.lineTo(-5.5,10.8);sh.lineTo(1.6,1.6);sh.closePath();
+ const eg=new THREE.ExtrudeGeometry(sh,{depth:.24,bevelEnabled:true,bevelThickness:.06,bevelSize:.05,bevelSegments:1});
+ eg.rotateX(Math.PI/2);if(s<0)eg.scale(1,1,-1);
+ add(eg,white,[0,.12,0],[0,0,0],g);
+ // flaps & ailerons (dark seams)
+ for(let k=0;k<3;k++){const z=1.4+k*2.6,x=-2.8-z*0.35;const f=add(new THREE.BoxGeometry(.7,.05,2.4),grey,[x-.1,.0,s*z],[0,s*-.33,0],g)}
+ add(new THREE.BoxGeometry(.5,.05,2),blue,[-5.4,0,s*9.0],[0,s*-.33,0],g);
+ // winglet
+ const wl=new THREE.Shape();wl.moveTo(0,0);wl.lineTo(1.1,0);wl.lineTo(.4,1.8);wl.lineTo(-.15,1.8);wl.closePath();
+ const wlg=new THREE.ExtrudeGeometry(wl,{depth:.1,bevelEnabled:false});
+ add(wlg,blue,[-6.6,.05,s*10.85],[s*.2,0,0],g);
+ // flap track fairings
+ for(const z of[3,5.6])add(new THREE.ConeGeometry(.15,1.4,4),grey,[-3.6-z*.35,-.12,s*z],[0,0,Math.PI/2],g);
+ // nav light
+ add(new THREE.SphereGeometry(.08,4,3),M(s>0?0x22dd55:0xff2222),[-5.8,.1,s*10.9],[0,0,0],g).material.emissive=new THREE.Color(s>0?0x22dd55:0xff2222);
+ // Engine
+ const E=new THREE.Group();g.add(E);E.position.set(-0.2,-.95,s*4.0);
+ const nac=new THREE.LatheGeometry([[0.0,-2.2],[.45,-2.1],[.62,-1.4],[.78,0],[.82,1.4],[.78,1.7]].map(([r,y])=>new THREE.Vector2(r,y)),8);nac.rotateZ(-Math.PI/2);
+ add(nac,white,[0,0,0],[0,0,0],E);
+ const lip=add(new THREE.TorusGeometry(.75,.08,3,8),metal,[1.75,0,0],[0,Math.PI/2,0],E);
+ add(new THREE.CircleGeometry(.72,8),dark,[1.6,0,0],[0,Math.PI/2,0],E);
+ add(new THREE.ConeGeometry(.18,.4,6),metal,[1.7,0,0],[0,0,-Math.PI/2],E);
+ add(new THREE.ConeGeometry(.42,1.1,6),grey,[-2.6,0,0],[0,0,Math.PI/2],E); // exhaust plug
+ add(new THREE.CylinderGeometry(.5,.55,.5,8,1,true),dark,[-2.2,0,0],[0,0,Math.PI/2],E);
+ add(new THREE.BoxGeometry(2.6,.6,.18),white,[-.2,.65,0],[0,0,-.15],E); // pylon
+ add(new THREE.BoxGeometry(1.4,.06,.02),blue,[0.2,0,s*.82],[0,0,0],E);
+ return E;
+}
+const engines=[wingSide(1),wingSide(-1)];
+// wing-body fairing
+add(new THREE.BoxGeometry(6,.7,2.7,3,1,2),grey,[0.6,1.55,0]);
+
+// Vertical stabilizer
+const vs=new THREE.Shape();vs.moveTo(0,0);vs.lineTo(3.6,0);vs.lineTo(1.0,4.6);vs.lineTo(-.6,4.6);vs.closePath();
+const vg=new THREE.ExtrudeGeometry(vs,{depth:.24,bevelEnabled:true,bevelThickness:.05,bevelSize:.05,bevelSegments:1});
+add(vg,blue,[-10.6,3.3,-.12]);
+add(new THREE.BoxGeometry(.6,3.8,.27),M(0x173c7e),[-10.4,5.4,0],[0,0,-.42]); // rudder
+add(new THREE.CircleGeometry(.6,6),gold,[-9.4,5.4,.18],[0,0,0]);add(new THREE.CircleGeometry(.6,6),gold,[-9.4,5.4,-.18],[0,Math.PI,0]);
+add(new THREE.SphereGeometry(.07,4,3),M(0xffffff),[-11.1,7.9,0]);
+// Horizontal stabilizers
+for(const s of[1,-1]){const h=new THREE.Shape();h.moveTo(0,0);h.lineTo(2.6,0);h.lineTo(-.9,4.2);h.lineTo(-1.8,4.2);h.closePath();
+ const hg=new THREE.ExtrudeGeometry(h,{depth:.14,bevelEnabled:true,bevelThickness:.04,bevelSize:.04,bevelSegments:1});hg.rotateX(Math.PI/2);if(s<0)hg.scale(1,1,-1);
+ add(hg,white,[-10.3,3.25,s*.4],[s*-.12,0,0]);add(new THREE.BoxGeometry(.5,.05,3.4),grey,[-11.6,3.18,s*2.4],[0,s*-.62,0])}
+// APU exhaust
+add(new THREE.CylinderGeometry(.12,.12,.3,6),dark,[-11.45,3.5,0],[0,0,Math.PI/2]);
+
+// Antennas & beacon
+add(new THREE.BoxGeometry(.35,.3,.04),grey,[3,3.85,0],[0,0,-.4]);add(new THREE.BoxGeometry(.3,.25,.04),grey,[-3,3.85,0],[0,0,-.4]);
+const beacon=add(new THREE.SphereGeometry(.09,4,3),red,[1,1.25,0]);beacon.material=beacon.material.clone();
+const pitot=[...[1,-1]].map(s=>add(new THREE.CylinderGeometry(.015,.015,.3),metal,[9.2,2.6,s*1.0],[s*1.2,0,0]));
+
+// Landing gear
+const gears=[];function gear(x,z,wheels,h){const top=h+.4,piv=new THREE.Group();plane.add(piv);piv.position.set(x,top,z);const g=new THREE.Group();piv.add(g);g.position.y=-top;gears.push({piv,top,nose:z===0,s:Math.sign(z)});
+ add(new THREE.CylinderGeometry(.09,.09,h,6),metal,[0,h/2+.4,0],[0,0,0],g);
+ add(new THREE.BoxGeometry(.05,h*.8,.3),grey,[-.3,h/2+.4,0],[0,0,.35],g);
+ const tw=new THREE.CylinderGeometry(.42,.42,.28,8);
+ for(const [dx,dz] of wheels){add(tw,tire,[dx,.42,dz],[Math.PI/2,0,0],g);add(new THREE.CylinderGeometry(.22,.22,.3,6),metal,[dx,.42,dz],[Math.PI/2,0,0],g)}
+ if(wheels.length>2)add(new THREE.BoxGeometry(1.4,.12,.15),metal,[0,.6,0],[0,0,0],g);}
+gear(7.6,0,[[0,.2],[0,-.2]],.9);
+for(const s of[1,-1])gear(-.2,s*2.2,[[.55,s*.2],[.55,-s*.2+s*.0],[-.55,s*.2],[-.55,-s*.2]].map(([a,b],i)=>[a,i%2?b-s*.4:b]),.75);
+
+// Ground
+const gr=add(new THREE.CircleGeometry(60,40),M(0x2c3644),[0,0,0],[-Math.PI/2,0,0],S);gr.castShadow=false;
+const marks=[];for(let i=-15;i<=15;i++){const m=add(new THREE.PlaneGeometry(1.8,.25),M(0xdcdcdc),[i*4,.01,-6],[-Math.PI/2,0,0],S);m.castShadow=false;marks.push(m)}
+
+let tris=0;plane.traverse(o=>{if(o.isMesh){const g=o.geometry;tris+=(g.index?g.index.count:g.attributes.position.count)/3}});
+document.getElementById('tc').textContent=Math.round(tris)+' triangles';
+const clk=new THREE.Clock();
+// flight + gear cycle (16 s): fly level, retract, cruise, extend
+const ease=u=>u<0?0:u>1?1:u*u*(3-2*u);
+function fly(t){
+ plane.position.y=7+Math.sin(t*.7)*.5;plane.rotation.z=Math.sin(t*.5)*.03;plane.rotation.x=Math.sin(t*.4)*.06;
+ marks.forEach((m,i)=>m.position.x=(((i*4-t*30)%120)+120)%120-60);
+ const c=t%16,k=c<3?0:c<5.5?ease((c-3)/2.5):c<11?1:c<13.5?1-ease((c-11)/2.5):0;
+ for(const g of gears){
+  if(g.nose){g.piv.rotation.z=k*Math.PI/2*1.0;g.piv.position.y=g.top+k*.55}
+  else{g.piv.rotation.x=g.s*k*Math.PI/2;g.piv.position.y=g.top+k*.75;g.piv.position.z=g.s*(2.2-k*1.0)}
+ }
+ O.target.lerp(new THREE.Vector3(0,plane.position.y,0),.1);
+}
+(function loop(){requestAnimationFrame(loop);const t=clk.getElapsedTime();fly(t); beacon.material.emissive.setHex(Math.sin(t*6)>.6?0xff3333:0);O.update();R.render(S,C)})();
+addEventListener('resize',()=>{C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix();R.setSize(innerWidth,innerHeight)});
+</script></body></html>

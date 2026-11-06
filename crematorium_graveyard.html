@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Crematorium &amp; Graveyard</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#b9c6cf}#i{position:fixed;left:10px;top:8px;font:13px sans-serif;color:#223}</style>
+</head><body><div id="i">Low-poly crematorium + graveyard · drag to orbit, right-drag to pan, scroll to zoom</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(devicePixelRatio);R.setSize(innerWidth,innerHeight);
+R.shadowMap.enabled=true;R.shadowMap.type=THREE.PCFSoftShadowMap;document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0xb9c6cf);S.fog=new THREE.Fog(0xb9c6cf,260,700);
+const C=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.3,2000);
+S.add(new THREE.HemisphereLight(0xe8eef5,0x4a5040,0.65));
+const sun=new THREE.DirectionalLight(0xfff0dc,0.95);sun.position.set(-90,140,70);sun.castShadow=true;
+sun.shadow.mapSize.set(4096,4096);Object.assign(sun.shadow.camera,{left:-130,right:130,top:130,bottom:-130,far:450});sun.shadow.bias=-0.0005;S.add(sun);
+const M={};const mat=c=>M[c]||(M[c]=new THREE.MeshStandardMaterial({color:c,flatShading:true,roughness:.85,metalness:.05}));
+const W=new THREE.Group();S.add(W);
+function add(g,c,x,y,z,p=W,ry=0){const m=new THREE.Mesh(g,typeof c==='number'?mat(c):c);m.position.set(x,y,z);m.rotation.y=ry;m.castShadow=m.receiveShadow=true;p.add(m);return m}
+const box=(w,h,d,c,x,y,z,p,ry)=>add(new THREE.BoxGeometry(w,h,d),c,x,y+h/2,z,p,ry);
+const cyl=(rt,rb,h,c,x,y,z,seg=8,p,ry)=>add(new THREE.CylinderGeometry(rt,rb,h,seg),c,x,y+h/2,z,p,ry);
+function prism(w,h,d,c,x,y,z,p,ry){ // gable roof prism, ridge along d (z)
+  const s=new THREE.Shape();s.moveTo(-w/2,0);s.lineTo(w/2,0);s.lineTo(0,h);s.lineTo(-w/2,0);
+  const g=new THREE.ExtrudeGeometry(s,{depth:d,bevelEnabled:false});g.translate(0,0,-d/2);return add(g,c,x,y,z,p,ry);}
+// canvas textures
+function tex(w,h,f,rx=1,ry=1){const cv=document.createElement('canvas');cv.width=w;cv.height=h;f(cv.getContext('2d'),w,h);
+  const t=new THREE.CanvasTexture(cv);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(rx,ry);t.anisotropy=8;return t}
+const brick=(rx,ry)=>tex(256,256,(x,w,h)=>{x.fillStyle='#8a8079';x.fillRect(0,0,w,h);
+  for(let r=0;r<16;r++)for(let c=0;c<9;c++){const o=r%2?14:0,v=150+Math.random()*30|0;
+    x.fillStyle=`rgb(${v},${v*.55|0},${v*.42|0})`;x.fillRect(c*30-o+1,r*16+1,28,14)}},rx,ry);
+const tiles=(rx,ry)=>tex(256,256,(x,w,h)=>{x.fillStyle='#2e3236';x.fillRect(0,0,w,h);
+  for(let r=0;r<16;r++)for(let c=0;c<17;c++){const v=55+Math.random()*20|0;x.fillStyle=`rgb(${v},${v+4},${v+10})`;
+    x.fillRect(c*16-(r%2?8:0),r*16,15,13)}},rx,ry);
+const stoneT=(rx,ry)=>tex(256,256,(x,w,h)=>{x.fillStyle='#9a9890';x.fillRect(0,0,w,h);
+  for(let r=0;r<6;r++)for(let c=0;c<4;c++){const v=175+Math.random()*30|0;x.fillStyle=`rgb(${v},${v-3},${v-12})`;
+    x.fillRect(c*64-(r%2?32:0)+2,r*43+2,60,39)}},rx,ry);
+const grassT=tex(512,512,(x,w,h)=>{x.fillStyle='#5d7a42';x.fillRect(0,0,w,h);
+  for(let i=0;i<14000;i++){const v=Math.random();x.fillStyle=v<.5?'#678748':v<.8?'#506c38':'#73924f';x.fillRect(Math.random()*w,Math.random()*h,2,3)}},40,40);
+const gravelT=tex(256,256,(x,w,h)=>{x.fillStyle='#b5aa96';x.fillRect(0,0,w,h);
+  for(let i=0;i<5000;i++){const v=140+Math.random()*80|0;x.fillStyle=`rgb(${v},${v-8},${v-22})`;x.fillRect(Math.random()*w,Math.random()*h,2,2)}},1,1);
+const T=(t,o={})=>new THREE.MeshStandardMaterial(Object.assign({map:t,flatShading:true,roughness:.9},o));
+const BR=0x9c5a44,STONE=0xc9c4b8,DARK=0x2b2d30,IRON=0x1c1d20,GLASS=new THREE.MeshStandardMaterial({color:0x3a4c5c,roughness:.15,metalness:.6,flatShading:true});
+const STAIN=new THREE.MeshStandardMaterial({color:0x6a3a7a,emissive:0x2a1030,roughness:.3,flatShading:true});
+
+// ---------- GROUND ----------
+const g=new THREE.Mesh(new THREE.PlaneGeometry(600,600),T(grassT));g.rotation.x=-Math.PI/2;g.receiveShadow=true;S.add(g);
+function path(w,d,x,z,ry=0){const t=gravelT.clone();t.needsUpdate=true;t.repeat.set(w/4,d/4);
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,.06,d),T(t));m.position.set(x,.03,z);m.rotation.y=ry;m.receiveShadow=true;W.add(m);}
+// Road + car park forecourt (empty, no cars)
+box(220,.05,12,0x3b3d40,0,0,62);for(let i=-100;i<100;i+=8)box(4,.06,.25,0xe8e4d0,i,0,62);
+box(40,.07,24,0x45474a,-40,0,43);for(let i=0;i<8;i++)box(.2,.08,6,0xe8e4d0,-56+i*4.6,0,38);
+box(.3,.15,24,STONE,-60.2,0,43);box(.3,.15,24,STONE,-19.8,0,43);
+
+// ---------- CREMATORIUM (west side, x<0) ----------
+const CR=new THREE.Group();CR.position.set(-40,0,0);W.add(CR);
+box(46,1,34,STONE,0,0,0,CR); // plinth
+// main hall
+const hallBrick=T(brick(6,2));box(34,9,20,hallBrick,0,1,-2,CR);
+box(35,.6,21,STONE,0,10,-2,CR);// cornice
+prism(23,6,37,T(tiles(8,3)),0,10.6,-2,CR,Math.PI/2);
+// ridge cap
+box(.5,.4,37,DARK,0,16.5,-2,CR,Math.PI/2);
+// gable fill windows: tall chapel windows along front (z=+8)
+for(let i=-3;i<=3;i++){if(i===0)continue;
+  box(2,6,.3,GLASS,i*4.6,2.2,8.05,CR);box(2.6,.4,.6,STONE,i*4.6,1.9,8.1,CR);
+  prism(2.6,1.3,.5,STONE,i*4.6,8.2,8.1,CR);
+  box(.15,6,.35,STONE,i*4.6,2.2,8.15,CR);box(2,.15,.35,STONE,i*4.6,5.2,8.15,CR);
+  box(1,8.4,1,hallBrick,i*4.6+2.3,1,8.3,CR);} // buttresses
+// back windows
+for(let i=-3;i<=3;i++)box(2,5,.3,GLASS,i*4.6,3,-12.1,CR);
+// Chapel entrance tower / porch, centred front
+box(10,13,8,hallBrick,0,1,10,CR);box(10.8,.6,8.8,STONE,0,14,10,CR);
+prism(11,4.5,9,T(tiles(3,2)),0,14.6,10,CR);
+box(.6,3,.6,STONE,0,19.1,14.2,CR);box(2,.6,.6,STONE,0,20.1,14.2,CR);// cross on gable
+// rose window
+const rose=add(new THREE.CylinderGeometry(2,2,.3,16),STAIN,0,10,14.05,CR);rose.rotation.x=Math.PI/2;
+const rr=add(new THREE.TorusGeometry(2.1,.25,6,16),mat(STONE),0,10,14.15,CR);
+for(let k=0;k<8;k++){const b=add(new THREE.BoxGeometry(.12,4,.1),mat(STONE),0,10,14.25,CR);b.rotation.z=k*Math.PI/8;}
+// double doors with arch
+box(4,5.5,.3,0x4b2f1e,0,1,14.05,CR);box(.1,5.5,.35,0x2a1a10,0,1,14.1,CR);
+const arch=add(new THREE.CylinderGeometry(2.4,2.4,.6,12,1,false,0,Math.PI),mat(STONE),0,6.5,14.1,CR);arch.rotation.z=Math.PI/2;arch.rotation.y=Math.PI/2;
+for(let s of[-1,1]){box(.8,6.5,.8,STONE,s*2.4,1,14.2,CR);}
+// porte-cochère with columns and flat roof
+box(12,.8,9,STONE,0,6.5,18.5,CR);box(12.6,.4,9.6,0xa9a49a,0,7.3,18.5,CR);
+for(const [cx,cz] of[[-5.4,22.5],[5.4,22.5],[-5.4,15.5],[5.4,15.5]]){cyl(.45,.5,5.5,0xe0dcd2,cx,1,cz,10,CR);box(1.2,.4,1.2,STONE,cx,1,cz,CR);box(1.2,.4,1.2,STONE,cx,6.1,cz,CR);}
+// steps down from plinth
+for(let s=0;s<3;s++)box(10,.33,1.2,STONE,0,s*.33-0.33,25.5-s*1.2,CR);
+// --- Cremator wing (rear, east), industrial with chimney ---
+box(16,7,14,T(brick(3,1.5)),12,1,-17,CR);box(16.6,.5,14.6,0x8a8a88,12,8,-17,CR);
+for(let i=0;i<3;i++)box(4,1,3,0x77797a,7+i*5,8.5,-19,CR); // roof plant / filters
+for(let i=0;i<3;i++)cyl(.5,.5,2,0x9a9c9e,7+i*5,9.5,-19,8,CR);
+// roller door + service door
+box(5,4.5,.25,0x8c9196,6,1,-10,CR);for(let k=0;k<9;k++)box(5,.06,.3,0x70757a,6,1.3+k*.48,-9.9,CR);
+box(1.4,2.4,.2,0x3c4a52,15,1,-9.95,CR);
+// Chimney: tapered square brick stack with stone bands and cap
+const chim=new THREE.Group();chim.position.set(18,8.5,-21);CR.add(chim);
+for(let i=0;i<7;i++){const w=3.2-i*.18;box(w,3.6,w,hallBrick,0,i*3.6,0,chim);box(w+.3,.3,w+.3,STONE,0,i*3.6+3.4,0,chim);}
+box(2.6,.7,2.6,DARK,0,25.4,0,chim);box(1.6,.6,1.6,0x111111,0,26,0,chim);
+for(let k=0;k<4;k++)box(.08,25,.08,0xb08a40,1.62*(k<2?1:-1),0,1.62*(k%2?1:-1),chim);// lightning conductors
+// thin heat haze puffs
+const puffs=[];for(let i=0;i<6;i++){const p=add(new THREE.IcosahedronGeometry(.9,0),new THREE.MeshStandardMaterial({color:0xdadfe2,transparent:true,opacity:.35,flatShading:true}),18,35+i*1.6,-21,CR);p.castShadow=false;puffs.push(p);}
+// --- Columbarium cloister wall (west of hall) ---
+const col=new THREE.Group();col.position.set(-26,1,-2);CR.add(col);
+box(2,4,30,STONE,0,0,0,col);box(2.6,.4,30.6,0xa9a49a,0,4,0,col);
+for(let r=0;r<5;r++)for(let c=0;c<14;c++){const z=-13+c*2,y=.4+r*.72;
+  box(.08,.6,1.7,Math.random()<.2?0x6b6b66:0xd8d4c8,-1.05,y,z,col);box(.09,.12,.4,0xb59545,-1.07,y+.22,z,col);
+  box(.08,.6,1.7,0xd8d4c8,1.05,y,z,col);}
+// cloister roof + columns
+box(4,.3,30,0x6a6f74,-3,4.3,0,col);for(let c=0;c<8;c++)cyl(.18,.2,4,0xe0dcd2,-4.6,0,-13.5+c*3.85,8,col);
+// Garden of remembrance: paved circle, memorial plaques, benches, water bowl
+const gr=new THREE.Group();gr.position.set(-36,0,-2);W.add(gr);
+cyl(8,8,.12,T(stoneT(4,4)),0,0,0,24,gr);cyl(1.8,2,.6,STONE,0,.1,0,12,gr);cyl(1.5,1.5,.05,GLASS,0,.68,0,12,gr);
+cyl(.35,.45,1.8,STONE,0,.6,0,8,gr);
+for(let k=0;k<10;k++){const a=k/10*Math.PI*2;box(.9,.5,.15,0xd9d4c6,Math.cos(a)*7.2,.12,Math.sin(a)*7.2,gr,-a+Math.PI/2);}
+for(let k=0;k<4;k++){const a=k/4*Math.PI*2+Math.PI/4;bench(Math.cos(a)*5.2,Math.sin(a)*5.2,-a-Math.PI/2,gr);}
+function bench(x,z,ry,p=W){const b=new THREE.Group();b.position.set(x,0,z);b.rotation.y=ry;p.add(b);
+  for(let k=0;k<3;k++)box(2,.08,.18,0x7a5536,0,.48,-.2+k*.2,b);box(2,.5,.08,0x7a5536,0,.65,.3,b);
+  for(const s of[-.85,.85]){box(.08,.5,.6,IRON,s,0,0,b);box(.08,.6,.08,IRON,s,.5,.3,b);}}
+
+// paths around crematorium
+path(6,20,-40,36);path(6,32,-40,-34);path(8,6,-31,-2,0);
+
+// ---------- GRAVEYARD (east, x>0) ----------
+const GX=10,GZ=-38,GW=70,GD=78; // bounds
+// boundary: low stone wall + iron railings
+function railRun(x1,z1,x2,z2){const dx=x2-x1,dz=z2-z1,L=Math.hypot(dx,dz),a=Math.atan2(dx,dz),mx=(x1+x2)/2,mz=(z1+z2)/2;
+  box(.8,1,L,T(stoneT(L/3,.5)),mx,0,mz,W,a);box(1,.15,L,STONE,mx,1,mz,W,a);
+  box(.06,.06,L,IRON,mx,2.1,mz,W,a);box(.06,.06,L,IRON,mx,1.3,mz,W,a);
+  const n=Math.floor(L/.4);const geo=new THREE.CylinderGeometry(.025,.025,1.2,4),spk=new THREE.ConeGeometry(.06,.18,4);
+  const im=new THREE.InstancedMesh(geo,mat(IRON),n),is=new THREE.InstancedMesh(spk,mat(IRON),n),o=new THREE.Object3D();
+  for(let i=0;i<n;i++){const t=(i+.5)/n;o.position.set(x1+dx*t,1.75,z1+dz*t);o.updateMatrix();im.setMatrixAt(i,o.matrix);o.position.y=2.42;o.updateMatrix();is.setMatrixAt(i,o.matrix);}
+  im.castShadow=is.castShadow=true;W.add(im);W.add(is);
+  for(let d=0;d<=L;d+=12){const t=d/L;box(1.2,2.6,1.2,STONE,x1+dx*t,0,z1+dz*t,W,a);prism(1.4,.5,1.4,STONE,x1+dx*t,2.6,z1+dz*t,W,a);}}
+const x0=GX,x1=GX+GW,z0=GZ,z1=GZ+GD;
+railRun(x0,z0,x1,z0);railRun(x1,z0,x1,6.4);railRun(x1,9.6,x1,z1);railRun(x0,z0,x0,z1);
+railRun(x0,z1,x0+GW/2-5,z1);railRun(x0+GW/2+5,z1,x1,z1);
+// Lychgate entrance
+const gx=x0+GW/2,lg=new THREE.Group();lg.position.set(gx,0,z1);W.add(lg);
+for(const [a,b] of[[-4.5,-1.5],[4.5,-1.5],[-4.5,1.5],[4.5,1.5]])box(.6,3.6,.6,0x5a3d26,a,0,b,lg);
+box(10,.4,.4,0x5a3d26,0,3.6,1.5,lg);box(10,.4,.4,0x5a3d26,0,3.6,-1.5,lg);
+prism(5.5,2.6,11,T(tiles(4,2)),0,3.8,0,lg,Math.PI/2);
+for(const s of[-1,1]){const gt=new THREE.Group();gt.position.set(s*4.4,0,0);gt.rotation.y=s*-.6;lg.add(gt);
+  for(let k=0;k<11;k++)box(.05,2.2,.05,IRON,-s*k*.4,.15,0,gt);box(4.2,.08,.08,IRON,-s*2.1,.4,0,gt);box(4.2,.08,.08,IRON,-s*2.1,2.2,0,gt);}
+box(1.6,.9,.5,0x5a3d26,-3,0,0,lg);box(1.6,.9,.5,0x5a3d26,3,0,0,lg);// side benches inside lychgate
+path(5,14,gx,z1+7);
+// internal paths: main avenue + cross paths
+path(5,GD-2,gx,GZ+GD/2);for(const z of[-12,12])path(GW-4,3.5,gx,z);
+path(3,GD-2,x0+14,GZ+GD/2);path(3,GD-2,x1-14,GZ+GD/2);
+// central monument: war memorial cross on stepped base
+const cm=new THREE.Group();cm.position.set(gx,0,0);W.add(cm);
+cyl(5,5,.15,T(stoneT(3,3)),0,0,0,8,cm);for(let s=0;s<3;s++)box(4-s*1.1,.5,4-s*1.1,STONE,0,.15+s*.5,0,cm);
+box(.9,7,.9,0xd9d4c6,0,1.65,0,cm);box(3.6,.9,.9,0xd9d4c6,0,6.2,0,cm);
+const ws=add(new THREE.BoxGeometry(1.8,1.8,.3),mat(0x777a7c),0,6.65,.5,cm);ws.rotation.z=Math.PI/4;// sword plate
+// gravestones
+const stoneCols=[0xbab6ad,0xa7a399,0x8c8b86,0x5e5f60,0xd0ccc2,0x3b3c3e,0x9e9586];
+function headstone(x,z,ry){const t=new THREE.Group();t.position.set(x,0,z);t.rotation.y=ry+(Math.random()-.5)*.08;
+  t.rotation.z=(Math.random()-.5)*(Math.random()<.15?.25:.04);W.add(t);
+  const c=stoneCols[Math.random()*stoneCols.length|0],k=Math.random();
+  // grave plot
+  if(Math.random()<.55){box(1.1,.18,2.2,0xc8c3b7,0,0,1.25,t);box(.95,.04,2.05,Math.random()<.5?0xa89f8c:0x4e6a38,0,.18,1.25,t);}
+  if(k<.3){box(1,1.1,.18,c,0,0,0,t);const top=add(new THREE.CylinderGeometry(.5,.5,.18,10,1,false,0,Math.PI),mat(c),0,1.1,0,t);top.rotation.x=Math.PI/2;top.rotation.z=Math.PI/2;top.rotation.y=0;top.rotation.set(Math.PI/2,0,Math.PI/2);top.rotation.set(0,0,0);top.geometry.rotateX(Math.PI/2);top.geometry.rotateZ(-Math.PI/2);box(1.2,.15,.4,c,0,0,0,t);}
+  else if(k<.5){box(.2,1.6,.18,c,0,.3,0,t);box(.9,.2,.18,c,0,1.3,0,t);box(.8,.3,.6,c,0,0,0,t);// cross
+    if(Math.random()<.4){const r=add(new THREE.TorusGeometry(.32,.05,4,10),mat(c),0,1.4,0,t);}}
+  else if(k<.62){box(.7,.4,.7,c,0,0,0,t);const ob=add(new THREE.CylinderGeometry(.12,.3,2.4,4),mat(c),0,1.6,0,t);ob.rotation.y=Math.PI/4;
+    add(new THREE.ConeGeometry(.17,.35,4),mat(c),0,2.97,0,t).rotation.y=Math.PI/4;} // obelisk
+  else if(k<.82){box(1.1,.9,.2,c,0,0,0,t);prism(1.1,.35,.2,c,0,.9,0,t);box(1.3,.15,.45,c,0,0,0,t);box(.6,.25,.02,0x2a2a2a,0,.45,.11,t);}// gabled
+  else if(k<.92){const s=add(new THREE.BoxGeometry(.8,.2,.5),mat(c),0,.25,.1,t);s.rotation.x=-.4;box(.9,.15,.6,c,0,0,0,t);} // flat lectern
+  else{box(.7,.6,.7,c,0,0,0,t);cyl(.3,.3,.6,c,0,.6,0,8,t);add(new THREE.SphereGeometry(.32,8,6),mat(c),0,1.5,0,t);add(new THREE.ConeGeometry(.25,.4,8),mat(c),0,1.95,0,t);} // urn
+  if(Math.random()<.25){cyl(.08,.06,.25,0x7a7a72,.35,0,.4,6,t);for(let f=0;f<4;f++)add(new THREE.SphereGeometry(.06,4,3),mat([0xc0392b,0xf1c40f,0xecf0f1,0x8e44ad][f]),.35+(f-1.5)*.04,.3,.4,t);}}
+const blocks=[[x0+3,x0+11.5],[x0+16.5,gx-3.5],[gx+3.5,x1-16.5],[x1-11.5,x1-3]];
+const bandsZ=[[z0+3,-14],[-10,10],[14,z1-3]];
+for(const [ax,bx] of blocks)for(const [az,bz] of bandsZ){
+  for(let z=az+.6;z<bz-2.6;z+=3.8)for(let x=ax+.8;x<bx-.6;x+=1.9){
+    if(Math.abs(x-gx)<9&&Math.abs(z)<9)continue;if(Math.random()<.12)continue;
+    headstone(x+(Math.random()-.5)*.25,z,0);}}
+// mausoleums
+function mausoleum(x,z,ry,c=0xcfcabf){const m=new THREE.Group();m.position.set(x,0,z);m.rotation.y=ry;W.add(m);
+  box(5.4,.5,6.4,STONE,0,0,0,m);box(4.6,3.6,5.6,c,0,.5,0,m);box(5,.35,6,0xb8b3a8,0,4.1,0,m);prism(5.2,1.6,6.2,c,0,4.45,0,m);
+  for(const s of[-1,1]){cyl(.22,.25,3.2,0xe2ded4,s*1.6,.5,3.2,10,m);}
+  box(4.2,.4,1,0xb8b3a8,0,3.7,3.1,m);prism(4.4,1.1,.9,0xb8b3a8,0,4.1,3.1,m,0);
+  box(1.6,2.6,.15,0x40463a,0,.5,2.85,m);for(let k=0;k<5;k++)box(.04,2.5,.1,0x6a7a5a,-.6+k*.3,.55,2.95,m);
+  for(let s=0;s<2;s++)box(3,.25,.6,STONE,0,.25-s*.25,3.5+s*.6,m);
+  add(new THREE.SphereGeometry(.35,8,6),mat(c),0,6.2,0,m);}
+mausoleum(x0+7,z0+8,0);mausoleum(x1-7,z0+8,0);mausoleum(x0+7,z0+28,Math.PI/2);mausoleum(x1-7,z0+28,-Math.PI/2,0x8e8b85);
+
+// small chapel of rest at top end of avenue
+const cp=new THREE.Group();cp.position.set(gx,0,z0+8);W.add(cp);
+box(8,5,10,T(stoneT(2,1)),0,0,0,cp);prism(9,4,11,T(tiles(3,2)),0,5,0,cp);
+box(1.6,3,.2,0x4b2f1e,0,0,5.05,cp);box(.4,2,.4,STONE,0,9,5,cp);box(1.2,.4,.4,STONE,0,10.2,5,cp);
+for(const s of[-1,1])box(.2,2.2,1,GLASS,s*4.05,1.5,0,cp);
+// benches + lamps along avenue
+for(const z of[-20,5,22])for(const s of[-1,1])bench(gx+s*4,z,s>0?-Math.PI/2:Math.PI/2);
+function lamp(x,z){cyl(.12,.16,4,IRON,x,0,z,6);box(.5,.6,.5,0xfff1c0,x,4,z);prism(.7,.35,.7,IRON,x,4.6,z);cyl(.25,.3,.3,IRON,x,0,z,6);}
+for(const z of[-28,-8,8,26])for(const s of[-1,1])lamp(gx+s*3,z);
+// bins / water tap
+cyl(.35,.3,.9,0x2e4a2e,gx+3.5,0,30,8);box(.25,1,.25,0x5a5a5a,gx-3.4,0,28);
+// a few freshly dug / flower-heaped graves
+for(let i=0;i<4;i++){const x=x1-6-i*1.9,z=28;box(1,.5,2,0x5b4430,x,0,z);box(.9,.2,1.8,0x6a503a,x,.5,z);}
+
+// ---------- CEMETERY OFFICE + HEARSE PARKING (east of graveyard) ----------
+const OF=new THREE.Group();OF.position.set(x1+16,0,8);W.add(OF);
+box(17,.5,11,STONE,0,0,0,OF);const ob=T(brick(3,1));box(15,4.2,9,ob,0,.5,0,OF);box(15.6,.35,9.6,STONE,0,4.7,0,OF);
+prism(10.6,3,16.6,T(tiles(4,2)),0,5,0,OF,Math.PI/2);
+box(1,2.4,1,ob,4.5,6.4,-1.5,OF);box(1.2,.2,1.2,STONE,4.5,8.8,-1.5,OF);// chimney
+// windows (west face, toward graveyard) + front (south)
+for(const z of[-2.5,0,2.5]){box(.2,1.6,1.4,GLASS,-7.55,1.8,z,OF);box(.35,.15,1.6,STONE,-7.6,1.7,z,OF);box(.25,.12,1.5,STONE,-7.6,3.4,z,OF);}
+for(const x of[-5,-2.5,3,5.5]){box(1.4,1.6,.2,GLASS,x,1.8,4.55,OF);box(1.6,.15,.35,STONE,x,1.7,4.6,OF);box(1.5,.12,.25,STONE,x,3.4,4.6,OF);box(.06,1.6,.24,0xeeeeee,x,1.8,4.6,OF);}
+box(1.3,2.5,.2,0x3a4d3a,.4,.5,4.55,OF);box(.12,.12,.1,0xc9a646,.85,1.7,4.7,OF);
+// porch canopy
+box(3.6,.25,2.4,0x6a6f74,.4,3.3,5.8,OF);for(const s of[-1,1])cyl(.1,.1,2.8,0xe0dcd2,.4+s*1.6,.5,6.8,6,OF);
+for(let s=0;s<2;s++)box(3,.25,.7,STONE,.4,.25-s*.25,5.9+s*.7,OF);
+// sign board
+const signT=tex(256,64,(x,w,h)=>{x.fillStyle='#22301f';x.fillRect(0,0,w,h);x.strokeStyle='#c9a646';x.lineWidth=4;x.strokeRect(4,4,w-8,h-8);
+  x.fillStyle='#e8dfc0';x.font='bold 26px serif';x.textAlign='center';x.fillText('CEMETERY OFFICE',w/2,42)});
+box(4,1,.12,T(signT),.4,3.7,6.95,OF);
+// accessible ramp + rail
+const rp=add(new THREE.BoxGeometry(1.2,.12,3.2),mat(STONE),-3,.25,6.3,OF);rp.rotation.x=.15;box(.05,.9,3,IRON,-3.6,.3,6.3,OF);
+// AC units + bins behind
+box(1,.8,.5,0xbfc3c6,-4,0,-5,OF);box(1,.8,.5,0xbfc3c6,-2.5,0,-5,OF);
+for(let i=0;i<3;i++)box(.7,1.1,.7,[0x2e4a2e,0x2a3a6a,0x555555][i],3+i*.9,0,-5,OF);
+// flagpole
+cyl(.06,.08,9,0xdddddd,8,0,6,6,OF);box(.02,1.1,1.8,0x2b3a6b,8,7.6,6.95,OF);
+// footpath office -> graveyard side gate
+path(10,2.5,x1+4,8);
+for(const s of[-1,1])box(.9,2.6,.9,STONE,x1,0,8+s*1.6);
+// hearse lot (no vehicles) with long bays, painted markings, kerbs, bollards
+const HL=new THREE.Group();HL.position.set(x1+16,0,32);W.add(HL);
+box(22,.07,16,0x404245,0,0,0,HL);for(const s of[-1,1])box(22.4,.18,.3,STONE,0,0,s*8,HL);box(.3,.18,16,STONE,11.1,0,0,HL);box(.3,.18,16,STONE,-11.1,0,0,HL);
+const hT=tex(256,64,(x,w,h)=>{x.fillStyle='#404245';x.fillRect(0,0,w,h);x.fillStyle='#e8e4d0';x.font='bold 40px sans-serif';x.textAlign='center';x.fillText('HEARSE',w/2,48)});
+for(let i=0;i<5;i++){const xx=-9+i*4.5;box(.18,.08,7,0xe8e4d0,xx-2.25,0,-4,HL);
+  const lab=new THREE.Mesh(new THREE.PlaneGeometry(3.2,.8),new THREE.MeshStandardMaterial({map:hT,transparent:false}));lab.rotation.x=-Math.PI/2;lab.position.set(xx,.09,-6.5);HL.add(lab);
+  box(.6,.15,.25,0xd8d4c8,xx,0,-7.4,HL);}// wheel stops
+box(.18,.08,7,0xe8e4d0,13.5-2.25,0,-4,HL);
+for(let i=0;i<5;i++)cyl(.12,.12,.9,0xe8c03a,-10+i*5,0,7.6,6,HL);
+// covered loading bay for coffin transfer
+box(6,.25,5,0x6a6f74,6,3.8,4.5,HL);for(const [a,b] of[[3.2,2.2],[8.8,2.2],[3.2,6.8],[8.8,6.8]])cyl(.12,.12,3.8,IRON,a,0,b,6,HL);
+// driveway to road
+box(6,.07,10,0x404245,x1+22,0,45);box(6,.07,8,0x404245,x1+22,0,53);
+const sT=tex(64,64,(x,w,h)=>{x.fillStyle='#fff';x.fillRect(0,0,w,h);x.fillStyle='#1a3d8f';x.fillRect(4,4,56,56);x.fillStyle='#fff';x.font='bold 44px sans-serif';x.textAlign='center';x.fillText('P',32,48)});
+cyl(.05,.05,2.4,0x999999,x1+18.5,0,50,6);box(.9,.9,.06,T(sT),x1+18.5,2.2,50.05);
+
+// ---------- CAMERA ORBIT ----------
+let th=.8,ph=.95,dist=210,tgt=new THREE.Vector3(25,0,5),drag=0,lx,ly;
+addEventListener('contextmenu',e=>e.preventDefault());
+addEventListener('pointerdown',e=>{drag=e.button===2?2:1;lx=e.clientX;ly=e.clientY});addEventListener('pointerup',()=>drag=0);
+addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;
+  if(drag===1){th-=dx*.005;ph=Math.min(1.5,Math.max(.1,ph-dy*.005));}
+  else{const s=dist*.0015;tgt.x-=(Math.cos(th)*dx+Math.sin(th)*dy)*s;tgt.z-=(-Math.sin(th)*dx+Math.cos(th)*dy)*s*-1;}});
+addEventListener('wheel',e=>{dist=Math.min(600,Math.max(8,dist*(1+Math.sign(e.deltaY)*.1)))});
+addEventListener('resize',()=>{C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix();R.setSize(innerWidth,innerHeight)});
+(function loop(t){requestAnimationFrame(loop);
+  puffs.forEach((p,i)=>{const k=((t*.0004+i/6)%1);p.position.y=35+k*10;p.position.x=18+k*4;p.scale.setScalar(.6+k*1.8);p.material.opacity=.35*(1-k);});
+  C.position.set(tgt.x+dist*Math.sin(ph)*Math.sin(th),tgt.y+dist*Math.cos(ph),tgt.z+dist*Math.sin(ph)*Math.cos(th));C.lookAt(tgt);R.render(S,C);})(0);
+</script></body></html>

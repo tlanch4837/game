@@ -1,0 +1,152 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Small City</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#9fb6cc;font:13px system-ui}
+#hud{position:fixed;left:12px;top:10px;background:#0009;color:#fff;padding:8px 12px;border-radius:6px}
+button{margin-left:8px}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body><div id="hud">Small City — <span id="st">loading…</span><button id="re">New layout</button></div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import * as RL from './assets/roads/roadlib.js';
+
+const r=new THREE.WebGLRenderer({antialias:true});r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(innerWidth,innerHeight);
+r.shadowMap.enabled=true;r.shadowMap.type=THREE.PCFSoftShadowMap;r.toneMapping=THREE.ACESFilmicToneMapping;document.body.appendChild(r.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x9fb6cc);S.fog=new THREE.Fog(0x9fb6cc,300,700);
+const cam=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.5,2000);cam.position.set(200,170,230);
+const ctl=new OrbitControls(cam,r.domElement);ctl.maxPolarAngle=1.45;ctl.enableDamping=true;
+S.add(new THREE.HemisphereLight(0xe2ecff,0x5f6550,1.0));
+const sun=new THREE.DirectionalLight(0xfff0d8,2.4);sun.position.set(-200,300,150);sun.castShadow=true;
+Object.assign(sun.shadow.camera,{left:-230,right:230,top:230,bottom:-230,far:900});sun.shadow.mapSize.set(4096,4096);sun.shadow.bias=-0.0004;S.add(sun);
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();r.setSize(innerWidth,innerHeight)});
+const st=document.getElementById('st');
+
+const M=await (await fetch('city_manifest.json')).json();
+const loader=new GLTFLoader(),cache=new Map();
+function load(url){if(!cache.has(url))cache.set(url,loader.loadAsync(url).then(g=>{g.scene.traverse(o=>{if(o.isMesh){o.castShadow=o.receiveShadow=true}});return g.scene}).catch(()=>null));return cache.get(url)}
+let seed=Date.now()%100000+1;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+const pick=a=>a[Math.floor(rnd()*a.length)];
+const mat=c=>new THREE.MeshStandardMaterial({color:c,roughness:0.95});
+
+// ================================================================ road grid (assets/roads road system)
+const N=6, PITCH=60, HALF=N*PITCH/2, AVE=N/2;
+const byName=n=>RL.PROFILES.find(p=>p.name===n);
+const STREET=byName('Two-Lane Road'), AVENUE=byName('Four-Lane Divided Road');
+const prof=i=>i===AVE?AVENUE:STREET;              // road line i (rows along x use prof(j), columns along z use prof(i))
+const pos=i=>-HALF+i*PITCH;
+const hw=i=>prof(i).width/2;
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(2000,2000),mat(0x6f8350));ground.rotation.x=-Math.PI/2;ground.position.y=-0.02;ground.receiveShadow=true;S.add(ground);
+
+const net=new RL.Network(),decals=[],pieces={},J={};
+for(let i=0;i<=N;i++)for(let j=0;j<=N;j++){
+  const arms=[];
+  if(i<N)arms.push([0,prof(j)]);if(j<N)arms.push([90,prof(i)]);if(i>0)arms.push([180,prof(j)]);if(j>0)arms.push([270,prof(i)]);
+  const Jn=RL.buildJunction(RL.v2(pos(i),pos(j)),arms);J[i+','+j]=Jn;
+  for(const [k,arr] of Object.entries(RL.junctionMeshes(Jn,i*100+j)))for(const m of arr){m.receiveShadow=true;S.add(m)}
+  if(arms.length>2){RL.approachDecals(Jn,decals);RL.placeTrafficControl(Jn,i*100+j,S,pieces);}
+}
+const armEnd=(key,deg)=>{const Jn=J[key],A=Jn.arms.find(a=>Math.round(a.deg)===deg);const p=RL.at(A,A.trim,0);return net.node(p.x,p.y)};
+for(let i=0;i<=N;i++)for(let j=0;j<=N;j++){
+  if(i<N)net.segment(armEnd(i+','+j,0),armEnd((i+1)+','+j,180),prof(j));
+  if(j<N)net.segment(armEnd(i+','+j,90),armEnd(i+','+(j+1),270),prof(i));
+}
+await RL.buildGpuRoads(net,S);
+RL.buildPieces(net,S);
+RL.buildDecals(decals,S);
+
+// ================================================================ buildings
+const city=new THREE.Group();S.add(city);
+function district(bx,bz){const d=Math.hypot(bx-(N-1)/2,bz-(N-1)/2);
+  if(d<1.0)return 'downtown';if(d<2.0)return 'mid';if(d<2.9)return 'mixed';return 'suburb';}
+const pools={
+  downtown:[['high_density',5],['low_office',3],['low_commercial',1]],
+  mid:[['medium_apartments',4],['low_office',2],['low_commercial',3],['high_density',1]],
+  mixed:[['low_commercial',3],['row_housing',3],['medium_apartments',2]],
+  suburb:[['low_density',6],['row_housing',2],['low_commercial',1]]};
+const wpick=p=>{let t=p.reduce((a,b)=>a+b[1],0)*rnd();for(const [k,w] of p){if((t-=w)<=0)return k}return p[0][0]};
+// models are authored on an 8 m cell grid, origin at the lot centre: NAME_WxD_... = W cells along x, D cells along z
+const CELL=8;
+const cellsOf=url=>{const m=url.match(/_(\d+)x(\d+)_/);return m?[+m[1],+m[2]]:[2,2]};
+async function place(url,x,z,rotY){
+  const src=await load(url);if(!src)return;
+  const o=src.clone(true);const box=new THREE.Box3().setFromObject(o);
+  const g=new THREE.Group();o.position.y=-box.min.y;g.add(o);g.rotation.y=rotY;g.position.set(x,0.15,z);city.add(g);
+}
+function tree(x,z){const s=0.7+rnd()*0.6,g=new THREE.Group();
+  const tr=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.35,2.4),mat(0x6b4a32));tr.position.y=1.2;
+  const cr=new THREE.Mesh(new THREE.IcosahedronGeometry(2,0),mat(new THREE.Color().setHSL(0.25+rnd()*0.08,0.45,0.28+rnd()*0.1)));cr.position.y=3.6;
+  [tr,cr].forEach(m=>{m.castShadow=m.receiveShadow=true;g.add(m)});g.scale.setScalar(s);g.position.set(x,0.15,z);city.add(g);}
+
+let cars=[];
+async function build(){
+  city.clear();cars=[];const jobs=[];
+  const civic=['fire','police','education','health','water','telecom','education','health'];
+  const parkBlock=[Math.floor(rnd()*2)+1,Math.floor(rnd()*2)+3];
+  const civicRows=new Set();while(civicRows.size<civic.length)civicRows.add(Math.floor(rnd()*N*N*2));
+  const civicFor=new Map([...civicRows].map((k,i)=>[k,civic[i]]));
+  for(let bx=0;bx<N;bx++)for(let bz=0;bz<N;bz++){
+    const x0=pos(bx)+hw(bx),x1=pos(bx+1)-hw(bx+1),z0=pos(bz)+hw(bz),z1=pos(bz+1)-hw(bz+1);
+    const cx=(x0+x1)/2,cz=(z0+z1)/2,W=x1-x0,D=z1-z0;
+    const park=bx===parkBlock[0]&&bz===parkBlock[1];
+    const slab=new THREE.Mesh(new THREE.BoxGeometry(W,0.15,D),mat(park?0x5f8a3e:0x9e9a90));slab.position.set(cx,0.075,cz);slab.receiveShadow=true;city.add(slab);
+    if(park){
+      const pond=new THREE.Mesh(new THREE.CylinderGeometry(6,6,0.1,32),new THREE.MeshStandardMaterial({color:0x4a7fa8,roughness:0.15}));pond.position.set(cx+4,0.17,cz-3);city.add(pond);
+      for(let i=0;i<24;i++){const a=rnd()*6.28,d=8+rnd()*Math.min(W,D)*0.3;tree(cx+Math.cos(a)*d,cz+Math.sin(a)*d)}
+      continue;}
+    const dist=district(bx,bz);
+    // two rows of lots per block, back to back: north row fronts the road at z0, south row fronts z1.
+    // Lots are packed shoulder to shoulder along the frontage at true size.
+    const cellsX=Math.floor(W/CELL), maxD=Math.floor(D/2/CELL), xStart=cx-cellsX*CELL/2;
+    for(const side of [0,1]){
+      const fits=(u,room)=>{const [w,d]=cellsOf(u);return w<=room&&d<=maxD};
+      let cur=0, civicCat=civicFor.get((bx*N+bz)*2+side);
+      while(cur<cellsX){
+        const room=cellsX-cur;let cat=civicCat??wpick(pools[dist]);civicCat=undefined;
+        let run=[];
+        if(cat==='row_housing'){   // a terrace: 2-5 row houses of one depth, joined wall to wall
+          const opts=M.row_housing.filter(u=>fits(u,1));if(opts.length){const d=cellsOf(pick(opts))[1];const same=opts.filter(u=>cellsOf(u)[1]===d);
+            const n=Math.min(room,2+Math.floor(rnd()*4));for(let i=0;i<n;i++)run.push(pick(same));}
+        }else{
+          const opts=(M[cat]||[]).filter(u=>fits(u,room));if(opts.length)run.push(pick(opts));
+        }
+        if(!run.length){const any=M.low_commercial.filter(u=>fits(u,room));if(!any.length)break;run.push(pick(any));}
+        for(const u of run){
+          const [w,d]=cellsOf(u),x=xStart+(cur+w/2)*CELL;
+          const z=side===0?z0+d*CELL/2:z1-d*CELL/2;
+          jobs.push(place(u,x,z,side===0?Math.PI:0));
+          // back yard between this lot and the row behind it
+          if((dist==='suburb'||dist==='mixed')&&rnd()<0.5)tree(x+(rnd()-0.5)*w*CELL*0.6,side===0?z0+d*CELL+2+rnd()*2:z1-d*CELL-2-rnd()*2);
+          cur+=w;
+        }
+      }
+    }
+  }
+  // traffic: right-hand lanes of the grid roads
+  const urls=[];for(let i=0;i<60;i++)urls.push(rnd()<0.8?pick(M.cars):pick(M.trucks));
+  await Promise.all(urls.map(load));
+  for(const url of urls){
+    const src=await load(url);if(!src)continue;
+    const o=src.clone(true),b=new THREE.Box3().setFromObject(o),sz=b.getSize(new THREE.Vector3()),c=b.getCenter(new THREE.Vector3());
+    o.position.set(-c.x,-b.min.y,-c.z);
+    const inner=new THREE.Group();inner.add(o);if(sz.x>sz.z)inner.rotation.y=Math.PI/2;
+    const g=new THREE.Group();g.add(inner);g.scale.setScalar(Math.min(1,12/Math.max(sz.x,sz.z)));
+    const horiz=rnd()<0.5,line=Math.floor(rnd()*(N+1)),dir=rnd()<0.5?1:-1,p=prof(line);
+    const off=p===AVENUE?(rnd()<0.5?1.75:5.25)+0:1.5;
+    const lane=horiz?pos(line)+dir*off:pos(line)-dir*off;
+    cars.push({g,horiz,dir,lane,t:-HALF+rnd()*N*PITCH,v:7+rnd()*7});city.add(g);
+  }
+  await Promise.all(jobs);
+  st.textContent=`${city.children.length} objects · ${cache.size} unique models`;
+}
+document.getElementById('re').onclick=()=>{seed=Math.floor(Math.random()*99999)+1;st.textContent='building…';build()};
+build();
+
+const clock=new THREE.Clock(),L=N*PITCH;
+r.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),0.1);
+  for(const c of cars){c.t+=c.dir*c.v*dt;if(c.t>HALF)c.t-=L;if(c.t<-HALF)c.t+=L;
+    if(c.horiz){c.g.position.set(c.t,0.04,c.lane);c.g.rotation.y=c.dir>0?Math.PI/2:-Math.PI/2}
+    else{c.g.position.set(c.lane,0.04,c.t);c.g.rotation.y=c.dir>0?0:Math.PI}}
+  RL.updateSignals(clock.elapsedTime);
+  ctl.update();r.render(S,cam)});
+</script></body></html>

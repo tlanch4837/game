@@ -1,0 +1,118 @@
+# Tower Crane Materials
+
+newmtl yellow_steel
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.300 0.300 0.300
+Ns 40.0
+d 1.00
+illum 2
+map_Kd tex/yellow_steel.jpg
+
+newmtl dark_steel
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.400 0.400 0.400
+Ns 50.0
+d 1.00
+illum 2
+map_Kd tex/dark_steel.jpg
+
+newmtl concrete
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.050 0.050 0.050
+Ns 5.0
+d 1.00
+illum 2
+map_Kd tex/concrete.jpg
+
+newmtl glass
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.900 0.900 0.900
+Ns 90.0
+d 0.45
+illum 2
+map_Kd tex/glass.jpg
+
+newmtl cable
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.200 0.200 0.200
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/cable.jpg
+
+newmtl spom_mast_pz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_mast_albedo.png
+
+newmtl spom_mast_nz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_mast_albedo.png
+
+newmtl spom_mast_px
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_mast_albedo.png
+
+newmtl spom_mast_nx
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_mast_albedo.png
+
+newmtl spom_cjib_pz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_cjib_albedo.png
+
+newmtl spom_cjib_nz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_cjib_albedo.png
+
+newmtl spom_jib_pz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_jib_albedo.png
+
+newmtl spom_jib_nz
+Ka 0.2 0.2 0.2
+Kd 1.000 1.000 1.000
+Ks 0.1 0.1 0.1
+Ns 20.0
+d 1.00
+illum 2
+map_Kd tex/lattice_jib_albedo.png

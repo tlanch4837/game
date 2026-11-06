@@ -1,0 +1,10 @@
+newmtl bark
+Kd 1 1 1
+Ks 0 0 0
+map_Kd bark.png
+
+newmtl leaves
+Kd 1 1 1
+Ks 0 0 0
+map_Kd leaves.png
+map_d leaves.png

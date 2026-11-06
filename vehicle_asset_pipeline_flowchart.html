@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vehicle & Rail Asset Pipeline - Flowchart</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2230; --line:#34445c; --txt:#e6edf5; --muted:#8fa3bd; --accent:#4fb3ff; --ok:#5fd38d; --warn:#e0b44c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:24px 32px 8px; }
+  h1 { margin:0 0 4px; font-size:24px; }
+  .sub { color:var(--muted); font-size:14px; }
+  .flow { display:flex; flex-direction:column; align-items:center; padding:16px 32px 40px; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 16px; width:min(860px, 100%); }
+  .box h3 { margin:0 0 6px; font-size:15px; color:var(--accent); }
+  .box ul { margin:0; padding-left:18px; font-size:13px; line-height:1.55; }
+  .box code { color:var(--ok); font-size:12px; }
+  .box .tag { font-size:11px; padding:1px 6px; border-radius:4px; margin-left:6px; vertical-align:middle; }
+  .tag.ok { background:#1d4a33; color:var(--ok); }
+  .tag.warn { background:#4a3c17; color:var(--warn); }
+  .arrow { color:var(--accent); font-size:22px; line-height:1; padding:6px 0; }
+  .split { display:flex; gap:12px; width:min(860px,100%); flex-wrap:wrap; }
+  .split > .box { flex:1 1 260px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin-top:6px; }
+  th, td { border-bottom:1px solid var(--line); padding:5px 6px; text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  td.num { text-align:right; }
+  footer { color:var(--muted); font-size:12px; padding:0 32px 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vehicle &amp; Rail Asset Pipeline</h1>
+  <div class="sub">How a vehicle or rail model goes from a Python generator to a file the game loads. Based on the scripts in <code>tools/vehicle_gen/</code> and the files in <code>assets/</code>.</div>
+</header>
+
+<div class="flow">
+
+  <div class="box">
+    <h3>1. Shared toolkit</h3>
+    <ul>
+      <li><code>gen_cars.py</code>: mesh primitives (box, tube), materials, colour palette, shared output helpers</li>
+      <li><code>gen_transit.py</code>: transit body building helpers (bus, tram, subway shapes)</li>
+      <li><code>gen_transit_tex.py</code>: shared texture-map helpers (noise, bolts, lamps, overlays)</li>
+    </ul>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>2. Category generators (geometry to GLB)</h3>
+    <ul>
+      <li><code>gen_cars.py</code> &rarr; <code>assets/vehicles/cars/glb/CAR_&lt;type&gt;_&lt;colour&gt;.glb</code></li>
+      <li><code>gen_commercial.py</code> &rarr; <code>assets/vehicles/commercial/glb/COMM_&lt;type&gt;_&lt;colour&gt;.glb</code></li>
+      <li><code>gen_service.py</code>, <code>gen_service_works.py</code> &rarr; <code>assets/vehicles/service/glb/SERVICE_&lt;type&gt;_&lt;livery&gt;.glb</code></li>
+      <li><code>gen_transit.py</code> &rarr; <code>assets/vehicles/transit/glb/</code> (buses, trams)</li>
+      <li><code>gen_train.py</code> &rarr; <code>assets/vehicles/train/glb/TRAIN_&lt;type&gt;_&lt;body&gt;_&lt;stripe&gt;.glb</code> <span class="tag ok">passenger train</span></li>
+      <li><code>gen_freight.py</code>, <code>gen_freight_yard.py</code> &rarr; <code>assets/vehicles/train/glb/FREIGHT_&lt;type&gt;_&lt;colour&gt;.glb</code> and <code>assets/rail/station/glb/STATION_freight_yard.glb</code></li>
+      <li><code>gen_subway.py</code> &rarr; <code>assets/vehicles/subway/glb/SUBWAY_car_&lt;body&gt;_&lt;band&gt;.glb</code></li>
+    </ul>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="split">
+    <div class="box">
+      <h3>3a. Texture maps</h3>
+      <ul>
+        <li><code>gen_train_tex.py</code>, <code>gen_transit_tex.py</code>, car maps in <code>tex/</code></li>
+        <li>Per material: <code>_albedo.jpg</code>, <code>_normal.png</code>, <code>_height.png</code></li>
+        <li>Detail (joints, louvres, bolts, lamps) lives in height maps; the engine runs parallax occlusion on them</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>3b. Rail track and stations</h3>
+      <ul>
+        <li>Track: <code>assets/rail/track/glb/TRACK_*.glb</code> plus <code>track/tex/</code> (albedo, normal, 8-bit and 16-bit height)</li>
+        <li>Stations: <code>STATION_passenger</code>, <code>STATION_modern_2track</code>, <code>STATION_elevated_subway</code>, <code>STATION_underground_subway</code>, <code>STATION_freight_yard</code></li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>4. Output rules (every generator)</h3>
+    <ul>
+      <li>Units in metres, +Y up, front faces +Z, y = 0 at the top of the rail (vehicles) or ground (buildings)</li>
+      <li>Naming: <code>&lt;CATEGORY&gt;_&lt;type&gt;_&lt;colour or livery&gt;.glb</code></li>
+      <li>Low-poly body, detail carried by maps (cheap on the GPU)</li>
+      <li>Run a single type: <code>python gen_train.py loco</code></li>
+    </ul>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>5. Visual check</h3>
+    <ul>
+      <li>Each category has a <code>preview.html</code> (cars, commercial, service, train, transit) to inspect models in a browser</li>
+      <li>Subway and freight have no preview page in the folder listing</li>
+    </ul>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>6. Catalog and manifest</h3>
+    <ul>
+      <li><code>city_manifest.json</code> lists the assets the city uses: <code>cars</code> (121), <code>trucks</code> (78), and building sets such as <code>low_commercial</code> (420) and <code>high_density</code> (45)</li>
+      <li>Vehicle entries like the freight, service and subway sets are not listed in the manifest yet (verify)</li>
+    </ul>
+  </div>
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>7. Game load <span class="tag warn">not confirmed</span></h3>
+    <ul>
+      <li>The engine's source folder has no direct reference to the vehicle or manifest paths I searched for, so the runtime loader that reads these GLBs was not found. Check <code>build_city.bat</code> and the engine's asset loading before relying on this step.</li>
+    </ul>
+  </div>
+
+  <div class="arrow">&darr;</div>
+
+  <div class="box">
+    <h3>Asset counts (files in <code>assets/</code>)</h3>
+    <table>
+      <tr><th>Category</th><th>Folder</th><th class="num">GLB files</th></tr>
+      <tr><td>Cars</td><td>vehicles/cars</td><td class="num">121</td></tr>
+      <tr><td>Commercial vehicles</td><td>vehicles/commercial</td><td class="num">27</td></tr>
+      <tr><td>Freight (in train folder)</td><td>vehicles/train</td><td class="num">36 (train + freight)</td></tr>
+      <tr><td>Service vehicles</td><td>vehicles/service</td><td class="num">25</td></tr>
+      <tr><td>Transit (buses, trams)</td><td>vehicles/transit</td><td class="num">26</td></tr>
+      <tr><td>Subway cars</td><td>vehicles/subway</td><td class="num">4</td></tr>
+      <tr><td>Rail stations</td><td>rail/station</td><td class="num">5</td></tr>
+      <tr><td>Track</td><td>rail/track</td><td class="num">3</td></tr>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Stages 1 to 5 come from the scripts and folders in this project. Stage 6 counts come from <code>city_manifest.json</code>. Stage 7 is the open question. Counts are GLB files on disk as of 2026-11-06.
+</footer>
+</body>
+</html>
