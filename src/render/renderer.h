@@ -4,10 +4,16 @@
 // of every frame (one frame in flight): simple first, pipelined later.
 #pragma once
 #include <atomic>
+#include <vector>
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
-#include <vector>
 #include <windows.h>
+#else
+#include <chrono>
+// Apple (Metal backend): the "window" handed to Init is a CAMetalLayer* (as void*); see renderer_metal.mm.
+using HWND = void*;
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -392,10 +398,14 @@ protected:
     double gpuPasses_[8] = {};
     double fenceWaitMs_ = 0.0, presentMs_ = 0.0;
     static double TraceNowMs() {
+#ifdef _WIN32
         LARGE_INTEGER now, freq;
         QueryPerformanceCounter(&now);
         QueryPerformanceFrequency(&freq);
         return (double)now.QuadPart * 1000.0 / (double)freq.QuadPart;
+#else
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
     }
     // Scoped step timer for the streaming upload calls: Mark() after each step; Done() logs the steps when the call was slow.
     struct UploadSteps {
@@ -416,6 +426,8 @@ std::unique_ptr<Renderer> CreateD3D12Renderer();
 // Fills the D3D12 shader cache on all cores; blocks. Run it off the main thread so the window stays alive.
 void PrecompileD3D12Shaders(std::atomic<int>& done, std::atomic<int>& total, const std::atomic<bool>& stop, std::atomic<int>* failed = nullptr);
 std::unique_ptr<Renderer> CreateVulkanRenderer();
+// Apple only (renderer_metal.mm): Metal via metal-cpp. Init's window is a CAMetalLayer*.
+std::unique_ptr<Renderer> CreateMetalRenderer();
 
 // Appends to engine.log next to the executable (and the debugger output).
 void Log(const char* format, ...);
