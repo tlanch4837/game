@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Rail junction demo</title>
+<style>body{margin:0;background:#1d2a1d;color:#ddd;font:14px sans-serif}canvas{display:block;margin:auto}p{text-align:center;margin:6px}</style></head>
+<body>
+<p>Rail junction: 3 segments sharing one node (Single Track Railway profile: 1.5 verge + 4 ballast + 1.5 verge). Illustration of the graph, not engine output. Drag the node.</p>
+<canvas id="c" width="900" height="600"></canvas>
+<script>
+const cv=document.getElementById('c'),g=cv.getContext('2d'),S=8; // px per metre
+const nodes=[{x:120,y:300},{x:780,y:300},{x:760,y:90},{x:450,y:300}]; // 0,1,2 ends; 3 = junction node
+const segs=[{a:0,b:3,c1:[250,300],c2:[350,300]},{a:3,b:1,c1:[550,300],c2:[650,300]},{a:3,b:2,c1:[560,300],c2:[640,110]}];
+const P=(n)=>[nodes[n].x,nodes[n].y];
+function bez(s,t){const a=P(s.a),b=P(s.b),u=1-t;return[0,1].map(i=>u*u*u*a[i]+3*u*u*t*s.c1[i]+3*u*t*t*s.c2[i]+t*t*t*b[i])}
+function tan(s,t){const e=.001,p=bez(s,Math.max(0,t-e)),q=bez(s,Math.min(1,t+e));const dx=q[0]-p[0],dy=q[1]-p[1],l=Math.hypot(dx,dy)||1;return[dx/l,dy/l]}
+function stroke(s,off,w,col,dash){g.beginPath();for(let i=0;i<=80;i++){const t=i/80,p=bez(s,t),d=tan(s,t),x=p[0]-d[1]*off,y=p[1]+d[0]*off;i?g.lineTo(x,y):g.moveTo(x,y)}
+ g.lineWidth=w;g.strokeStyle=col;g.setLineDash(dash||[]);g.stroke();g.setLineDash([])}
+function draw(){
+ g.fillStyle='#3d5a30';g.fillRect(0,0,900,600);
+ g.lineCap='butt';
+ for(const s of segs)stroke(s,0,7*S,'#6b655c');           // ballast (4 m) + verge shoulders shown as ballast bed
+ g.beginPath();g.arc(nodes[3].x,nodes[3].y,3.6*S,0,7);g.fillStyle='#6b655c';g.fill(); // junction fill
+ for(const s of segs)stroke(s,0,4*S,'#7d766b');
+ for(const s of segs)stroke(s,0,2.6*S,'#4a3a2a',[0.6*S,0.5*S]); // sleepers (dashed wide line)
+ for(const s of segs)for(const o of[-.72,.72])stroke(s,o*S,0.18*S*1.6,'#c8c8cc'); // rails
+ g.fillStyle='#ffd24a';
+ for(let i=0;i<nodes.length;i++){g.beginPath();g.arc(nodes[i].x,nodes[i].y,i==3?7:5,0,7);g.fill()}
+ g.fillStyle='#fff';g.fillText('shared node (3 arms)',nodes[3].x-50,nodes[3].y+34);
+}
+let drag=-1;
+cv.onmousedown=e=>{const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;drag=nodes.findIndex(n=>Math.hypot(n.x-x,n.y-y)<12)};
+cv.onmousemove=e=>{if(drag<0)return;const r=cv.getBoundingClientRect();nodes[drag].x=e.clientX-r.left;nodes[drag].y=e.clientY-r.top;
+ if(drag==3){segs[0].c2=[nodes[3].x-100,nodes[3].y];segs[1].c1=[nodes[3].x+100,nodes[3].y];segs[2].c1=[nodes[3].x+110,nodes[3].y]}draw()};
+onmouseup=()=>drag=-1;
+draw();
+</script></body></html>

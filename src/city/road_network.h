@@ -21,21 +21,21 @@ namespace tbd {
 namespace city {
 
 // ------------------------------------------------------------------------------------------------ materials
-enum class Mat : uint8_t { Asphalt, AsphaltWorn, Gravel, Concrete, Curb, Pavers, Grass, BikeAsphalt, Paint, Count };
+enum class Mat : uint8_t { Asphalt, AsphaltWorn, Gravel, Concrete, Curb, Pavers, Grass, BikeAsphalt, Paint, Track, Count }; // Track: SPOM railway (TrackSweep), texture loaded by the host
 constexpr int kMatCount = (int)Mat::Count;
 // assets/roads/tex/<name>_albedo.png / _normal.png (tools/road_gen/gen_road_textures.py). Paint has no texture.
-constexpr const char* kMatFile[kMatCount] = {"asphalt", "asphalt_worn", "gravel", "concrete", "curb", "pavers", "grass", "bike_asphalt", nullptr};
-constexpr float kMatTile[kMatCount] = {4, 4, 3, 3, 2, 2, 4, 4, 1}; // metres per texture repeat
+constexpr const char* kMatFile[kMatCount] = {"asphalt", "asphalt_worn", "gravel", "concrete", "curb", "pavers", "grass", "bike_asphalt", nullptr, nullptr};
+constexpr float kMatTile[kMatCount] = {4, 4, 3, 3, 2, 2, 4, 4, 1, 1}; // metres per texture repeat
 
 // ------------------------------------------------------------------------------------------------ profiles
-enum class Kind : uint8_t { Lane, Shoulder, Sidewalk, Curb, Median, Barrier, Verge, Path, Bike, Parking, QuayWall };
+enum class Kind : uint8_t { Lane, Shoulder, Sidewalk, Curb, Median, Barrier, Verge, Path, Bike, Parking, QuayWall, Track };
 struct Strip {
     float w;
     Kind kind;
     Mat mat;
     float h; // top above the road surface
 };
-enum class Cat : uint8_t { Small, Medium, Large, Highway, Quay, Path };
+enum class Cat : uint8_t { Small, Medium, Large, Highway, Quay, Path, Rail };
 struct Profile {
     std::string name;
     Cat cat;
@@ -146,6 +146,10 @@ inline const std::vector<Profile>& Profiles() {
         // ---- paths
         v.push_back(P("Pedestrian Path", Cat::Path, 0, 0, {verge(1), st(3, Kind::Path, Mat::Concrete, 0.04f), verge(1)}));
         v.push_back(P("Bicycle Path", Cat::Path, 0, 0, {verge(0.75f), st(3, Kind::Bike, Mat::BikeAsphalt, 0.03f), verge(0.75f)}));
+        // ---- rail: same node / segment graph as roads (nodes are shared, split and snapped the same way); no lanes, so no
+        // traffic, zoning or markings. Use Network::CanConnect so a rail segment never joins a road node.
+        v.push_back(P("Single Track Railway", Cat::Rail, 0, 0, {verge(1.5f), st(4, Kind::Track, Mat::Gravel, 0.1f), verge(1.5f)}));
+        v.push_back(P("Double Track Railway", Cat::Rail, 0, 0, {verge(1.5f), st(4, Kind::Track, Mat::Gravel, 0.1f), verge(1.5f), st(4, Kind::Track, Mat::Gravel, 0.1f), verge(1.5f)}));
         return v;
     }();
     return list;
@@ -295,8 +299,35 @@ public:
     float NodeY(int n) const { return nodes[n].grounded && ground ? ground(nodes[n].p.x, nodes[n].p.z) : nodes[n].p.y; }
     Vec3 NodePos(int n) const { return {nodes[n].p.x, NodeY(n), nodes[n].p.z}; }
     bool Follows(const Segment& s) const { return nodes[s.a].grounded && nodes[s.b].grounded; }
-    float YAt(const Segment& s, float t) const { return FollowY(Curve(s), NodeY(s.a), NodeY(s.b), t, ground, Follows(s) ? 1 : 0); }
+    float YAt(const Segment& s, float t) const {
+        float y = FollowY(Curve(s), NodeY(s.a), NodeY(s.b), t, ground, Follows(s) ? 1 : 0);
+        if (ground && !Follows(s)) { // a ramp (not a ground road) with neither end underground rides over a hill on its way
+            const V2 pa = XZ(nodes[s.a].p), pb = XZ(nodes[s.b].p);
+            if (NodeY(s.a) > ground(pa.x, pa.z) - 4.0f && NodeY(s.b) > ground(pb.x, pb.z) - 4.0f) {
+                const V2 q = Curve(s).At(t);
+                y = std::max(y, ground(q.x, q.z));
+            }
+        }
+        return y;
+    }
     const Profile& Prof(int s) const { return Profiles()[segs[s].profile]; }
+    // Rail and road share the graph but not nodes: a node is rail if any live segment on it is rail.
+    bool IsRailSeg(int s) const { return Prof(s).cat == Cat::Rail; }
+    bool IsRailNode(int n) const {
+        for (int s : nodes[n].segs)
+            if (segs[s].alive && IsRailSeg(s)) return true;
+        return false;
+    }
+    bool HasRoadSeg(int n) const {
+        for (int s : nodes[n].segs)
+            if (segs[s].alive && !IsRailSeg(s)) return true;
+        return false;
+    }
+    // May a segment of this profile attach to node n? (empty nodes accept anything)
+    bool CanConnect(int n, int profile) const {
+        const bool rail = Profiles()[profile].cat == Cat::Rail;
+        return rail ? !HasRoadSeg(n) : !IsRailNode(n);
+    }
 
     int AddNode(Vec3 p, bool grounded) {
         nodes.push_back({p, {}, true, grounded});
@@ -356,22 +387,27 @@ public:
         bestT = 0.5f * (lo + hi);
         bestD = Len(c.At(bestT) - p);
     }
-    int NearestNode(V2 p, float radius, int skip = -1) const {
+    // profile >= 0: only nodes a segment of that profile may attach to (CanConnect): rails never join road nodes
+    int NearestNode(V2 p, float radius, int skip = -1, int profile = -1) const {
         int best = -1;
         float bd = radius;
         for (size_t i = 0; i < nodes.size(); ++i) {
             if (!nodes[i].alive || (int)i == skip) continue;
+            if (profile >= 0 && !CanConnect((int)i, profile)) continue;
             const float d = Len(XZ(nodes[i].p) - p);
             if (d < bd) bd = d, best = (int)i;
         }
         return best;
     }
     // The segment whose surface covers p (within its half width + pad); t and centre-line distance out.
-    int SegmentAt(V2 p, float pad, float& t, float& dist) const {
+    // profile >= 0: only segments of the same kind (rail / road) as that profile
+    int SegmentAt(V2 p, float pad, float& t, float& dist, int profile = -1) const {
         int best = -1;
         float score = 1e30f;
+        const bool wantRail = profile >= 0 && Profiles()[profile].cat == Cat::Rail;
         for (size_t i = 0; i < segs.size(); ++i) {
             if (!segs[i].alive) continue;
+            if (profile >= 0 && IsRailSeg((int)i) != wantRail) continue;
             const float hw = Prof((int)i).Half();
             float ti, di;
             Nearest((int)i, p, ti, di);
@@ -432,6 +468,31 @@ inline void Wall(std::vector<Vertex>& out, Vec3 a, Vec3 b, float yTopA, float yT
     const float uv[8] = {0, yTopA / tile, L, yTopB / tile, L, yBotB / tile, 0, yBotA / tile};
     Quad(out, {a.x, yTopA, a.z}, {b.x, yTopB, b.z}, {b.x, yBotB, b.z}, {a.x, yBotA, a.z}, col, uv, outward);
 }
+// SPOM railway track (TrackPS in mesh.hlsl, vertex alpha 0.83): a box of width kTrackW and depth kTrackDepth under the rail top,
+// swept through the given centre-line points (rail-top height in .y). Top and both sides; the relief texture does the rest.
+constexpr float kTrackW = 4.4f, kTrackDepth = 0.55f;
+struct TrackPt {
+    V2 c;      // centre line
+    float y;   // rail top
+    V2 f;      // forward (unit)
+    float s;   // metres along
+};
+inline void TrackSweep(std::vector<Vertex>& out, const std::vector<TrackPt>& pts) {
+    const float hw = kTrackW * 0.5f;
+    auto vtx = [&](const TrackPt& p, float x, float dy) {
+        const V2 across{p.f.z, -p.f.x}; // = cross(up, forward), as the shader builds it
+        const V2 w = p.c + across * x;
+        out.push_back({w.x, p.y + dy, w.z, p.f.x, 0.0f, p.f.z, dy, kTrackW, 0.0f, 0.83f, x, p.s});
+    };
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const TrackPt &a = pts[i - 1], &b = pts[i];
+        const float face[3][4] = {{-hw, 0, hw, 0}, {-hw, -kTrackDepth, -hw, 0}, {hw, 0, hw, -kTrackDepth}}; // top, left side, right side: (x0,dy0) -> (x1,dy1)
+        for (const auto& fc : face) {
+            vtx(a, fc[0], fc[1]), vtx(a, fc[2], fc[3]), vtx(b, fc[2], fc[3]);
+            vtx(a, fc[0], fc[1]), vtx(b, fc[2], fc[3]), vtx(b, fc[0], fc[1]);
+        }
+    }
+}
 // An axis-free box: centre bottom c, along d (unit) length len, across width w, from y0 to y1.
 inline void Box(std::vector<Vertex>& out, V2 c, V2 d, float len, float w, float y0, float y1, Vec3 col, float tile) {
     const V2 s = LeftOf(d) * (w * 0.5f), f = d * (len * 0.5f);
@@ -450,6 +511,10 @@ struct SegTrim {
     bool junctionA = false, junctionB = false; // the end meets a junction (crosswalks there)
     bool miterA = false, miterB = false;       // the end continues into one same-width road: cut along the bisector
     V2 leftA, leftB;                           // the cut's left vector, already scaled so the width stays true
+    // lane attachments (highway exits / on-ramps that start or end on a lane, src/city/road_tool.h lane snapping):
+    int host = -1;                             // this road's free end sits on that road: no edges while over it
+    struct Cut { float t0, t1, side; };        // on the host: where a ramp peels off; side +1 left, -1 right
+    std::vector<Cut> cuts;                     // no verge / barrier / edge walls on that side over [t0, t1]
 };
 
 // Distance along the curve -> parameter, from a sampled arc length table.
@@ -595,6 +660,7 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         V2 c, l;
         float y, g, dist;
         bool tunnel, elevated;
+        float t = 0;
     };
     std::vector<Sample> sm(n + 1);
     float dist = 0;
@@ -602,6 +668,7 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         const float f = (float)i / n, t = trim.t0 + (trim.t1 - trim.t0) * f;
         Sample& q = sm[i];
         q.c = c.At(t);
+        q.t = t;
         q.l = LeftOf(c.Tan(t));
         if (i == 0 && trim.miterA) q.l = trim.leftA;
         if (i == n && trim.miterB) q.l = trim.leftB;
@@ -622,17 +689,44 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
     }
     auto at = [&](int i, float off) { return sm[i].c + sm[i].l * off; };
     const Vec3 white{1, 1, 1};
+    // ---- lane attachments: which side's edge strips are cut away here (host), or whether we are over the host (ramp)
+    int firstLane = -1, lastLane = -1;
+    for (size_t k = 0; k < p.strips.size(); ++k)
+        if (p.strips[k].kind == Kind::Lane) lastLane = (int)k, firstLane = firstLane < 0 ? (int)k : firstLane;
+    auto cutSide = [&](const Sample& A, const Sample& B) { // +1 / -1: that side is open for a ramp; 0: none
+        for (const SegTrim::Cut& ct : trim.cuts)
+            if (std::max(A.t, B.t) >= ct.t0 && std::min(A.t, B.t) <= ct.t1) return ct.side;
+        return 0.0f;
+    };
+    auto overHost = [&](const Sample& A) {
+        if (trim.host < 0 || !net.segs[trim.host].alive) return false;
+        float t, d;
+        net.Nearest(trim.host, A.c, t, d);
+        return d < net.Prof(trim.host).Half() - 0.2f;
+    };
     // ---- strips, curb faces, skirts
     for (int i = 1; i <= n; ++i) {
         const Sample &A = sm[i - 1], &B = sm[i];
         if (A.tunnel && B.tunnel) continue;
+        const float cut = cutSide(A, B);
+        const bool onHost = overHost(A) || overHost(B);
+        auto skip = [&](int k) {
+            if (onHost) return p.strips[k].kind != Kind::Lane; // the ramp's lanes only, laid over the host's surface
+            if (cut > 0) return firstLane >= 0 && k < firstLane;
+            if (cut < 0) return lastLane >= 0 && k > lastLane;
+            return false;
+        };
+        const float lift = onHost ? 0.03f : 0.0f;
         for (size_t k = 0; k < p.strips.size(); ++k) {
+            if (skip((int)k)) continue;
             const Strip& st = p.strips[k];
-            auto& o = out.byMat[(int)st.mat];
-            const float tile = kMatTile[(int)st.mat], h = kRoadLift + st.h;
+            // on a bridge there is no greenery: verges become bare deck (headroom beside the parapet walls)
+            const Mat mat = (A.elevated || B.elevated) && st.mat == Mat::Grass ? Mat::Concrete : st.mat;
+            auto& o = out.byMat[(int)mat];
+            const float tile = kMatTile[(int)mat], h = kRoadLift + st.h + lift;
             const float uv[8] = {edge[k] / tile, A.dist / tile, edge[k + 1] / tile, A.dist / tile, edge[k + 1] / tile, B.dist / tile, edge[k] / tile, B.dist / tile};
             Quad(o, V(at(i - 1, edge[k]), A.y + h), V(at(i - 1, edge[k + 1]), A.y + h), V(at(i, edge[k + 1]), B.y + h), V(at(i, edge[k]), B.y + h), white, uv);
-            if (k + 1 < p.strips.size() && std::fabs(p.strips[k + 1].h - st.h) > 0.01f) { // curb face
+            if (k + 1 < p.strips.size() && !skip((int)k + 1) && std::fabs(p.strips[k + 1].h - st.h) > 0.01f) { // curb face
                 const float hi = std::max(st.h, p.strips[k + 1].h) + kRoadLift, lo = std::min(st.h, p.strips[k + 1].h) + kRoadLift;
                 const bool leftHigher = st.h > p.strips[k + 1].h;
                 const V2 ln = A.l * (leftHigher ? -1.0f : 1.0f);
@@ -644,13 +738,15 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         const bool quayL = p.strips.front().kind == Kind::QuayWall, quayR = p.strips.back().kind == Kind::QuayWall;
         const float downL = quayL ? 14.0f : kDeck, downR = quayR ? 14.0f : kDeck;
         auto& conc = out.byMat[(int)Mat::Concrete];
-        Wall(conc, V(at(i - 1, edge.front()), 0), V(at(i, edge.front()), 0), A.y + hL, B.y + hL, A.y - downL, B.y - downL, {A.l.x, 0, A.l.z}, white, 3);
-        Wall(conc, V(at(i - 1, edge.back()), 0), V(at(i, edge.back()), 0), A.y + hR, B.y + hR, A.y - downR, B.y - downR, {-A.l.x, 0, -A.l.z}, white, 3);
+        if (onHost) continue; // the host's deck carries it here
+        if (cut <= 0) Wall(conc, V(at(i - 1, edge.front()), 0), V(at(i, edge.front()), 0), A.y + hL, B.y + hL, A.y - downL, B.y - downL, {A.l.x, 0, A.l.z}, white, 3);
+        if (cut >= 0) Wall(conc, V(at(i - 1, edge.back()), 0), V(at(i, edge.back()), 0), A.y + hR, B.y + hR, A.y - downR, B.y - downR, {-A.l.x, 0, -A.l.z}, white, 3);
         if (A.elevated || B.elevated) { // bridge: underside and parapets
             const float uv[8] = {0, 0, 1, 0, 1, 1, 0, 1};
             Quad(conc, V(at(i - 1, edge.front()), A.y - kDeck), V(at(i - 1, edge.back()), A.y - kDeck), V(at(i, edge.back()), B.y - kDeck),
                  V(at(i, edge.front()), B.y - kDeck), {0.8f, 0.8f, 0.8f}, uv, {0, -1, 0});
             for (int side = 0; side < 2; ++side) {
+                if ((side == 0 && cut > 0) || (side == 1 && cut < 0)) continue; // open where the ramp leaves
                 const float off = side ? edge.back() + 0.15f : edge.front() - 0.15f, hh = side ? hR : hL;
                 Wall(conc, V(at(i - 1, off), 0), V(at(i, off), 0), A.y + hh + 1.0f, B.y + hh + 1.0f, A.y + hh, B.y + hh, {A.l.x * (side ? -1.f : 1.f), 0, A.l.z * (side ? -1.f : 1.f)}, white, 3);
                 Wall(conc, V(at(i - 1, off), 0), V(at(i, off), 0), A.y + hh + 1.0f, B.y + hh + 1.0f, A.y + hh, B.y + hh, {A.l.x * (side ? 1.f : -1.f), 0, A.l.z * (side ? 1.f : -1.f)}, white, 3);
@@ -703,6 +799,19 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         for (float side : {-1.0f, 1.0f}) mesh::Box(conc, q.c + q.l * (side * (p.Half() + 0.6f)), d, 2.0f, 1.2f, y0, y1, white, 3);
         mesh::Box(conc, q.c, LeftOf(d) * -1.0f, p.width + 2.4f, 2.0f, y1 - 1.2f, y1 + 0.3f, white, 3);
     }
+    // ---- rail: one SPOM track box per track strip (TrackSweep; the relief carries rails, sleepers and ballast)
+    for (size_t k = 0; k < p.strips.size(); ++k) {
+        if (p.strips[k].kind != Kind::Track) continue;
+        const float mid = 0.5f * (edge[k] + edge[k + 1]), top = kRoadLift + p.strips[k].h + kTrackDepth - 0.05f;
+        std::vector<TrackPt> run;
+        auto flush = [&] { if (run.size() >= 2) TrackSweep(out.byMat[(int)Mat::Track], run); run.clear(); };
+        for (int i = 0; i <= n; ++i) {
+            if (sm[i].tunnel) { flush(); continue; }
+            const V2 f = Norm(sm[std::min(i + 1, n)].c - sm[std::max(i - 1, 0)].c);
+            run.push_back({at(i, mid), sm[i].y + top, f, sm[i].dist});
+        }
+        flush();
+    }
     // ---- markings (paint)
     auto& paint = out.byMat[(int)Mat::Paint];
     const Vec3 yellow{0.95f, 0.75f, 0.15f};
@@ -720,7 +829,7 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         }
     };
     int laneIdx = 0;
-    const bool paved = p.cat != Cat::Path;
+    const bool paved = p.cat != Cat::Path && p.cat != Cat::Rail;
     for (size_t k = 0; k < p.strips.size() && paved; ++k) {
         const Strip& st = p.strips[k];
         if (st.kind != Kind::Lane || st.mat == Mat::Gravel) {
@@ -810,11 +919,13 @@ inline void BuildJunction(const Network& net, int n, const std::vector<Arm>& arm
             widest = a.hw;
             road = Mat::Asphalt;
             for (const Strip& st : net.Prof(a.seg).strips)
-                if (st.kind == Kind::Lane || st.kind == Kind::Path || st.kind == Kind::Bike) { road = st.mat; break; }
+                if (st.kind == Kind::Lane || st.kind == Kind::Path || st.kind == Kind::Bike || st.kind == Kind::Track) { road = st.mat; break; }
         }
     }
     const bool raisedPath = road == Mat::Pavers || road == Mat::Concrete; // pedestrian streets / paths: surface at their own height
-    const float roadH = kRoadLift + (raisedPath ? 0.04f : 0.0f);
+    bool railJunction = false; // a rail junction fill sits at the ballast's height
+    for (const Arm& a : arms) railJunction = railJunction || net.Prof(a.seg).cat == Cat::Rail;
+    const float roadH = kRoadLift + (raisedPath ? 0.04f : 0.0f) + (railJunction ? 0.1f : 0.0f);
     struct LP {
         V2 p;
         float y;
@@ -908,10 +1019,10 @@ inline void BuildCap(const Network& net, int n, MeshOut& out) {
     const float inner = std::max(0.5f, hw - side);
     Mat road = Mat::Asphalt;
     for (const Strip& st : p.strips)
-        if (st.kind == Kind::Lane || st.kind == Kind::Path || st.kind == Kind::Bike) { road = st.mat; break; }
+        if (st.kind == Kind::Lane || st.kind == Kind::Path || st.kind == Kind::Bike || st.kind == Kind::Track) { road = st.mat; break; }
     const Strip& edge = p.strips.front();
     const Mat sideMat = edge.kind == Kind::Verge ? Mat::Grass : Mat::Concrete;
-    const float sh = kRoadLift + (edge.kind == Kind::Verge ? 0.0f : std::min(edge.h, 0.15f)), rh = kRoadLift;
+    const float sh = kRoadLift + (edge.kind == Kind::Verge ? 0.0f : std::min(edge.h, 0.15f)), rh = kRoadLift + (p.cat == Cat::Rail ? 0.1f : 0.0f);
     const Vec3 white{1, 1, 1};
     const int m = 16;
     auto pt = [&](float r, int j) { // j = 0 .. m sweeps from the arm's left edge round the back to its right edge
@@ -937,7 +1048,36 @@ inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& ou
     for (auto& v : out.byMat) v.clear();
     out.arrows.clear();
     std::vector<std::vector<Arm>> junctions;
-    const std::vector<SegTrim> trims = ComputeTrims(net, &junctions);
+    std::vector<SegTrim> trims = ComputeTrims(net, &junctions);
+    // lane attachments: a dead end sitting on another road's surface is a ramp leaving / joining that road's lane
+    std::vector<char> attached(net.nodes.size(), 0);
+    for (size_t nd = 0; nd < net.nodes.size(); ++nd) {
+        if (!net.nodes[nd].alive || net.nodes[nd].segs.size() != 1) continue;
+        const int own = net.nodes[nd].segs[0];
+        const V2 np = XZ(net.nodes[nd].p);
+        int host = -1;
+        float ht = 0, hd = 1e9f;
+        for (size_t h = 0; h < net.segs.size(); ++h) {
+            if ((int)h == own || !net.segs[h].alive) continue;
+            float t, d;
+            net.Nearest((int)h, np, t, d);
+            if (d < net.Prof((int)h).Half() && d < hd && std::fabs(net.YAt(net.segs[h], t) - net.NodeY((int)nd)) < 1.5f) host = (int)h, ht = t, hd = d;
+        }
+        if (host < 0) continue;
+        attached[nd] = 1;
+        trims[own].host = host;
+        const Cubic hc = net.Curve(host), oc = net.Curve(own);
+        const float side = Dot2(np - hc.At(ht), LeftOf(hc.Tan(ht))) >= 0 ? 1.0f : -1.0f;
+        float t0 = ht, t1 = ht;
+        const float reach = net.Prof(host).Half() + net.Prof(own).Half();
+        for (int k = 0; k <= 32; ++k) {
+            const V2 q = oc.At(k / 32.0f);
+            float t, d;
+            net.Nearest(host, q, t, d);
+            if (d < reach) t0 = std::min(t0, t), t1 = std::max(t1, t);
+        }
+        trims[host].cuts.push_back({t0, t1, side});
+    }
     for (size_t s = 0; s < net.segs.size(); ++s)
         if (net.segs[s].alive) BuildSegment(net, (int)s, trims[s], ground, out);
     for (size_t n = 0; n < net.nodes.size(); ++n)
@@ -947,7 +1087,7 @@ inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& ou
             BuildJunction(net, (int)n, junctions[n], out);
         }
     for (size_t n = 0; n < net.nodes.size(); ++n) // rounded dead ends (CS2's cul-de-sac caps)
-        if (net.nodes[n].alive && net.nodes[n].segs.size() == 1) {
+        if (net.nodes[n].alive && net.nodes[n].segs.size() == 1 && !attached[n]) {
             const float g = ground ? ground(net.nodes[n].p.x, net.nodes[n].p.z) : 0.0f;
             if (net.NodeY((int)n) < g - mesh::kTunnelDepth) continue;
             BuildCap(net, (int)n, out);

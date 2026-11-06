@@ -45,6 +45,11 @@
 #include "gui/gui.h"             // in-game GUI (portable, no Win32); see docs/gui.md
 #include "gui/terrain_toolbar.h" // its first user: the terrain sandbox toolbar
 #include "gui/zone_toolbar.h"     // zoning (src/city/zoning.h): zone painting, growth, the game clock
+#include "gui/transport_toolbar.h" // transport buildings (src/city/transport.h): depots, stations, harbours, airports
+#include "gui/utility_toolbar.h"   // utilities: electricity, water, sewage (city_utilities.inl hosts them)
+#include "city/transport_models.h"
+#include "city/industry.h"         // specialized industry (city_industry.inl hosts it)
+#include "city/utilities.h"        // utilities (city_utilities.inl hosts them)
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building
 #include "undo.h" // engine-wide undo stack (shared with the Character Creator)
 #include "gizmo.h"
@@ -2898,6 +2903,8 @@ void RoadsInit() {
     road({60, 220}, {60, 60}, "Two-Lane Road", -22, 0);                 // out of a tunnel
     road({-260, 60}, {-170, 60}, "Medium Quay With Two-Way Road");
     road({30, 40}, {100, 120}, "Pedestrian Path");
+    road({-300, 270}, {120, 270}, "Double Track Railway");                            // SPOM track: straight, then a curve
+    curve(Cubic::Quad({120, 270}, {280, 270}, {280, 110}), "Double Track Railway");
     g_engine.camera.target = {O.x, RoadsGround(O.x, O.z), O.z};
     // TBD_ROADS_START="x z [mode]": a first click at a demo-relative point (and a tool mode), so a capture with
     // TBD_GUI_POINTER shows the live ghost, snapping and labels
@@ -2921,6 +2928,21 @@ void RoadsCursor() {
     g_roads.Move(on, hit);
 }
 
+// The SPOM track texture (TrackPS in mesh.hlsl): track albedo with the baked height field in alpha (assets/rail/track/tex).
+tbd::TextureId TrackSpomTexture(tbd::Renderer& r) {
+    const std::wstring dir = tbd::ExeDirectory() + L"\\..\\assets\\rail\\track\\tex\\";
+    std::string a, h;
+    std::vector<uint8_t> rgba, hgt;
+    int w = 0, ht = 0, w2 = 0, h2 = 0;
+    if (!tbd::ReadAllText(dir + L"track_albedo.jpg", a) || !tbd::DecodeImage((const uint8_t*)a.data(), a.size(), rgba, w, ht) ||
+        !tbd::ReadAllText(dir + L"track_height.png", h) || !tbd::DecodeImage((const uint8_t*)h.data(), h.size(), hgt, w2, h2) || w != w2 || ht != h2) {
+        tbd::Log("Rail: missing SPOM track texture in %ls", dir.c_str());
+        return tbd::kNoTexture;
+    }
+    for (size_t i = 0; i < (size_t)w * ht; ++i) rgba[i * 4 + 3] = hgt[i * 4]; // height (grey) into alpha
+    return r.CreateTexture(rgba.data(), w, ht);
+}
+
 // Textures once per renderer; meshes whenever the network changed. Runs before BeginFrame (it creates resources).
 void RoadsSync(tbd::Renderer& r) {
     RoadsInit();
@@ -2941,6 +2963,7 @@ void RoadsSync(tbd::Renderer& r) {
                 else tbd::Log("Roads: missing texture %ls", path.c_str());
             }
         }
+        g_roadGpu.albedo[(int)tbd::city::Mat::Track] = TrackSpomTexture(r);
     }
     if (g_roads.net.version == g_roadGpu.built) return;
     g_roadGpu.built = g_roads.net.version;
@@ -2980,6 +3003,10 @@ void RoadsWorldLabels() {
 }
 
 #include "city_zones.inl"
+#include "city_utilities.inl" // utilities: power, water, sewage sources, lines, underground view, notifications
+#include "city_transport.inl" // transport buildings: depots, stations, harbours, airports (hologram, then construction)
+#include "city_industry.inl" // specialized industry: hubs, drawn work areas, resource heat maps
+#include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 
 // ------------------------------------------------------------------- in-game GUI, per frame
 // Runs the GUI frame (input queued by GuiMouse since the last frame), the terrain toolbar, and draws it over everything.
@@ -3035,10 +3062,29 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     const tbd::gui::TerrainAction action = terrainShow ? tbd::gui::TerrainToolbar(g_gui, state, status, toastLift) : tbd::gui::TerrainAction::None;
     const bool roadsWereOpen = g_roads.active;
     if (g_roads.active) RoadsWorldLabels(); // under the panels
+    if (g_transportTool.active) TransportWorldLabels();
+    UtilWorldLabels();   // the no electricity / water / sewage / road bubbles over buildings
+    UtilToolLabels();    // the utilities tool's cursor chip
     tbd::gui::ClockBar(g_gui, g_clock, toastLift);  // bottom centre; the tools sit above it
     const float toolLift = toastLift + 50.0f;
-    if (!g_zoneTool.active) tbd::gui::RoadToolbar(g_gui, g_roads, toolLift);
-    if (!g_roads.active && tbd::gui::ZoneToolbar(g_gui, g_zoneTool, toolLift)) g_terrainEdit.on = false;
+    if (!g_zoneTool.active && !g_indTool.active && !g_transportTool.active && !g_utilTool.active) tbd::gui::RoadToolbar(g_gui, g_roads, toolLift);
+    if (!g_roads.active && !g_indTool.active && !g_transportTool.active && !g_utilTool.active && tbd::gui::ZoneToolbar(g_gui, g_zoneTool, toolLift)) g_terrainEdit.on = false;
+    if (!g_roads.active && !g_zoneTool.active && !g_transportTool.active && !g_utilTool.active && IndustryToolbar(toolLift)) g_terrainEdit.on = false;
+    if (!g_roads.active && !g_zoneTool.active && !g_indTool.active && !g_transportTool.active) {
+        const bool utilWasOpen = g_utilTool.active;
+        if (tbd::gui::UtilityToolbar(g_gui, g_utilTool, g_utilReport, toolLift)) g_terrainEdit.on = false;
+        if (utilWasOpen && !g_utilTool.active) UtilToolClosed();
+    }
+    if (!g_roads.active && !g_zoneTool.active && !g_indTool.active && !g_utilTool.active) {
+        if (tbd::gui::TransportToolbar(g_gui, g_transportTool, toolLift)) g_terrainEdit.on = false;
+        if (g_transportTool.openRoad >= 0) { // a railway track was picked: the road tool lays it
+            g_transportTool.active = false;
+            g_transportTool.def = -1;
+            g_roads.Open();
+            g_roads.Select(g_transportTool.openRoad);
+            g_terrainEdit.on = false;
+        }
+    }
     if (g_roads.active && !roadsWereOpen) g_terrainEdit.on = false; // left clicks are the road tool's now
     g_gui.EndFrame();
     if (action == tbd::gui::TerrainAction::Save) SaveTerrainEdits();
@@ -3103,6 +3149,10 @@ void RenderFrame() {
     g_profiler.BeginFrame();
     float dt = FrameDelta();
     ZonesSync(dt); // the game clock, zone growth and construction
+    UtilSync(dt); // utilities: the no-road clock, the networks, the source buildings
+    TransportSync(dt); // transport buildings: planned -> building -> done on the same clock
+    IndustrySync(dt); // specialized industry output
+    GarbageSync(dt);  // garbage produced, collected and processed
     // TBD_PLAYTEST: Play starts itself, on a fixed clock; see PlayerScript.
     static bool playtestTried = false;
     if (!playtestTried && !g_engine.scenePath.empty() && !SceneLoadActive()) { // the scene is open
@@ -3957,6 +4007,10 @@ void RenderFrame() {
         if (any) r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
     }
     ZonesDraw(r, sceneViewProj); // zone cells, construction sites, the zoning cursor
+    TransportDraw(r, sceneViewProj); // transport buildings, the hologram being placed, lot markers
+    UtilDraw(r, sceneViewProj); // poles, pylons, wires, the underground view, the utilities cursor
+    IndustryDraw(r, sceneViewProj); // industry hubs, work areas, the resource heat map
+    GarbageDraw(r, sceneViewProj);  // garbage heaps, the garbage info view
     g_water.SubmitDraw(r, sceneViewProj, waterJitter);
     tbd::profiler::Sample profSample; // the profiler overlay's numbers; only gathered while it is on
     if (g_profiler.Enabled()) {
@@ -4018,6 +4072,8 @@ void RenderFrame() {
         }
     }
     if (g_zoneTool.active && !g_play.active) ZonesCursor();
+    if (g_utilTool.active && !g_play.active) UtilCursor();
+    if (g_indTool.active && !g_play.active) IndustryCursor();
     if (g_roads.active && !g_play.active) { // the road tool's ghost, handles, guidelines and snap marker (through the ground: tunnels)
         RoadsCursor();
         static std::vector<tbd::Vertex> ghostTris, ghostLines;
@@ -4302,6 +4358,29 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         g_clock.paused = !g_clock.paused;
         return true;
     }
+    if (g_indTool.active && IndustryKey(wparam)) return true;
+    if (g_utilTool.active) { // the utilities tool's keys: Esc ends the line / drops the item / closes, Page Up / Down elevation, , . rotate
+        switch (wparam) {
+        case VK_ESCAPE:
+            if (g_utilIn.laying) g_utilIn.laying = false;
+            else {
+                g_utilTool.Escape();
+                if (!g_utilTool.active) UtilToolClosed();
+            }
+            return true;
+        case VK_OEM_COMMA: g_utilTool.Rotate(15.0f); return true;
+        case VK_OEM_PERIOD: g_utilTool.Rotate(-15.0f); return true;
+        case VK_PRIOR: g_utilTool.Raise(1); return true;
+        case VK_NEXT: g_utilTool.Raise(-1); return true;
+        }
+    }
+    if (g_transportTool.active) { // the transport tool's keys: Esc drops the building / closes, , . rotate
+        switch (wparam) {
+        case VK_ESCAPE: g_transportTool.Escape(); return true;
+        case VK_OEM_COMMA: g_transportTool.Rotate(15.0f); return true;
+        case VK_OEM_PERIOD: g_transportTool.Rotate(-15.0f); return true;
+        }
+    }
     if (g_zoneTool.active && wparam == VK_ESCAPE) {
         if (g_zoneIn.held) g_zoneIn.held = false;
         else g_zoneTool.active = false;
@@ -4507,11 +4586,24 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             g_roads.Click();
             if (g_roads.Dragging()) SetCapture(hwnd); // Swap: keep tracking the drag until release
             if (!g_roads.error.empty()) Toast(RoadsUpper(g_roads.error));
+        } else if (g_utilTool.active && g_engine.drag == Drag::None && !g_play.active) {
+            SetFocus(hwnd);
+            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            UtilClick();
+        } else if (g_transportTool.active && g_engine.drag == Drag::None && !g_play.active) {
+            SetFocus(hwnd);
+            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            TransportClick();
         } else if (g_zoneTool.active && g_engine.drag == Drag::None && !g_play.active) {
             SetFocus(hwnd);
             g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
             ZonesPress();
             if (g_zoneIn.held) SetCapture(hwnd);
+        } else if (g_indTool.active && g_engine.drag == Drag::None && !g_play.active) {
+            SetFocus(hwnd);
+            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            IndustryPress();
+            if (g_indTool.dragIdx >= 0) SetCapture(hwnd);
         } else if (g_terrainEdit.on && g_engine.drag == Drag::None && !g_play.active) {
             tbd::Vec3 hit;
             if (GroundHit(MouseRay(lparam), hit)) g_terrainEdit.flattenTarget = hit.y;
@@ -4524,11 +4616,28 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         }
         return 0;
     case WM_RBUTTONDOWN:
+        if (g_indTool.active && g_indTool.mode != IndustryTool::Pick && g_engine.drag == Drag::None) { IndustryRightClick(); return 0; }
         if (g_roads.active && g_roads.Pending() && g_engine.drag == Drag::None) { g_roads.Cancel(); return 0; } // CS2: right click cancels
+        if (g_utilTool.active && (g_utilIn.laying || g_utilTool.def >= 0 || g_utilTool.Laying() || g_utilTool.bulldoze) && g_engine.drag == Drag::None) { // right click ends the line, then drops the item
+            if (g_utilIn.laying) g_utilIn.laying = false;
+            else g_utilTool.def = -1, g_utilTool.line = -1, g_utilTool.bulldoze = false;
+            return 0;
+        }
+        if (g_transportTool.active && (g_transportTool.def >= 0 || g_transportTool.bulldoze) && g_engine.drag == Drag::None) { // right click drops the chosen building
+            g_transportTool.def = -1;
+            g_transportTool.bulldoze = false;
+            return 0;
+        }
         BeginDrag(hwnd, Drag::Fly, msg, lparam);
         return 0;
     case WM_MBUTTONDOWN: BeginDrag(hwnd, Drag::Pan, msg, lparam); return 0;
     case WM_LBUTTONUP:
+        if (g_indTool.dragIdx >= 0) {
+            ReleaseCapture();
+            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            IndustryRelease();
+            return 0;
+        }
         if (g_zoneIn.held) { // zoning: the brush stops, the box is painted
             ReleaseCapture();
             g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);

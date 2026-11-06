@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8"><title>Waste buildings (SPOM preview)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#8aa0b4;font:12px sans-serif;overflow:hidden}#ui{position:fixed;top:6px;left:6px;background:#000a;color:#fff;padding:6px;border-radius:4px}button{margin:1px}</style>
+<div id="ui"></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {patchSpom} from '/assets/buildings/spom_preview.js';
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0x8aa0b4);
+const cam=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.05,1500);
+const oc=new OrbitControls(cam,r.domElement);
+s.add(new THREE.HemisphereLight(0xdfe8ff,0x6b6a58,0.9));
+const sun=new THREE.DirectionalLight(0xfff0d8,2.2);sun.position.set(-12,20,16);s.add(sun);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:0x6d7f52}));ground.rotation.x=-Math.PI/2;ground.position.y=-0.01;s.add(ground);
+// layout: four sites on a grid
+const items={landfill:[0,0],incinerator:[130,0],recycling_center:[0,110],hazardous_waste:[120,110]};
+const views={all:[[60,140,230],[60,0,55]],landfill:[[40,45,80],[0,3,0]],gas:[[-28,6,36],[-36,3,24]],inc:[[175,45,70],[130,15,0]],stack:[[185,60,20],[171,55,4]],tip:[[70,8,20],[100,4,0]],mrf:[[30,30,170],[0,5,110]],bales:[[16,6,136],[16,2,124]],conv:[[2,10,140],[-3,5,119]],haz:[[150,25,150],[120,4,110]],drums:[[104,3,103],[104,2,100]],tip:[[85,10,-25],[104,4,0]]};
+function go(k){const [p,t]=views[k];cam.position.set(...p);oc.target.set(...t);oc.update();}
+const ui=document.getElementById('ui');ui.innerHTML=Object.keys(views).map(k=>`<button data-k="${k}">${k}</button>`).join('')+' <span id="t"></span>';
+ui.onclick=e=>{if(e.target.dataset.k)go(e.target.dataset.k);};window.go=go;
+let n=0,info=[];const L=new GLTFLoader();
+for(const [k,[x,z]] of Object.entries(items))L.load(k+'.glb?t='+Date.now(),g=>{const o=g.scene;o.position.set(x,0,z);patchSpom(o,sun.position);s.add(o);
+ let t=0;o.traverse(q=>{if(q.isMesh)t+=q.geometry.index?q.geometry.index.count/3:q.geometry.attributes.position.count/3});info.push(k+' '+t);
+ document.getElementById('t').textContent=info.join(' · ')+' tris';if(++n==4)window.__ready=true;});
+go(location.hash.slice(1)||'all');
+r.setAnimationLoop(()=>{const w=innerWidth||800,h=innerHeight||600;if(r.domElement.width!==w||r.domElement.height!==h){r.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();}oc.update();r.render(s,cam)});
+</script>

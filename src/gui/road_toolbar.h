@@ -96,6 +96,11 @@ inline void DrawProfileTile(DrawList& dl, const Rect& r, const city::Profile& p,
                 for (float yy = y0 + 2 * scale; yy < y1; yy += 9 * scale) dl.Rect(lx - 0.6f * scale, yy, lx + 0.6f * scale, std::min(y1, yy + 4 * scale), Rgba(235, 235, 230), 0.0f);
         }
         if (st.kind == city::Kind::Lane) ++lane;
+        if (st.kind == city::Kind::Track) { // sleepers and two rails
+            const float cx = x + w * 0.5f, g = 0.7175f * k;
+            for (float yy = y0 + 2 * scale; yy < y1; yy += 5 * scale) dl.Rect(cx - 1.3f * k, yy, cx + 1.3f * k, yy + 1.6f * scale, Rgba(74, 54, 40), 0.0f);
+            for (float o : {-g, g}) dl.Rect(cx + o - 0.7f * scale, y0, cx + o + 0.7f * scale, y1, Rgba(190, 192, 200), 0.0f);
+        }
         x += w;
     }
     if (p.OneWay()) {
@@ -106,7 +111,7 @@ inline void DrawProfileTile(DrawList& dl, const Rect& r, const city::Profile& p,
 }
 
 inline Icon TabIcon(city::Tab t) {
-    static const Icon k[] = {Icon::RoadSmall, Icon::RoadMedium, Icon::RoadLarge, Icon::Highway, Icon::Quay, Icon::Path, Icon::Intersection, Icon::Roundabout};
+    static const Icon k[] = {Icon::RoadSmall, Icon::RoadMedium, Icon::RoadLarge, Icon::Highway, Icon::Quay, Icon::Path, Icon::Rail, Icon::Intersection, Icon::Roundabout};
     return k[(int)t];
 }
 
@@ -222,7 +227,7 @@ inline void RoadToolbar(Context& g, city::RoadTool& t, float lift = 34.0f) {
     g.BeginPanel("##road picker", Anchor::BottomLeft, 8.0f + 448.0f + 8.0f, lift, panelW, 0.0f, 10.0f);
     static int hovered = -1;
     {
-        const float size = std::round(std::min(40.0f, (panelW - 20.0f - 44.0f - 36.0f) / 8.0f) * s), gap = std::round(4.0f * s);
+        const float size = std::round(std::min(40.0f, (panelW - 20.0f - 44.0f - 36.0f) / (float)city::Tab::Count) * s), gap = std::round(4.0f * s);
         const Rect bar = g.Reserve(size, panelW * s);
         for (int i = 0; i < (int)city::Tab::Count; ++i) {
             char id[16];

@@ -169,7 +169,11 @@ enum class Icon {
     SnapAll, SnapLength, SnapGeometry, SnapStraight, SnapNetSide, SnapGuide, SnapZone, SnapContour,
     RoadSmall, RoadMedium, RoadLarge, Highway, Quay, Path, Intersection, Roundabout, Roads,
     // zoning + clock (zone_toolbar.h)
-    Zones, ZoneBrush, ZoneFill, ZoneBox, Pause, Play, Speed1, Speed2, Speed3
+    Zones, ZoneBrush, ZoneFill, ZoneBox, Pause, Play, Speed1, Speed2, Speed3,
+    // transport (transport_toolbar.h; Rail is also the road tool's railway tab)
+    Rail, Transport, Ship, Plane, RotateLeft, RotateRight, Marker, Waves,
+    // utilities (utility_toolbar.h)
+    Bolt, Drop, Drain, Underground, Pole, Utilities
 };
 
 inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size, float stroke, Color c);
@@ -325,6 +329,62 @@ inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size
         for (int i = 0; i < n; ++i) { const float x = -0.25f * (n - 1) + 0.5f * i - 0.2f; L(x, -0.55f, x + 0.4f, 0); L(x + 0.4f, 0, x, 0.55f); }
         break;
     }
+    case Icon::Rail: // two rails in perspective with sleepers
+        L(-0.3f, -0.9f, -0.75f, 0.9f); L(0.3f, -0.9f, 0.75f, 0.9f);
+        L(-0.42f, -0.45f, 0.42f, -0.45f); L(-0.56f, 0.05f, 0.56f, 0.05f); L(-0.7f, 0.55f, 0.7f, 0.55f);
+        break;
+    case Icon::Transport: // a train seen from the front
+        L(-0.6f, -0.75f, 0.6f, -0.75f); L(0.6f, -0.75f, 0.7f, 0.35f); L(0.7f, 0.35f, -0.7f, 0.35f); L(-0.7f, 0.35f, -0.6f, -0.75f);
+        L(-0.45f, -0.5f, 0.45f, -0.5f); L(0.45f, -0.5f, 0.45f, -0.05f); L(0.45f, -0.05f, -0.45f, -0.05f); L(-0.45f, -0.05f, -0.45f, -0.5f);
+        Dot(-0.4f, 0.18f); Dot(0.4f, 0.18f); L(-0.7f, 0.9f, -0.35f, 0.5f); L(0.7f, 0.9f, 0.35f, 0.5f);
+        break;
+    case Icon::Ship: // a hull with a cabin and a mast
+        L(-0.9f, 0.1f, 0.9f, 0.1f); L(-0.9f, 0.1f, -0.6f, 0.6f); L(-0.6f, 0.6f, 0.6f, 0.6f); L(0.6f, 0.6f, 0.9f, 0.1f);
+        L(-0.45f, 0.1f, -0.45f, -0.3f); L(-0.45f, -0.3f, 0.25f, -0.3f); L(0.25f, -0.3f, 0.25f, 0.1f); L(0.0f, -0.3f, 0.0f, -0.85f);
+        Q(-0.9f, 0.9f, -0.45f, 0.75f, 0.0f, 0.9f); Q(0.0f, 0.9f, 0.45f, 1.05f, 0.9f, 0.9f);
+        break;
+    case Icon::Plane: // top view
+        L(0.0f, -0.95f, 0.0f, 0.75f); L(-0.9f, 0.15f, 0.0f, -0.35f); L(0.0f, -0.35f, 0.9f, 0.15f); L(-0.35f, 0.85f, 0.0f, 0.55f); L(0.0f, 0.55f, 0.35f, 0.85f);
+        L(-0.9f, 0.15f, -0.9f, 0.3f); L(0.9f, 0.15f, 0.9f, 0.3f);
+        break;
+    case Icon::RotateLeft: Q(0.6f, 0.5f, 0.6f, -0.7f, -0.3f, -0.6f); L(-0.3f, -0.6f, 0.0f, -0.9f); L(-0.3f, -0.6f, 0.0f, -0.3f); break;
+    case Icon::RotateRight: Q(-0.6f, 0.5f, -0.6f, -0.7f, 0.3f, -0.6f); L(0.3f, -0.6f, 0.0f, -0.9f); L(0.3f, -0.6f, 0.0f, -0.3f); break;
+    case Icon::Marker: // a footprint corner marker
+        L(-0.8f, -0.4f, -0.8f, -0.8f); L(-0.8f, -0.8f, -0.4f, -0.8f); L(0.4f, -0.8f, 0.8f, -0.8f); L(0.8f, -0.8f, 0.8f, -0.4f);
+        L(0.8f, 0.4f, 0.8f, 0.8f); L(0.8f, 0.8f, 0.4f, 0.8f); L(-0.4f, 0.8f, -0.8f, 0.8f); L(-0.8f, 0.8f, -0.8f, 0.4f); Dot(0, 0);
+        break;
+    case Icon::Waves: // the shoreline: waves over a beach
+        Q(-0.9f, -0.35f, -0.45f, -0.85f, 0.0f, -0.35f); Q(0.0f, -0.35f, 0.45f, 0.15f, 0.9f, -0.35f);
+        Q(-0.9f, 0.2f, -0.45f, -0.3f, 0.0f, 0.2f); Q(0.0f, 0.2f, 0.45f, 0.7f, 0.9f, 0.2f);
+        L(-0.9f, 0.85f, 0.9f, 0.85f);
+        break;
+    case Icon::Bolt: // a lightning bolt
+        L(0.3f, -0.95f, -0.5f, 0.15f); L(-0.5f, 0.15f, 0.0f, 0.15f); L(0.0f, 0.15f, -0.3f, 0.95f);
+        L(-0.3f, 0.95f, 0.6f, -0.25f); L(0.6f, -0.25f, 0.1f, -0.25f); L(0.1f, -0.25f, 0.3f, -0.95f);
+        break;
+    case Icon::Drop: // a water drop
+        C(0.0f, -0.95f, -0.2f, -0.5f, -0.65f, -0.05f, -0.65f, 0.3f); C(-0.65f, 0.3f, -0.65f, 0.75f, -0.35f, 0.95f, 0.0f, 0.95f);
+        C(0.0f, -0.95f, 0.2f, -0.5f, 0.65f, -0.05f, 0.65f, 0.3f); C(0.65f, 0.3f, 0.65f, 0.75f, 0.35f, 0.95f, 0.0f, 0.95f);
+        break;
+    case Icon::Drain: // a pipe emptying downwards
+        L(-0.95f, -0.55f, 0.15f, -0.55f); L(-0.95f, -0.05f, 0.15f, -0.05f); L(0.15f, -0.65f, 0.15f, 0.05f);
+        L(0.15f, -0.65f, 0.35f, -0.65f); L(0.15f, 0.05f, 0.35f, 0.05f);
+        Dot(0.7f, 0.35f); Dot(0.4f, 0.65f); Dot(0.75f, 0.85f);
+        break;
+    case Icon::Underground: // the ground line over a buried pipe
+        Q(-0.95f, -0.45f, -0.5f, -0.75f, 0.0f, -0.45f); Q(0.0f, -0.45f, 0.5f, -0.15f, 0.95f, -0.45f);
+        L(-0.8f, 0.3f, 0.8f, 0.3f); L(-0.8f, 0.7f, 0.8f, 0.7f); L(-0.8f, 0.3f, -0.8f, 0.7f);
+        L(0.8f, 0.3f, 0.8f, 0.7f); L(-0.25f, 0.3f, -0.25f, 0.7f); L(0.25f, 0.3f, 0.25f, 0.7f);
+        break;
+    case Icon::Pole: // a utility pole with its cross arms and wires
+        L(0.0f, -0.95f, 0.0f, 0.95f); L(-0.7f, -0.6f, 0.7f, -0.6f); L(-0.5f, -0.25f, 0.5f, -0.25f);
+        Q(-0.7f, -0.6f, -0.9f, -0.2f, -0.95f, 0.35f); Q(0.7f, -0.6f, 0.9f, -0.2f, 0.95f, 0.35f);
+        break;
+    case Icon::Utilities: // a bolt over a drop
+        L(0.25f, -0.95f, -0.3f, -0.05f); L(-0.3f, -0.05f, 0.05f, -0.05f); L(0.05f, -0.05f, -0.15f, 0.55f); L(-0.15f, 0.55f, 0.45f, -0.25f); L(0.45f, -0.25f, 0.1f, -0.25f); L(0.1f, -0.25f, 0.25f, -0.95f);
+        C(-0.55f, 0.15f, -0.65f, 0.35f, -0.8f, 0.55f, -0.8f, 0.7f); C(-0.8f, 0.7f, -0.8f, 0.9f, -0.65f, 0.97f, -0.55f, 0.97f);
+        C(-0.55f, 0.15f, -0.45f, 0.35f, -0.3f, 0.55f, -0.3f, 0.7f); C(-0.3f, 0.7f, -0.3f, 0.9f, -0.45f, 0.97f, -0.55f, 0.97f);
+        break;
     case Icon::Roads: L(-0.3f, -0.9f, -0.9f, 0.9f); L(0.3f, -0.9f, 0.9f, 0.9f); L(0, -0.8f, 0, -0.5f); L(0, -0.2f, 0, 0.15f); L(0, 0.5f, 0, 0.9f); break;
     default: break;
     }

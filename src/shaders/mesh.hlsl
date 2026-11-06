@@ -1120,7 +1120,7 @@ void PSShadowCutout(VSOutShadowCut i) {
 // from a wall; each pixel of the box marches a ray through it against the relief and discards where the ray leaves empty-handed, so the
 // outline is the relief's outline, not the box's. After Policarpo/Oliveira "Relief Mapping of Non-Height-Field Surface Details" (2006)
 // and Dummer's cone-free linear+binary search; the volume form is the "parallax box" of Tatarchuk-style silhouette work.
-//   volume frame  T = cross(up, N), B = up, N = the vertex normal (the FACADE's outward normal on all six faces, not the face's)
+//   volume frame  T = cross(up, N), B = cross(N, T) (= up for an upright N), N = the vertex normal (the FACADE's outward normal on all six faces, not the face's)
 //   uv            this vertex's (x, y) in metres from the volume's lower-left corner on the wall, along T and B
 //   color.rgb     width, height (metres) and the vertex's depth out from the wall along N (0 .. kSpomDepth)
 //   relief        a layer of solid per texel, [start, end] metres out from the wall: albedo.a = end / kSpomDepth, normal.a = start / kSpomDepth.
@@ -1137,13 +1137,26 @@ float2 SpomRange(float2 m, float2 size) { // x: where the solid starts, y: where
 }
 bool SpomSolid(float3 q, float2 size) { const float2 r = SpomRange(q.xy, size); return r.y > r.x + 0.004 && q.z >= r.x && q.z <= r.y; }
 float4 SpomPS(VSOut i) {
+    // A volume may lean (a tapering lattice face): T stays horizontal, B runs up the face. For an upright N, B = world up.
+    // color.b > 5 marks a single-quad volume ("SPOM quad"): one 2-triangle face lying on the relief's centre plane instead of a
+    // box. Its depth is color.b - 10, and the ray is first stepped back to where it entered the volume.
     const float3 N = normalize(i.normal);
-    const float3 B = float3(0.0, 1.0, 0.0);
-    const float3 T = normalize(cross(B, N));
+    const float3 T = normalize(cross(float3(0.0, 1.0, 0.0), N));
+    const float3 B = normalize(cross(N, T));
     const float2 size = max(i.color.rg, 0.05);
-    const float3 p0 = float3(i.uv, i.color.b);
+    const bool quad = i.color.b > 5.0;
+    float3 p0 = float3(i.uv, quad ? i.color.b - 10.0 : i.color.b);
     const float3 vw = normalize(i.worldPos - gLight.eye.xyz);
     const float3 d = float3(dot(vw, T), dot(vw, B), dot(vw, N));
+    float tBack = 0.0;
+    if (quad) {
+        float3 tb = float3(1e9, 1e9, 1e9);
+        if (abs(d.x) > 1e-5) tb.x = d.x > 0.0 ? p0.x / d.x : (p0.x - size.x) / d.x;
+        if (abs(d.y) > 1e-5) tb.y = d.y > 0.0 ? p0.y / d.y : (p0.y - size.y) / d.y;
+        if (abs(d.z) > 1e-5) tb.z = d.z > 0.0 ? p0.z / d.z : (p0.z - kSpomDepth) / d.z;
+        tBack = max(min(tb.x, min(tb.y, tb.z)), 0.0);
+        p0 -= d * tBack;
+    }
     // Where the ray leaves the box [0,W] x [0,H] x [0,kSpomDepth] (slab method), starting from this face's point.
     float3 tFar = float3(1e9, 1e9, 1e9);
     if (abs(d.x) > 1e-5) tFar.x = d.x > 0.0 ? (size.x - p0.x) / d.x : -p0.x / d.x;
@@ -1152,7 +1165,8 @@ float4 SpomPS(VSOut i) {
     const float tExit = max(min(tFar.x, min(tFar.y, tFar.z)), 0.0);
     if (tExit < 1e-4) discard;
     // Linear search for the first solid sample, then bisection: the thin slab and the balusters need the 2nd part to be sharp.
-    const int steps = 64; // thin parts (a rail 8 cm deep) must not fall between two samples at a grazing angle
+    const int steps = clamp((int)ceil(tExit / 0.02), 64, 256); // thin parts must not fall between two samples; long volumes (a whole
+                                                                   // pylon face) need more than a 4 m bay
     const float dt = tExit / steps;
     float tLo = 0.0, tHi = 0.0;
     bool hit = false;
@@ -1182,7 +1196,7 @@ float4 SpomPS(VSOut i) {
     const float3 nm = gNormalMap.SampleLevel(gTexSampler, uv, 0.0).xyz * 2.0 - 1.0;
     nl = normalize(nl + float3(nm.xy * 0.6, 0.0));
     const float3 n = normalize(T * nl.x + B * nl.y + N * nl.z);
-    const float3 wp = i.worldPos + vw * tHi;
+    const float3 wp = i.worldPos + vw * (tHi - tBack);
     // Its own shadow: toward the sun through the volume, four taps. The slab shades the rail below it, the rail the floor behind it.
     float shade = 1.0;
     const float3 l = gLight.sunDir.xyz;
@@ -1195,6 +1209,78 @@ float4 SpomPS(VSOut i) {
     const float cloudSun = CloudSun(wp);
     float share;
     const float3 lit = LitPbr(pow(saturate(albedo.rgb), 2.2), n, wp, gPixelShadow * cloudSun * shade, 0.7, 0.0, cloudSun, share);
+    return float4(lit, 0.76 + 0.23 * share);
+}
+
+// Railway track ("SPOM track", alpha 0.83): every track is a thin box (top + two sides, no culling) swept along the line; each pixel
+// marches the eye ray through the box against the baked track height field (assets/rail/track/tex, height in albedo.a) and discards
+// on a miss, so rails, sleepers and the ballast shoulder make the silhouette. Same scheme as assets/rail/preview.html.
+//   normal     the track's forward direction (horizontal unit); across = cross(up, forward)
+//   uv         metres across the track from its centre line, metres along it
+//   color.r    this vertex's height relative to the rail top (0 .. -kTrackDepth), color.g the box width
+// Back faces (no culling) step back to where the ray entered, so either face finds the same hit; the nearer face wins the depth test.
+static const float kTrackDepth = 0.55, kTrackSleeper = 0.6;
+float TrackH(float3 p, float W) { return -kTrackDepth + kTrackDepth * gAlbedo.SampleLevel(gTexSampler, float2((p.x + 0.5 * W) / W, p.z / kTrackSleeper), 0.0).a; }
+float4 TrackPS(VSOut i) {
+    const float3 F = normalize(float3(i.normal.x, 0.0, i.normal.z));
+    const float3 X = float3(F.z, 0.0, -F.x);
+    const float W = max(i.color.g, 1.0), hw = 0.5 * W;
+    const float3 vw = normalize(i.worldPos - gLight.eye.xyz);
+    const float3 d = float3(dot(vw, X), vw.y, dot(vw, F));
+    float3 p0 = float3(i.uv.x, i.color.r, i.uv.y);
+    const float camDist = length(i.worldPos - gLight.eye.xyz);
+    const float2 uvIn = float2((i.uv.x + hw) / W, i.uv.y / kTrackSleeper);
+    float t = 0.0, tBack = 0.0;
+    bool hit = true;
+    if (camDist < 160.0) { // far away the relief is under a pixel: shade the box top flat
+        float2 tb = float2(1e9, 1e9);
+        if (abs(d.x) > 1e-5) tb.x = d.x > 0.0 ? (p0.x + hw) / d.x : (p0.x - hw) / d.x;
+        if (abs(d.y) > 1e-5) tb.y = d.y > 0.0 ? (p0.y + kTrackDepth) / d.y : p0.y / d.y;
+        tBack = max(min(tb.x, tb.y), 0.0);
+        p0 -= d * tBack;
+        float2 tf = float2(1e9, 1e9);
+        if (abs(d.x) > 1e-5) tf.x = d.x > 0.0 ? (hw - p0.x) / d.x : (-hw - p0.x) / d.x;
+        if (abs(d.y) > 1e-5) tf.y = d.y > 0.0 ? -p0.y / d.y : (-kTrackDepth - p0.y) / d.y;
+        const float tExit = max(min(tf.x, tf.y), 0.0);
+        const int steps = 40;
+        const float dt = tExit / steps;
+        float tLo = 0.0, tHi = 0.0;
+        hit = false;
+        [loop] for (int k = 0; k <= steps; ++k) {
+            tHi = dt * k;
+            const float3 q = p0 + d * tHi;
+            if (q.y <= TrackH(q, W)) { hit = true; break; }
+            tLo = tHi;
+        }
+        if (!hit) discard;
+        [unroll] for (int r = 0; r < 5; ++r) {
+            const float tm = 0.5 * (tLo + tHi);
+            const float3 q = p0 + d * tm;
+            if (q.y <= TrackH(q, W)) tHi = tm; else tLo = tm;
+        }
+        t = tHi;
+    }
+    const float3 q = p0 + d * t;
+    const float2 uv = float2((q.x + hw) / W, q.z / kTrackSleeper);
+    const float3 albedo = camDist < 160.0 ? gAlbedo.SampleLevel(gTexSampler, uv, 0.0).rgb : gAlbedo.Sample(gTexSampler, uvIn).rgb;
+    float3 nl = float3(0, 1, 0);
+    if (camDist < 160.0) {
+        const float e = 0.01, h0 = TrackH(q, W);
+        nl = normalize(float3(-(TrackH(q + float3(e, 0, 0), W) - TrackH(q - float3(e, 0, 0), W)) / (2.0 * e), 1.0,
+                              -(TrackH(q + float3(0, 0, e), W) - TrackH(q - float3(0, 0, e), W)) / (2.0 * e)));
+        if (q.y < h0 - 0.003) nl = abs(d.x) > abs(d.z) ? float3(-sign(d.x), 0, 0) : float3(0, 0, -sign(d.z)); // entered through a side
+    }
+    const float3 n = normalize(X * nl.x + float3(0, nl.y, 0) + F * nl.z);
+    const float3 wp = i.worldPos + vw * (t - tBack);
+    float shade = 1.0;
+    if (camDist < 160.0) {
+        const float3 l = gLight.sunDir.xyz, lt = float3(dot(l, X), l.y, dot(l, F));
+        if (lt.y > 0.02) [unroll] for (int s = 1; s <= 6; ++s) { const float3 sp = q + lt * (s * 0.06 + 0.004); if (sp.y <= TrackH(sp, W)) { shade = 0.4; break; } }
+    }
+    const float steel = smoothstep(0.55, 0.85, albedo.g);
+    const float cloudSun = CloudSun(wp);
+    float share;
+    const float3 lit = LitPbr(pow(saturate(albedo), 2.2), n, wp, gPixelShadow * cloudSun * shade, lerp(0.85, 0.35, steel), steel * 0.8, cloudSun, share);
     return float4(lit, 0.76 + 0.23 * share);
 }
 
@@ -1458,6 +1544,7 @@ float4 PSMain(VSOut i) : SV_Target {
     gPixelShadow = ShadowFactor(i.shadowPos, i.tightPos);
     if (i.color.a < 0.15) return TerrainPS(i);
     if (abs(i.color.a - 0.8) < 0.004) return SpomPS(i); // silhouette POM volume (balcony, canopy)
+    if (abs(i.color.a - 0.83) < 0.004) return TrackPS(i); // SPOM railway track
     if (abs(i.color.a - 0.645) < 0.003) return GlassPS(i);
     if (abs(i.color.a - 0.70) < 0.003) return InteriorPS(i); // vehicle windows: interior mapping
     if (abs(i.color.a - 0.665) < 0.003) return RoomGlassPS(i); // building windows: a room behind scratched glass

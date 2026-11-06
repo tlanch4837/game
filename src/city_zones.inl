@@ -70,6 +70,40 @@ void ZonesPlace(tbd::Entity& e, const tbd::city::Lot& l, float sy) {
     e.scale = {1, std::max(sy, 0.02f), 1};
 }
 
+// A new lot: the terrain under it is levelled to the road's height at the middle of its frontage, so the building,
+// its site and the zone cells sit flat and meet the road.
+void ZonesLevelLot(tbd::city::Lot& l) {
+    const tbd::city::ZoneCell& front = g_zones.cells[l.cells.front()];
+    float target = l.y;
+    if (front.seg >= 0 && front.seg < (int)g_roads.net.segs.size() && g_roads.net.segs[front.seg].alive) {
+        const tbd::city::V2 frontMid = l.c + l.front * (l.d * tbd::city::kCell * 0.5f);
+        float t, d;
+        g_roads.net.Nearest(front.seg, frontMid, t, d);
+        const tbd::city::V2 rp = g_roads.net.Curve(front.seg).At(t);
+        target = RoadsGround(rp.x, rp.z); // the terrain the road sits on there, not the road deck
+    }
+    if (g_roads.flatten) {
+        const tbd::city::V2 side{l.front.z, -l.front.x};
+        for (int pass = 0; pass < 2; ++pass) // twice: the second settles the first's smoothing
+            for (float a = -(l.w * 4.0f) + 1.0f; a <= l.w * 4.0f - 1.0f + 0.01f; a += 2.0f)
+                for (float b = -(l.d * 4.0f) + 1.0f; b <= l.d * 4.0f + 1.0f; b += 2.0f) { // to the sidewalk's back edge
+                    const tbd::city::V2 q = l.c + side * a + l.front * b;
+                    float clear = 1e9f; // distance to the nearest road's edge: the stamp shrinks so it never touches a road bed
+                    for (size_t s = 0; s < g_roads.net.segs.size(); ++s) {
+                        if (!g_roads.net.segs[s].alive) continue;
+                        float t, d;
+                        g_roads.net.Nearest((int)s, q, t, d);
+                        clear = std::min(clear, d - g_roads.net.Prof((int)s).Half());
+                    }
+                    if (clear < 0.3f) continue;
+                    const float radius = std::min(5.0f, clear);
+                    g_roads.flatten(q.x, q.z, radius * 0.7f, radius, target);
+                }
+    }
+    l.y = RoadsGround(l.c.x, l.c.z); // seated on the ground as it came out (the brush eases, it may not hit the target exactly)
+    g_zones.Reground(RoadsGround);
+}
+
 // Per frame: the clock, growth, the grid following the roads, and the lots' buildings.
 void ZonesSync(float realDt) {
     ZonesCatalog();
@@ -90,6 +124,7 @@ void ZonesSync(float realDt) {
     for (const tbd::city::Lot& l : g_zones.lots) {
         if (!l.alive) continue;
         if (!g_zoneEntity.count(l.id)) {
+            ZonesLevelLot(const_cast<tbd::city::Lot&>(l));
             tbd::Entity e;
             e.mesh = tbd::MeshKind::Imported;
             e.meshPath = l.path + "#native";
@@ -321,14 +356,24 @@ void ZonesDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
                                   : g_zoneTool.active        ? tbd::city::ZoneTypes()[z.zone].color
                                                              : tbd::city::ZoneTypes()[z.zone].color * 0.8f;
             const float h = tbd::city::kCell * 0.5f - 0.35f; // the gaps read as the grid lines
-            const tbd::city::V2 q[4] = {z.c - z.dir * h - z.out * h, z.c + z.dir * h - z.out * h, z.c + z.dir * h + z.out * h, z.c - z.dir * h + z.out * h};
-            tbd::Vec3 v[4];
-            for (int k = 0; k < 4; ++k) v[k] = {q[k].x, z.y[k] + 0.18f, q[k].z};
+            constexpr int S = 4;                            // 4 x 4 sub-quads following the terrain: no clipping into slopes
+            tbd::Vec3 g[S + 1][S + 1];
+            for (int j = 0; j <= S; ++j)
+                for (int i = 0; i <= S; ++i) {
+                    const tbd::city::V2 q = z.c + z.dir * (-h + 2 * h * i / S) + z.out * (-h + 2 * h * j / S);
+                    float y = RoadsGround(q.x, q.z);
+                    for (int k = 0; k < 4; ++k) { // the terrain mesh is coarser than the field: lift by its local relief
+                        const float o = (k & 1 ? 1.0f : -1.0f) * 1.5f;
+                        y = std::max(y, k < 2 ? RoadsGround(q.x + o, q.z) : RoadsGround(q.x, q.z + o));
+                    }
+                    g[j][i] = {q.x, y + 0.2f, q.z};
+                }
             const tbd::Vec3 n{0, 0, 0}; // unlit: the colour as is
-            zfx::Tri(cellsV, v[0], v[2], v[1], n, col);
-            zfx::Tri(cellsV, v[0], v[3], v[2], n, col);
-            zfx::Tri(cellsV, v[0], v[1], v[2], n, col); // both windings: the cell's side is not known
-            zfx::Tri(cellsV, v[0], v[2], v[3], n, col);
+            for (int j = 0; j < S; ++j)
+                for (int i = 0; i < S; ++i) {
+                    zfx::Tri(cellsV, g[j][i], g[j][i + 1], g[j + 1][i + 1], n, col);
+                    zfx::Tri(cellsV, g[j][i], g[j + 1][i + 1], g[j + 1][i], n, col);
+                }
         }
     }
     if (!cellsV.empty()) r.DrawTransient(cellsV.data(), (uint32_t)cellsV.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
