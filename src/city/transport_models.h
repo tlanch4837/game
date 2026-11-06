@@ -14,6 +14,17 @@ namespace tbd {
 namespace city {
 namespace tmodel {
 
+// SPOM slab textures (SlabPS in mesh.hlsl; tools/building_gen/depot_tex.py writes them to assets/rail/depot/tex). The vertex alpha
+// picks the texture (the host draws each apart with its texture bound) and the mode: below 0.815 a wall, above a roof.
+struct SlabTex {
+    const char* file;
+    float alpha;
+};
+constexpr SlabTex kSlabTex[] = {{"depot_wall", 0.808f}, {"depot_end", 0.810f}, {"office_wall", 0.812f}, {"depot_roof", 0.818f}, {"office_roof", 0.820f}};
+constexpr int kSlabTexCount = (int)(sizeof(kSlabTex) / sizeof(kSlabTex[0]));
+enum SlabId : int { kSlabDepotWall, kSlabDepotEnd, kSlabOfficeWall, kSlabDepotRoof, kSlabOfficeRoof };
+constexpr float kSlabDepth = 0.8f; // = kSlabDepth in mesh.hlsl
+
 struct Mesher {
     std::vector<Vertex>& tris;
     std::vector<Vertex>* edges; // may be null
@@ -57,9 +68,44 @@ struct Mesher {
         const V2 f = (b - a) * (1.0f / len);
         const float top = y0 + (y + mesh::kTrackDepth - 0.05f) * sy;
         std::vector<mesh::TrackPt> pts;
-        const int n = std::max(1, (int)std::ceil(len / 6.0f));
-        for (int i = 0; i <= n; ++i) pts.push_back({a + f * (len * i / n), top, f, len * i / n});
+        pts.push_back({a, top, f, 0.0f}); // straight: one piece, 6 triangles however long
+        pts.push_back({b, top, f, len});
         mesh::TrackSweep(tris, pts);
+    }
+    // A SPOM slab: one building face as a box kSlabDepth deep standing out of it, from local corner o along the horizontal unit
+    // direction (tx, tz) for len metres and across it for extent metres (up a wall, or for a roof along (tz, -tx)). Its relief
+    // texture repeats every period metres along, starting at u0. 10 triangles whatever the detail.
+    void Slab(int tex, Vec3 o, float tx, float tz, float len, float extent, float period, float u0 = 0.0f) {
+        const bool roof = kSlabTex[tex].alpha > 0.815f;
+        const Vec3 T{tx, 0, tz}, N = roof ? Vec3{0, 1, 0} : Vec3{-tz, 0, tx}, B = roof ? Vec3{tz, 0, -tx} : Vec3{0, 1, 0};
+        const V2 tw = fr.side * tx + fr.front * tz;
+        auto vtx = [&](float t, float b, float z) {
+            const Vec3 l = o + T * t + B * b + N * z;
+            tris.push_back({0, 0, 0, tw.x, 0, tw.z, z, period, extent, kSlabTex[tex].alpha, t + u0, b});
+            const Vec3 w = P(l.x, l.y, l.z);
+            tris.back().px = w.x, tris.back().py = w.y, tris.back().pz = w.z;
+        };
+        const float D = kSlabDepth;
+        auto quad = [&](float t0, float b0, float z0, float t1, float b1, float z1, float t2, float b2, float z2, float t3, float b3, float z3) {
+            vtx(t0, b0, z0), vtx(t1, b1, z1), vtx(t2, b2, z2);
+            vtx(t0, b0, z0), vtx(t2, b2, z2), vtx(t3, b3, z3);
+        };
+        quad(0, 0, D, len, 0, D, len, extent, D, 0, extent, D);       // the outer face
+        quad(0, 0, 0, 0, extent, 0, 0, extent, D, 0, 0, D);           // the ends
+        quad(len, 0, 0, len, extent, 0, len, extent, D, len, 0, D);
+        quad(0, 0, 0, len, 0, 0, len, 0, D, 0, 0, D);                 // the edges across
+        quad(0, extent, 0, len, extent, 0, len, extent, D, 0, extent, D);
+    }
+    // A slab-faced block: four walls and a roof, x0..x1 by z0..z1, walls from ya to ya + h.
+    void SlabBlock(float x0, float x1, float z0, float z1, float ya, float h, int wallLong, int wallEnd, int roofTex, float wallPeriod,
+                   float endPeriod, float roofPeriod, float roofExtent, float overhang) {
+        const float D = kSlabDepth, Lx = x1 - x0, Lz = z1 - z0;
+        Slab(wallLong, {x0 - D, ya, z1}, 1, 0, Lx + 2 * D, h, wallPeriod, -D);      // front (+z)
+        Slab(wallLong, {x1 + D, ya, z0}, -1, 0, Lx + 2 * D, h, wallPeriod, -D);     // back
+        Slab(wallEnd, {x1, ya, z1}, 0, -1, Lz, h, endPeriod);                       // +x end
+        Slab(wallEnd, {x0, ya, z0}, 0, 1, Lz, h, endPeriod);                        // -x end
+        const float zm = 0.5f * (z0 + z1);
+        Slab(roofTex, {x0 - overhang, ya + h, zm + roofExtent * 0.5f}, 1, 0, Lx + 2 * overhang, roofExtent, roofPeriod);
     }
     // An upright box in local coordinates.
     void Box(float x0, float x1, float z0, float z1, float ya, float yb, Vec3 col, bool edge = true) {
@@ -224,69 +270,32 @@ inline void StsCrane(Mesher& m, float x, float zLand, float zWater) {
 }
 
 // ---------------------------------------------------------------------------------------------------- the eight models
-// The depot (assets/rail/rail_depot.html): a 120 x 32 m maintenance shed straddling five straight through roads, its long grey roof
-// set with two rows of six skylights, portals at both ends; two outer sidings under a carriage wash at the back, the office and fuel
-// tanks at the front. Tracks run along local x, right through the lot (SPOM track); no trains.
+// The depot (assets/rail/rail_depot.html): a 120 x 32 m maintenance shed straddling five straight through roads, two outer sidings
+// under a carriage wash at the back, the office and fuel tanks at the front; no trains. Every face is a SPOM slab (Mesher::Slab):
+// pilasters, brick plinth, window bands, the five track portals, skylights and parapets are relief texture, not triangles.
 inline void RailDepot(Mesher& m, const BuildingDef& d) {
     const float hw = d.W() * 0.5f, hd = d.D() * 0.5f;
-    const Vec3 wall{0.79f, 0.77f, 0.72f}, pilaster{0.66f, 0.64f, 0.59f}, roof{0.55f, 0.56f, 0.58f}, frame{0.72f, 0.73f, 0.75f}, glass{0.17f, 0.23f, 0.27f},
-        trim{0.85f, 0.66f, 0.16f}, apron{0.55f, 0.53f, 0.49f}, sidingBed{0.49f, 0.48f, 0.44f};
     const float roads[5] = {-10, -5, 0, 5, 10}, sidings[2] = {-27, -33};
-    const float L = 60.0f, Wd = 16.0f, H = 10.0f; // shed half length, half width, wall height
-    m.Box(-hw, hw, -hd, hd, 0.0f, 0.1f, kGravel, false);
-    m.Box(-hw, hw, -20, 20, 0.1f, 0.12f, apron, false);           // shed apron
-    m.Box(-hw, hw, -37, -23, 0.1f, 0.12f, sidingBed, false);       // siding bed
+    auto ground = [&](float x0, float x1, float z0, float z1, float y, Vec3 c) { m.Quad(m.P(x0, y, z0), m.P(x1, y, z0), m.P(x1, y, z1), m.P(x0, y, z1), {0, 1, 0}, c); };
+    ground(-hw, hw, -hd, hd, 0.1f, kGravel);
+    ground(-hw, hw, -20, 20, 0.11f, {0.55f, 0.53f, 0.49f});        // shed apron
+    ground(-hw, hw, -37, -23, 0.11f, {0.49f, 0.48f, 0.44f});       // siding bed
     for (float z : roads) m.Track(-hw, z, hw, z);
     for (float z : sidings) m.Track(-hw, z, hw, z);
-    // shed walls, pilasters and window bands
-    for (float s : {-1.0f, 1.0f}) {
-        const float z = s * Wd;
-        m.Box(-L, L, z - 0.3f, z + 0.3f, 0.12f, H, wall);
-        for (float x = -L + 6.0f; x < L; x += 12.0f) {
-            m.Box(x - 0.4f, x + 0.4f, z - 0.5f, z + 0.5f, 0.12f, H, pilaster, false);
-            m.Box(x + 2.0f, x + 10.0f, z + s * 0.3f - 0.08f, z + s * 0.3f + 0.08f, 4.3f, 6.7f, glass, false);
-        }
-    }
-    // roof slab, parapet lips, skylights (2 x 6), roof plant
-    m.Box(-L - 0.75f, L + 0.75f, -Wd - 0.75f, Wd + 0.75f, H, H + 0.8f, roof);
-    for (float s : {-1.0f, 1.0f}) m.Box(-L - 0.75f, L + 0.75f, s * (Wd + 0.55f) - 0.2f, s * (Wd + 0.55f) + 0.2f, H + 0.8f, H + 1.4f, {0.42f, 0.44f, 0.46f}, false);
-    for (int i = 0; i < 6; ++i)
-        for (float z : {-7.0f, 7.0f}) {
-            const float x = -L + 12.0f + i * 19.0f;
-            m.Box(x - 6.5f, x + 6.5f, z - 4.0f, z + 4.0f, H + 0.8f, H + 1.3f, frame, false);
-            m.Box(x - 6.0f, x + 6.0f, z - 3.5f, z + 3.5f, H + 1.3f, H + 1.42f, glass, false);
-        }
-    for (int i = 0; i < 4; ++i) m.Box(-46.2f + i * 30.0f, -43.8f + i * 30.0f, -1.2f, 1.2f, H + 0.8f, H + 2.2f, {0.6f, 0.63f, 0.65f}, false);
-    // end portals: a lintel over five openings, pillars between them, a yellow strip over the doors
-    for (float ex : {-L, L}) {
-        m.Box(ex - 0.4f, ex + 0.4f, -Wd, Wd, 6.6f, H, wall);
-        m.Box(ex - 0.5f, ex + 0.5f, -Wd - 0.2f, Wd + 0.2f, 6.4f, 6.8f, trim, false);
-        float z0 = -Wd;
-        for (float z : roads) {
-            if (z - 2.2f > z0 + 0.05f) m.Box(ex - 0.4f, ex + 0.4f, z0, z - 2.2f, 0.12f, 6.6f, wall);
-            z0 = z + 2.2f;
-        }
-        m.Box(ex - 0.4f, ex + 0.4f, z0, Wd, 0.12f, 6.6f, wall);
-    }
-    m.Box(-L + 2, L - 2, -Wd + 1, Wd - 1, 0.12f, 0.14f, kDark, false); // the shed floor
+    // the shed: walls 10 m from the apron; the end walls' relief has the five portals lined up with the roads (5 m apart)
+    m.SlabBlock(-60, 60, -16, 16, 0.12f, 10.0f, kSlabDepotWall, kSlabDepotEnd, kSlabDepotRoof, 12.0f, 32.0f, 19.0f, 34.5f, 1.25f);
+    // the office at the front corner, with its fuel tanks
+    m.SlabBlock(-59, -37, 20, 32, 0.1f, 7.0f, kSlabOfficeWall, kSlabOfficeWall, kSlabOfficeRoof, 4.0f, 4.0f, 6.0f, 12.5f, 0.25f);
+    for (float x : {-32.0f, -26.0f}) m.Cylinder(x, 26.0f, 2.4f, 0.1f, 6.0f, {0.89f, 0.89f, 0.86f}, 8);
     // carriage wash over the sidings
     for (float x : {-10.0f, 10.0f})
         for (float z : {-37.0f, -23.0f}) m.Box(x - 0.3f, x + 0.3f, z - 0.3f, z + 0.3f, 0.1f, 7.0f, {0.31f, 0.44f, 0.56f}, false);
     m.Box(-11, 11, -38, -22, 7.0f, 8.0f, {0.44f, 0.56f, 0.69f});
-    // office block, fuel tanks and the depot sign at the front
-    m.Box(-59, -37, 20, 32, 0.1f, 7.0f, wall);
-    m.Box(-59.2f, -36.8f, 19.8f, 32.2f, 7.0f, 7.6f, roof);
-    for (float x = -56.0f; x <= -40.0f; x += 4.0f) m.Box(x - 1.2f, x + 1.2f, 32.0f, 32.1f, 2.7f, 4.3f, glass, false);
-    for (float x : {-32.0f, -26.0f}) m.Cylinder(x, 26.0f, 2.4f, 0.1f, 6.0f, {0.89f, 0.89f, 0.86f}, 10);
-    m.Box(-37, -23, Wd + 0.6f, Wd + 0.9f, H - 2.4f, H - 0.4f, {0.12f, 0.31f, 0.56f}, false);
-    // signals at the four throats, light masts along the sidings
+    // signals at the throats, light masts along the sidings
     for (float x : {-hw + 2.0f, hw - 2.0f})
-        for (float zz : {14.0f, -35.2f}) {
-            m.Box(x - 0.12f, x + 0.12f, zz - 0.12f, zz + 0.12f, 0.1f, 5.0f, kSteel, false);
-            m.Box(x - 0.25f, x + 0.25f, zz - 0.2f, zz + 0.2f, 4.0f, 5.4f, kDark, false);
-        }
+        for (float z : {14.0f, -35.2f}) m.Box(x - 0.2f, x + 0.2f, z - 0.2f, z + 0.2f, 0.1f, 5.4f, kDark, false);
     for (float x : {-50.0f, 50.0f}) {
-        m.Cylinder(x, -20.0f, 0.35f, 0.1f, 22.0f, {0.55f, 0.57f, 0.59f}, 6);
+        m.Box(x - 0.25f, x + 0.25f, -20.25f, -19.75f, 0.1f, 22.0f, {0.55f, 0.57f, 0.59f}, false);
         m.Box(x - 1.5f, x + 1.5f, -21.5f, -18.5f, 22.0f, 22.6f, {0.17f, 0.18f, 0.19f}, false);
     }
 }

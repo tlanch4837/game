@@ -1284,6 +1284,90 @@ float4 TrackPS(VSOut i) {
     return float4(lit, 0.76 + 0.23 * share);
 }
 
+// SPOM slabs (alpha 0.806 .. 0.824): a whole building face as one thin box kSlabDepth deep standing out of the face; each pixel
+// marches the eye ray against the relief in gAlbedo.a (height out of the face, 0..1 of the depth) so pilasters, recessed windows,
+// brick, door portals, skylights and parapets are real silhouettes from a handful of triangles (tools/building_gen/depot_tex.py).
+// Alpha below 0.815: a wall (out = (-T.z, 0, T.x), up the face = world up); above: a roof (out = up, across = (T.z, 0, -T.x)).
+//   normal    T, the horizontal direction along the face (the texture repeats along it)
+//   uv        metres along T and across the face (up a wall, across a roof); color.r this vertex's height out of the face
+//   color.g   the texture's repeat along T (metres), color.b the face's extent across (metres, the texture spans it once)
+// Back faces (no culling) step back to where the ray entered, so either face of the slab finds the same hit.
+static const float kSlabDepth = 0.8;
+float SlabH(float2 m, float2 size, bool roof) {
+    const float2 uv = float2(m.x / size.x, roof ? m.y / size.y : 1.0 - m.y / size.y);
+    return kSlabDepth * gAlbedo.SampleLevel(gTexSampler, uv, 0.0).a;
+}
+float4 SlabPS(VSOut i) {
+    const bool roof = i.color.a > 0.815;
+    const float3 T = normalize(float3(i.normal.x, 0.0, i.normal.z));
+    const float3 N = roof ? float3(0, 1, 0) : float3(-T.z, 0.0, T.x);
+    const float3 B = roof ? float3(T.z, 0.0, -T.x) : float3(0, 1, 0);
+    const float2 size = max(i.color.gb, 0.1);
+    const float3 vw = normalize(i.worldPos - gLight.eye.xyz);
+    const float3 d = float3(dot(vw, T), dot(vw, B), dot(vw, N));
+    float3 p0 = float3(i.uv, i.color.r);
+    const float camDist = length(i.worldPos - gLight.eye.xyz);
+    const bool near = camDist < 260.0;
+    float t = 0.0, tBack = 0.0;
+    if (near) {
+        float2 tb = float2(1e9, 1e9); // back to where the ray entered the slab (across: [0, extent], out: [0, depth])
+        if (abs(d.y) > 1e-5) tb.x = d.y > 0.0 ? p0.y / d.y : (p0.y - size.y) / d.y;
+        if (abs(d.z) > 1e-5) tb.y = d.z > 0.0 ? p0.z / d.z : (p0.z - kSlabDepth) / d.z;
+        tBack = max(min(tb.x, tb.y), 0.0);
+        p0 -= d * tBack;
+        float2 tf = float2(1e9, 1e9);
+        if (abs(d.y) > 1e-5) tf.x = d.y > 0.0 ? (size.y - p0.y) / d.y : -p0.y / d.y;
+        if (abs(d.z) > 1e-5) tf.y = d.z > 0.0 ? (kSlabDepth - p0.z) / d.z : -p0.z / d.z;
+        const float tExit = max(min(tf.x, tf.y), 0.0);
+        const int steps = clamp((int)ceil(tExit / 0.03), 16, 64);
+        const float dt = tExit / steps;
+        float tLo = 0.0, tHi = 0.0;
+        bool hit = false;
+        [loop] for (int k = 0; k <= steps; ++k) {
+            tHi = dt * k;
+            const float3 q = p0 + d * tHi;
+            if (q.z <= SlabH(q.xy, size, roof)) { hit = true; break; }
+            tLo = tHi;
+        }
+        // the face's own plane (height 0) is always solid: a ray leaving through the back has hit it, however the samples fell
+        const bool outBack = d.z < 0.0 && tf.y <= tf.x + 1e-4;
+        if (!hit && !outBack) discard;
+        if (!hit) tLo = tHi = tExit;
+        [unroll] for (int r = 0; r < 5; ++r) {
+            const float tm = 0.5 * (tLo + tHi);
+            const float3 q = p0 + d * tm;
+            if (q.z <= SlabH(q.xy, size, roof)) tHi = tm; else tLo = tm;
+        }
+        t = tHi;
+    }
+    const float3 q = p0 + d * t;
+    const float2 uv = float2(q.x / size.x, roof ? q.y / size.y : 1.0 - q.y / size.y);
+    const float2 uvIn = float2(i.uv.x / size.x, roof ? i.uv.y / size.y : 1.0 - i.uv.y / size.y);
+    const float3 albedo = near ? gAlbedo.SampleLevel(gTexSampler, uv, 0.0).rgb : gAlbedo.Sample(gTexSampler, uvIn).rgb;
+    float3 nl = float3(0, 0, 1);
+    if (near) {
+        const float e = 0.02, h0 = SlabH(q.xy, size, roof);
+        nl = normalize(float3(-(SlabH(q.xy + float2(e, 0), size, roof) - SlabH(q.xy - float2(e, 0), size, roof)) / (2.0 * e),
+                              -(SlabH(q.xy + float2(0, e), size, roof) - SlabH(q.xy - float2(0, e), size, roof)) / (2.0 * e), 1.0));
+        if (q.z < h0 - 0.004) nl = abs(d.x) > abs(d.y) ? float3(-sign(d.x), 0, 0) : float3(0, -sign(d.y), 0); // a step's side
+    }
+    const float3 n = normalize(T * nl.x + B * nl.y + N * nl.z);
+    const float3 wp = i.worldPos + vw * (t - tBack);
+    float shade = 1.0;
+    if (near) { // its own shadow: toward the sun through the relief
+        const float3 l = gLight.sunDir.xyz, lt = float3(dot(l, T), dot(l, B), dot(l, N));
+        if (lt.z > 0.02) {
+            const float reach = min((kSlabDepth - q.z) / lt.z, 3.0);
+            [unroll] for (int s = 1; s <= 6; ++s) { const float3 sp = q + lt * (reach * s / 6.0 + 0.005); if (sp.z <= SlabH(sp.xy, size, roof)) { shade = 0.4; break; } }
+        }
+    }
+    const float glass = saturate((0.25 - dot(albedo, float3(0.3, 0.5, 0.2))) * 6.0) * step(q.z, 0.06); // the dark panes sit at the back
+    const float cloudSun = CloudSun(wp);
+    float share;
+    const float3 lit = LitPbr(pow(saturate(albedo), 2.2), n, wp, gPixelShadow * cloudSun * shade, lerp(0.8, 0.12, glass), glass * 0.6, cloudSun, share);
+    return float4(lit, 0.76 + 0.23 * share);
+}
+
 // Building windows (alpha 0.665, material name contains "roomglass"; tools/building_gen/roomglass.py): a room behind every pane by
 // interior mapping (van Dongen, "Interior Mapping", 2008), under smooth scratched glass. Unlike GlassPS the room is drawn, so the pane
 // is opaque and needs nothing behind it.
@@ -1545,6 +1629,7 @@ float4 PSMain(VSOut i) : SV_Target {
     if (i.color.a < 0.15) return TerrainPS(i);
     if (abs(i.color.a - 0.8) < 0.004) return SpomPS(i); // silhouette POM volume (balcony, canopy)
     if (abs(i.color.a - 0.83) < 0.004) return TrackPS(i); // SPOM railway track
+    if (i.color.a > 0.806 && i.color.a < 0.824) return SlabPS(i); // SPOM building faces (walls, roofs)
     if (abs(i.color.a - 0.645) < 0.003) return GlassPS(i);
     if (abs(i.color.a - 0.70) < 0.003) return InteriorPS(i); // vehicle windows: interior mapping
     if (abs(i.color.a - 0.665) < 0.003) return RoomGlassPS(i); // building windows: a room behind scratched glass

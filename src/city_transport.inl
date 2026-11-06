@@ -182,19 +182,28 @@ void TransportDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
             if (g_transportTool.marker) MarkerLines(d, p, RoadsGround, holoLines, p.valid ? tbd::Vec3{0.5f, 0.9f, 1.4f} : tbd::Vec3{1.5f, 0.5f, 0.4f});
         }
     }
-    // SPOM track (vertex alpha 0.83, Mesher::Track) is drawn apart, with the track texture bound; the rest as lit vertex colour
-    static std::vector<tbd::Vertex> track, rest;
-    track.clear(), rest.clear();
+    // SPOM pieces are drawn apart, each with its relief texture bound: track (alpha 0.83, Mesher::Track) and building slabs (kSlabTex
+    // alphas, Mesher::Slab); the rest as lit vertex colour.
+    constexpr int kSlabs = tbd::city::tmodel::kSlabTexCount;
+    static std::vector<tbd::Vertex> split[kSlabs + 2]; // [0] plain, [1] track, [2..] slabs
+    for (auto& v : split) v.clear();
     for (size_t k = 0; k + 2 < solid.size(); k += 3) {
-        std::vector<tbd::Vertex>& dst = std::fabs(solid[k].a - 0.83f) < 0.004f ? track : rest;
-        dst.insert(dst.end(), solid.begin() + (ptrdiff_t)k, solid.begin() + (ptrdiff_t)k + 3);
+        const float a = solid[k].a;
+        int dst = std::fabs(a - 0.83f) < 0.004f ? 1 : 0;
+        for (int s = 0; s < kSlabs && !dst; ++s)
+            if (std::fabs(a - tbd::city::tmodel::kSlabTex[s].alpha) < 0.0009f) dst = 2 + s;
+        split[dst].insert(split[dst].end(), solid.begin() + (ptrdiff_t)k, solid.begin() + (ptrdiff_t)k + 3);
     }
-    if (!rest.empty()) r.DrawTransient(rest.data(), (uint32_t)rest.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
-    if (!track.empty() && g_roadGpu.albedo[(int)tbd::city::Mat::Track] != tbd::kNoTexture) {
-        r.SetMaterial(g_roadGpu.albedo[(int)tbd::city::Mat::Track], tbd::kNoTexture);
-        r.DrawTransient(track.data(), (uint32_t)track.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
-        r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
+    if (!split[0].empty()) r.DrawTransient(split[0].data(), (uint32_t)split[0].size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
+    bool bound = false;
+    for (int s = 1; s < kSlabs + 2; ++s) {
+        const tbd::TextureId tex = s == 1 ? g_roadGpu.albedo[(int)tbd::city::Mat::Track] : g_roadGpu.slab[s - 2];
+        if (split[s].empty() || tex == tbd::kNoTexture) continue;
+        r.SetMaterial(tex, tbd::kNoTexture);
+        r.DrawTransient(split[s].data(), (uint32_t)split[s].size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
+        bound = true;
     }
+    if (bound) r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
     if (!holoTris.empty()) r.DrawTransient(holoTris.data(), (uint32_t)holoTris.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
     if (!holoLines.empty()) r.DrawTransient(holoLines.data(), (uint32_t)holoLines.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), true);
 }

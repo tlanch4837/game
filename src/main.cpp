@@ -410,12 +410,14 @@ struct RoadGpu {
     tbd::MeshId mesh[tbd::city::kMatCount];
     tbd::MeshId arrows = tbd::kInvalidMesh;
     tbd::TextureId albedo[tbd::city::kMatCount], normal[tbd::city::kMatCount];
+    tbd::TextureId slab[tbd::city::tmodel::kSlabTexCount]; // SPOM building faces (transport_models.h kSlabTex)
     bool textures = false;
     uint64_t built = 0;
     size_t triangles = 0;
     RoadGpu() { Forget(); }
     void Forget() { // a new renderer: the old ids are gone with the old one
         for (int m = 0; m < tbd::city::kMatCount; ++m) mesh[m] = tbd::kInvalidMesh, albedo[m] = normal[m] = tbd::kNoTexture;
+        for (tbd::TextureId& t : slab) t = tbd::kNoTexture;
         arrows = tbd::kInvalidMesh;
         textures = false;
         built = 0;
@@ -2964,6 +2966,16 @@ void RoadsSync(tbd::Renderer& r) {
             }
         }
         g_roadGpu.albedo[(int)tbd::city::Mat::Track] = TrackSpomTexture(r);
+        for (int k = 0; k < tbd::city::tmodel::kSlabTexCount; ++k) { // relief in alpha: tools/building_gen/depot_tex.py
+            std::wstring path = tbd::ExeDirectory() + L"\\..\\assets\\rail\\depot\\tex\\";
+            for (const char* c = tbd::city::tmodel::kSlabTex[k].file; *c; ++c) path += (wchar_t)*c;
+            path += L".png";
+            std::string bytes;
+            std::vector<uint8_t> rgba;
+            int w = 0, h = 0;
+            if (tbd::ReadAllText(path, bytes) && tbd::DecodeImage((const uint8_t*)bytes.data(), bytes.size(), rgba, w, h)) g_roadGpu.slab[k] = r.CreateTexture(rgba.data(), w, h);
+            else tbd::Log("Transport: missing slab texture %ls", path.c_str());
+        }
     }
     if (g_roads.net.version == g_roadGpu.built) return;
     g_roadGpu.built = g_roads.net.version;
