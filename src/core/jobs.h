@@ -1,7 +1,6 @@
 #pragma once
 
-#include <windows.h>
-#pragma comment(lib, "Synchronization.lib") // WaitOnAddress
+#include "platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -30,7 +29,7 @@ private:
     // it only uses the address as a key and never reads the memory, so that stays safe.
     void Done() {
         pending_.fetch_sub(1, std::memory_order_acq_rel);
-        WakeByAddressAll(&pending_);
+        tbd::platform::WakeAddressAll(&pending_);
     }
     std::atomic<std::size_t> pending_{0};
 };
@@ -52,7 +51,7 @@ public:
         workers_.reserve(count);
         for (std::size_t i = 0; i < count; ++i) {
             workers_.emplace_back([this, i] { WorkerLoop(i); });
-            SetThreadPriority((HANDLE)workers_.back().native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
+            tbd::platform::LowerThreadPriority(workers_.back());
         }
     }
 
@@ -95,7 +94,7 @@ public:
             std::size_t pending = counter.pending_.load(std::memory_order_acquire);
             if (pending == 0) return;
             if (TryRunOne()) continue;
-            WaitOnAddress(&counter.pending_, &pending, sizeof(pending), 20); // the timeout is only a safety net
+            tbd::platform::WaitOnAddress(&counter.pending_, &pending, sizeof(pending), 20); // the timeout is only a safety net
         }
     }
 

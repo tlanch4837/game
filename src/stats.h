@@ -1,7 +1,7 @@
 // Per-frame statistics: FPS, draw calls and polygon (triangle) count.
 // The renderer calls AddDrawCall() for every draw it submits; the engine calls BeginFrame() once per frame.
 #pragma once
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <cstdint>
 
@@ -17,8 +17,8 @@ struct FrameStats {
 class Stats {
 public:
     Stats() {
-        QueryPerformanceFrequency(&freq_);
-        QueryPerformanceCounter(&windowStart_);
+        freq_ = tbd::platform::TickFrequency();
+        windowStart_ = tbd::platform::Ticks();
     }
 
     // Call at the start of every frame. Publishes the draw/poly counts of the frame that just
@@ -29,9 +29,8 @@ public:
         cur_ = {};
 
         ++frames_;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        double elapsed = double(now.QuadPart - windowStart_.QuadPart) / double(freq_.QuadPart);
+        const int64_t now = tbd::platform::Ticks();
+        double elapsed = double(now - windowStart_) / double(freq_);
         if (elapsed >= kWindowSeconds) {
             shown_.fps = frames_ / elapsed;
             shown_.frameMs = elapsed * 1000.0 / frames_;
@@ -57,8 +56,8 @@ public:
 private:
     static constexpr double kWindowSeconds = 0.5;
 
-    LARGE_INTEGER freq_{};
-    LARGE_INTEGER windowStart_{};
+    int64_t freq_ = 0;
+    int64_t windowStart_ = 0;
     uint32_t frames_ = 0;
     FrameStats cur_;   // being accumulated by the frame in progress
     FrameStats shown_; // last completed frame, plus smoothed FPS

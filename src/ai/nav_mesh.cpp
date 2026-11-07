@@ -2,7 +2,7 @@
 #define NOMINMAX
 #include "ai/nav_mesh.h"
 
-#include <windows.h>
+#include "platform/platform.h"
 #undef min
 #undef max
 
@@ -178,10 +178,7 @@ bool BuildTileData(const std::vector<float>& tris, int tx, int tz, unsigned char
 }
 
 double NowMs() {
-    LARGE_INTEGER t, f;
-    QueryPerformanceCounter(&t);
-    QueryPerformanceFrequency(&f);
-    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+    return tbd::platform::NowMs();
 }
 
 void AtomicMax(std::atomic<double>& a, double v) { double c = a.load(); while (v > c && !a.compare_exchange_weak(c, v)) {} }

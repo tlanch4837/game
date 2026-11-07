@@ -8,9 +8,7 @@
 //
 // The pixel font has no '%', '=' or '>': labels are written around that.
 #pragma once
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <algorithm>
 #include <cctype>
@@ -117,15 +115,10 @@ public:
     // First thing in RenderFrame: closes the previous frame's wall time (frame to frame, so it includes the present wait).
     void BeginFrame() {
         if (!Enabled()) return;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        if (!freq_) {
-            LARGE_INTEGER f;
-            QueryPerformanceFrequency(&f);
-            freq_ = (double)f.QuadPart;
-        }
-        if (last_.QuadPart) {
-            const double ms = (double)(now.QuadPart - last_.QuadPart) * 1000.0 / freq_;
+        const int64_t now = tbd::platform::Ticks();
+        if (!freq_) freq_ = (double)tbd::platform::TickFrequency();
+        if (last_) {
+            const double ms = (double)(now - last_) * 1000.0 / freq_;
             if (ms < 1000.0) { // a longer gap is the window being idle or dragged, not a frame
                 frame_[head_] = (float)ms;
                 cpu_[head_] = (float)pendingCpu_;
@@ -144,9 +137,8 @@ public:
         using detail::Fmt;
         using detail::Grouped;
         using detail::Rgb;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        pendingCpu_ = start_.QuadPart ? (double)(now.QuadPart - start_.QuadPart) * 1000.0 / freq_ : 0.0;
+        const int64_t now = tbd::platform::Ticks();
+        pendingCpu_ = start_ ? (double)(now - start_) * 1000.0 / freq_ : 0.0;
 
         const float s = (float)dpi / 96.0f;
         const float cell = std::fmax(1.0f, std::round(1.5f * s * 2.0f) / 2.0f); // same tiny text as the stats
@@ -323,7 +315,7 @@ private:
     float frame_[kHistory] = {}, cpu_[kHistory] = {};
     int head_ = 0, count_ = 0;
     double freq_ = 0.0, pendingCpu_ = 0.0;
-    LARGE_INTEGER last_ = {}, start_ = {};
+    int64_t last_ = 0, start_ = 0;
 };
 
 } // namespace profiler

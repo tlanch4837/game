@@ -14,7 +14,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <windows.h>
 
 #include "render/renderer.h"
 
