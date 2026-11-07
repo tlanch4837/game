@@ -71,17 +71,10 @@ file(GLOB_RECURSE TBD_JOLT_SOURCES CONFIGURE_DEPENDS ${TBD_JOLT}/Jolt/*.cpp)
 file(GLOB TBD_RECAST_SOURCES CONFIGURE_DEPENDS ${TBD_RECAST}/Recast/Source/*.cpp ${TBD_RECAST}/Detour/Source/*.cpp ${TBD_RECAST}/DetourCrowd/Source/*.cpp)
 file(GLOB_RECURSE TBD_LUAU_SOURCES CONFIGURE_DEPENDS ${TBD_LUAU}/VM/src/*.cpp ${TBD_LUAU}/Compiler/src/*.cpp ${TBD_LUAU}/Ast/src/*.cpp
      ${TBD_LUAU}/Bytecode/src/*.cpp ${TBD_LUAU}/Config/src/*.cpp ${TBD_LUAU}/Common/src/*.cpp)
-add_library(tbd_jolt STATIC ${TBD_JOLT_SOURCES})
-target_include_directories(tbd_jolt PUBLIC ${TBD_JOLT})
-add_library(tbd_recast STATIC ${TBD_RECAST_SOURCES})
-target_include_directories(tbd_recast PUBLIC ${TBD_RECAST}/Recast/Include ${TBD_RECAST}/Detour/Include ${TBD_RECAST}/DetourCrowd/Include)
-add_library(tbd_luau STATIC ${TBD_LUAU_SOURCES})
-target_include_directories(tbd_luau PUBLIC ${TBD_LUAU}/VM/include ${TBD_LUAU}/Compiler/include ${TBD_LUAU}/Ast/include
-    ${TBD_LUAU}/Common/include ${TBD_LUAU}/Bytecode/include ${TBD_LUAU}/Config/include
-    PRIVATE ${TBD_LUAU}/VM/src ${TBD_LUAU}/Compiler/src)
-foreach(lib tbd_jolt tbd_recast tbd_luau)
-    target_compile_options(${lib} PRIVATE -w) # third-party warnings are not ours to fix
-endforeach()
+# Compiled straight into the app target: tools/ci/build_ios.sh moves CONFIGURATION_BUILD_DIR, which separate static
+# library targets would then not be found in at link time.
+set(TBD_THIRD_PARTY_SOURCES ${TBD_JOLT_SOURCES} ${TBD_RECAST_SOURCES} ${TBD_LUAU_SOURCES})
+set_source_files_properties(${TBD_THIRD_PARTY_SOURCES} PROPERTIES COMPILE_OPTIONS "-w") # third-party warnings are not ours to fix
 
 # ---- Metal shaders: one .air per .metal, linked into default.metallib.
 file(GLOB TBD_MSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/msl/*.metal")
@@ -107,13 +100,16 @@ set_source_files_properties("${TBD_METALLIB}" PROPERTIES GENERATED TRUE MACOSX_P
 # These are fallback copies. Xcode must not infer a Metal source compile step from their extension.
 set_source_files_properties(${TBD_MSL} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/msl XCODE_EXPLICIT_FILE_TYPE text)
 
-add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} "${TBD_METALLIB}" ${TBD_MSL})
-target_include_directories(cityengine PRIVATE src third_party/metal-cpp)
+add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} ${TBD_THIRD_PARTY_SOURCES} "${TBD_METALLIB}" ${TBD_MSL})
+target_include_directories(cityengine PRIVATE src third_party/metal-cpp ${TBD_JOLT}
+    ${TBD_RECAST}/Recast/Include ${TBD_RECAST}/Detour/Include ${TBD_RECAST}/DetourCrowd/Include
+    ${TBD_LUAU}/VM/include ${TBD_LUAU}/Compiler/include ${TBD_LUAU}/Ast/include ${TBD_LUAU}/Common/include
+    ${TBD_LUAU}/Bytecode/include ${TBD_LUAU}/Config/include ${TBD_LUAU}/VM/src ${TBD_LUAU}/Compiler/src)
 target_compile_definitions(cityengine PRIVATE TBD_HAVE_METAL=1)
 # metal-cpp manages its own references: no ARC in the Metal backend; the UIKit shell uses ARC.
 set_source_files_properties(src/render/renderer_metal.mm PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
 set_source_files_properties(src/platform/ios/main_ios.mm src/platform/platform_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-target_link_libraries(cityengine PRIVATE tbd_jolt tbd_recast tbd_luau
+target_link_libraries(cityengine PRIVATE
     "-framework Foundation" "-framework CoreGraphics" "-framework UIKit" "-framework QuartzCore" "-framework Metal"
     "-framework ImageIO" "-framework AudioToolbox" "-framework AVFoundation" "-framework CoreAudio")
 
