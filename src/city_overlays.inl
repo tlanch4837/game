@@ -186,6 +186,9 @@ void OverlaysHud() { tbd::gui::OverlayHudFrame(g_gui, g_overlayHud, 8.0f + 5 * 6
 //   sim|boost|<x>           the game clock boost (TBD_CLOCK_BOOST)
 //   sim|play|<0..2>         unpause at that speed
 //   sim|loan|<tier>         take a loan (0 small, 1 medium, 2 large)
+//   sim|herds               neighbourhoods, herds, children and their cost (city_herds.inl)
+//   sim|follow[|off]        promote the car nearest the camera target and follow it
+//   sim|clock|<hour>        set the game clock to that hour of the current day
 int g_simRemoteBudget = -1; // read by SimHudFill's caller: open (1) / close (0) the Budget panel once
 bool SimRemote(const std::vector<std::string>& a, std::string& out) {
     using namespace tbd::city;
@@ -237,6 +240,7 @@ bool SimRemote(const std::vector<std::string>& a, std::string& out) {
         out = "no room beside any road";
         return false;
     }
-    out = "sim: stats overlay budget boost plant";
+    if (sub == "herds" || sub == "follow" || sub == "clock" || sub == "density") return HerdsRemote(sub, arg, out); // city_herds.inl
+    out = "sim: stats overlay budget boost plant herds follow clock";
     return false;
 }

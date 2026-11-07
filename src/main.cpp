@@ -55,6 +55,8 @@
 #include "city/industry.h"         // specialized industry (city_industry.inl hosts it)
 #include "city/utilities.h"        // utilities (city_utilities.inl hosts them)
 #include "city/sim.h"              // the city sim's fixed-step scheduler (city_sim.inl hosts it)
+#include "city/sim_children.h"     // neighbourhoods, herds, routes, visible children (city_herds.inl hosts them)
+#include "city/sim_routes.h"
 #include "city/sim_cells.h"        // the city sim's per-cell counters: homes, jobs, residents, employment
 #include "city/sim_growth.h"       // the city sim's demand, demand-gated growth, level up / down, abandonment
 #include "city/sim_coverage.h"     // the city sim's utilities per cell and service coverage
@@ -3159,6 +3161,7 @@ void RoadsWorldLabels() {
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_herds.inl"    // neighbourhoods, herds over the day and the visible cars made from them (src/city/sim_hoods.h ...)
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
@@ -3392,6 +3395,7 @@ void RenderFrame() {
     FrameMark("industry-sync");
     GarbageSync(dt);  // garbage produced, collected and processed
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
+    HerdsSync(dt);    // the cars near the camera made from the herds (city_herds.inl)
     OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
     FrameMark("sim-sync");
     CityStressSync(); // TBD_CITY_STRESS only
@@ -4285,6 +4289,7 @@ void RenderFrame() {
     const tbd::FrameCounts agentsMark = r.Counts();
     g_drawCats.Add(kCatCity, cityMark, agentsMark);
     SimAgentsDraw(r, sceneViewProj); // cosmetic traffic from the flow solve: one instanced draw per car model
+    HerdsDraw(r, sceneViewProj);     // the herd children (replace the cosmetic cars when the herd system is running)
     g_drawCats.Add(kCatAgents, agentsMark, r.Counts());
     const tbd::FrameCounts waterMark = r.Counts();
     g_water.SubmitDraw(r, sceneViewProj, waterJitter);

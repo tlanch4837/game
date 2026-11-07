@@ -327,6 +327,7 @@ bool g_simCarsTried = false;
 double g_simAgentTime = 0; // seconds the cosmetic cars have driven (real time while the game runs)
 tbd::city::AgentParams g_simAgentParams;
 uint32_t g_simCarsDrawn = 0;
+bool g_herdsOwnCars = false; // city_herds.inl: the herd children draw the cars and the flow-driven cosmetic ones step aside
 
 void SimAgentsSync(float realDt) {
     if (!g_clock.paused) g_simAgentTime += realDt * (1.0 + 0.5 * g_clock.speed);
@@ -377,6 +378,7 @@ void SimFlowOverlay(tbd::Renderer& r, const tbd::Mat4& viewProj) {
 void SimAgentsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     SimFlowOverlay(r, viewProj);
     g_simCarsDrawn = 0;
+    if (g_herdsOwnCars) return;
     if (g_simCars.empty() || g_segFlow.size() != g_roads.net.segs.size() || g_segFlowVersion != g_roads.net.version) return;
     if (g_engine.camera.distance > 1200.0f) return; // past this the cars are specks: none drawn
     static std::vector<tbd::city::CarInstance> cars;
