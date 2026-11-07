@@ -45,6 +45,7 @@ struct LinkTable {
     std::vector<float> pts;       // polyline, x y z per point, in driving direction (children place cars on it)
     std::vector<uint32_t> ptOff;  // links + 1 offsets into pts, in points
     std::vector<int> outOff, outIdx; // links leaving node n: outIdx[outOff[n] .. outOff[n+1])
+    std::vector<int> inOff, inIdx;   // links entering node n
     int nodes = 0;
     uint64_t version = 0;         // Network::version it came from
 
@@ -58,6 +59,12 @@ struct LinkTable {
         outIdx.assign(links.size(), 0);
         std::vector<int> fill(outOff.begin(), outOff.end() - 1);
         for (size_t i = 0; i < links.size(); ++i) outIdx[(size_t)fill[(size_t)links[i].from]++] = (int)i;
+        inOff.assign((size_t)nodes + 1, 0);
+        for (const LinkInfo& l : links) ++inOff[(size_t)l.to + 1];
+        for (int n = 0; n < nodes; ++n) inOff[(size_t)n + 1] += inOff[(size_t)n];
+        inIdx.assign(links.size(), 0);
+        fill.assign(inOff.begin(), inOff.end() - 1);
+        for (size_t i = 0; i < links.size(); ++i) inIdx[(size_t)fill[(size_t)links[i].to]++] = (int)i;
     }
     // Point and heading `s` metres along link `l` (clamped), from the polyline; y is the road height. Straight links
     // without a polyline interpolate between nothing: callers that skip the polyline get {0,0,0}.
