@@ -3089,11 +3089,11 @@ void RoadRenameBegin() {
 }
 // Keys while the rename box is open: returns true (it swallows every key so tool shortcuts don't fire while typing).
 bool RoadRenameKey(WPARAM wparam) {
-    if (wparam == VK_ESCAPE) g_roadRename.active = false;
-    else if (wparam == VK_RETURN) {
+    if (wparam == (int)tbd::platform::Key::Escape) g_roadRename.active = false;
+    else if (wparam == (int)tbd::platform::Key::Return) {
         g_roadRename.active = false;
         g_roadNames.Rename(g_roads.net, g_roadRename.seg, g_roadRename.text); // empty text clears back to the generated name
-    } else if (wparam == VK_BACK && !g_roadRename.text.empty()) g_roadRename.text.pop_back();
+    } else if (wparam == (int)tbd::platform::Key::Back && !g_roadRename.text.empty()) g_roadRename.text.pop_back();
     return true;
 }
 void RoadRenameChar(WPARAM wparam) {
@@ -4657,12 +4657,12 @@ void ContinueDrag(LPARAM lparam) {
 // Keys that don't tear down windows (those are menu accelerators). Returns true when the key was used.
 bool HandleKey(WPARAM wparam, LPARAM lparam) {
     if (g_roadRename.active) return RoadRenameKey(wparam);
-    if (wparam == VK_F2 && g_roads.active && g_hoverSeg >= 0) {
+    if (wparam == (int)tbd::platform::Key::F2 && g_roads.active && g_hoverSeg >= 0) {
         RoadRenameBegin();
         return true;
     }
     if (g_play.active) { // Play owns the keyboard: Esc stops, G walks / flies, WASD etc. are polled by PlayMode::Update
-        if (wparam == VK_ESCAPE) OnTransport(2, nullptr);
+        if (wparam == (int)tbd::platform::Key::Escape) OnTransport(2, nullptr);
         else if (wparam == 'G' && !(lparam & (1 << 30))) {
             if (g_player.Active()) { // the character waits where he is while the camera flies
                 g_play.player = !g_play.player;
@@ -4680,68 +4680,68 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
     if (g_engine.drag == Drag::Fly) return true; // WASD belongs to the camera while flying
     const bool ctrl = tbd::platform::KeyDownSync(tbd::platform::Key::Control), alt = tbd::platform::KeyDownSync(tbd::platform::Key::Alt);
     const bool repeat = (lparam & (1 << 30)) != 0;
-    if (wparam == VK_SPACE && !repeat && !ctrl && !alt) { // the game clock: pause / resume
+    if (wparam == (int)tbd::platform::Key::Space && !repeat && !ctrl && !alt) { // the game clock: pause / resume
         g_clock.paused = !g_clock.paused;
         return true;
     }
     if (g_indTool.active && IndustryKey(wparam)) return true;
     if (g_utilTool.active) { // the utilities tool's keys: Esc ends the line / drops the item / closes, Page Up / Down elevation, , . rotate
         switch (wparam) {
-        case VK_ESCAPE:
+        case (int)tbd::platform::Key::Escape:
             if (g_utilIn.laying) g_utilIn.laying = false;
             else {
                 g_utilTool.Escape();
                 if (!g_utilTool.active) UtilToolClosed();
             }
             return true;
-        case VK_OEM_COMMA: g_utilTool.Rotate(15.0f); return true;
-        case VK_OEM_PERIOD: g_utilTool.Rotate(-15.0f); return true;
-        case VK_PRIOR: g_utilTool.Raise(1); return true;
-        case VK_NEXT: g_utilTool.Raise(-1); return true;
+        case (int)tbd::platform::Key::Comma: g_utilTool.Rotate(15.0f); return true;
+        case (int)tbd::platform::Key::Period: g_utilTool.Rotate(-15.0f); return true;
+        case (int)tbd::platform::Key::PageUp: g_utilTool.Raise(1); return true;
+        case (int)tbd::platform::Key::PageDown: g_utilTool.Raise(-1); return true;
         }
     }
     if (g_transportTool.active) { // the transport tool's keys: Esc drops the building / closes, , . rotate
         switch (wparam) {
-        case VK_ESCAPE: g_transportTool.Escape(); return true;
-        case VK_RETURN: if (g_transportTool.lines) { g_transportTool.finishLine = true; return true; } break;
-        case VK_OEM_COMMA: g_transportTool.Rotate(15.0f); return true;
-        case VK_OEM_PERIOD: g_transportTool.Rotate(-15.0f); return true;
+        case (int)tbd::platform::Key::Escape: g_transportTool.Escape(); return true;
+        case (int)tbd::platform::Key::Return: if (g_transportTool.lines) { g_transportTool.finishLine = true; return true; } break;
+        case (int)tbd::platform::Key::Comma: g_transportTool.Rotate(15.0f); return true;
+        case (int)tbd::platform::Key::Period: g_transportTool.Rotate(-15.0f); return true;
         }
     }
-    if (g_zoneTool.active && wparam == VK_ESCAPE) {
+    if (g_zoneTool.active && wparam == (int)tbd::platform::Key::Escape) {
         if (g_zoneIn.held) g_zoneIn.held = false;
         else g_zoneTool.active = false;
         return true;
     }
     if (g_roads.active) { // the road tool's keys (CS2): Esc cancels / closes, Page Up / Down elevation, , . rotate, Ctrl+Z / Y
         switch (wparam) {
-        case VK_ESCAPE:
+        case (int)tbd::platform::Key::Escape:
             if (g_roads.Pending()) g_roads.Cancel();
             else g_roads.Close();
             return true;
-        case VK_PRIOR: g_roads.Raise(1); return true;
-        case VK_NEXT: g_roads.Raise(-1); return true;
-        case VK_OEM_COMMA: g_roads.Rotate(15.0f); return true;
-        case VK_OEM_PERIOD: g_roads.Rotate(-15.0f); return true;
-        case VK_BACK: g_roads.Undo(); return true;
+        case (int)tbd::platform::Key::PageUp: g_roads.Raise(1); return true;
+        case (int)tbd::platform::Key::PageDown: g_roads.Raise(-1); return true;
+        case (int)tbd::platform::Key::Comma: g_roads.Rotate(15.0f); return true;
+        case (int)tbd::platform::Key::Period: g_roads.Rotate(-15.0f); return true;
+        case (int)tbd::platform::Key::Back: g_roads.Undo(); return true;
         case 'Z': if (ctrl) { g_roads.Undo(); return true; } break;
         case 'Y': if (ctrl) { g_roads.Redo(); return true; } break;
         }
     }
     switch (wparam) {
-    case VK_HOME:
+    case (int)tbd::platform::Key::Home:
         g_engine.camera = tbd::OrbitCamera();
         return true;
-    case VK_DELETE:
+    case (int)tbd::platform::Key::Delete:
         if (!repeat) DeleteSelected();
         return true;
-    case VK_ESCAPE:
+    case (int)tbd::platform::Key::Escape:
         g_engine.scene.selected = -1;
         return true;
     }
-    if (!repeat && wparam == VK_F8) { SaveTerrainEdits(); return true; }
+    if (!repeat && wparam == (int)tbd::platform::Key::F8) { SaveTerrainEdits(); return true; }
     if (!repeat && ctrl && tbd::platform::KeyDownSync(tbd::platform::Key::Shift) && wparam == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
-    if (!repeat && wparam == VK_F11) { LoadTerrainEdits(); return true; }
+    if (!repeat && wparam == (int)tbd::platform::Key::F11) { LoadTerrainEdits(); return true; }
     if (ctrl || alt) return false;
     if (!repeat && wparam == 'T') {
         g_terrainEdit.on = !g_terrainEdit.on;
@@ -4753,8 +4753,8 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         Toast(g_guiVisible ? "GAME GUI ON (U HIDES)" : "GAME GUI OFF (U SHOWS)");
         return true;
     }
-    if (g_terrainEdit.on && (wparam == VK_OEM_4 || wparam == VK_OEM_6)) {
-        g_terrainEdit.radius = std::clamp(g_terrainEdit.radius * (wparam == VK_OEM_6 ? 1.25f : 0.8f), 4.0f, 300.0f);
+    if (g_terrainEdit.on && (wparam == (int)tbd::platform::Key::LeftBracket || wparam == (int)tbd::platform::Key::RightBracket)) {
+        g_terrainEdit.radius = std::clamp(g_terrainEdit.radius * (wparam == (int)tbd::platform::Key::RightBracket ? 1.25f : 0.8f), 4.0f, 300.0f);
         Toast("BRUSH RADIUS " + std::to_string((int)g_terrainEdit.radius) + " M");
         return true;
     }
@@ -5117,16 +5117,16 @@ HACCEL BuildAccelerators() {
         {FCONTROL | FSHIFT | FVIRTKEY, 'S', IDM_SAVEAS},
         {FCONTROL | FVIRTKEY, 'D', IDM_DUPLICATE},
         {FCONTROL | FVIRTKEY, 'B', IDM_BROWSER},
-        {FVIRTKEY, VK_F4, IDM_POPOUT},
-        {FVIRTKEY, VK_F1, IDM_D3D12},
-        {FVIRTKEY, VK_F2, IDM_VULKAN},
-        {FVIRTKEY, VK_F3, IDM_PROFILER},
-        {FVIRTKEY, VK_F5, IDM_RELOADSHADERS},
-        {FVIRTKEY, VK_F6, IDM_GFX_CYCLE},
-        {FVIRTKEY, VK_F9, IDM_BRIGHT_DN},
-        {FVIRTKEY, VK_F10, IDM_BRIGHT_UP},
-        {FVIRTKEY, VK_F7, (WORD)tbd::character::kMenuCommand},
-        {FVIRTKEY | FCONTROL, VK_F5, IDM_REBUILDGAME},
+        {FVIRTKEY, (int)tbd::platform::Key::F4, IDM_POPOUT},
+        {FVIRTKEY, (int)tbd::platform::Key::F1, IDM_D3D12},
+        {FVIRTKEY, (int)tbd::platform::Key::F2, IDM_VULKAN},
+        {FVIRTKEY, (int)tbd::platform::Key::F3, IDM_PROFILER},
+        {FVIRTKEY, (int)tbd::platform::Key::F5, IDM_RELOADSHADERS},
+        {FVIRTKEY, (int)tbd::platform::Key::F6, IDM_GFX_CYCLE},
+        {FVIRTKEY, (int)tbd::platform::Key::F9, IDM_BRIGHT_DN},
+        {FVIRTKEY, (int)tbd::platform::Key::F10, IDM_BRIGHT_UP},
+        {FVIRTKEY, (int)tbd::platform::Key::F7, (WORD)tbd::character::kMenuCommand},
+        {FVIRTKEY | FCONTROL, (int)tbd::platform::Key::F5, IDM_REBUILDGAME},
     };
     return CreateAcceleratorTableW(keys, (int)(sizeof(keys) / sizeof(keys[0])));
 }

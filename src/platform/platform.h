@@ -60,7 +60,10 @@ enum class Key : uint8_t {
     MouseLeft = 0x01, MouseRight = 0x02, MouseMiddle = 0x04,
     Back = 0x08, Tab = 0x09, Return = 0x0D, Escape = 0x1B, Delete = 0x2E,
     Shift = 0x10, Control = 0x11, Alt = 0x12, Space = 0x20,
-    Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
+    PageUp = 0x21, PageDown = 0x22, Home = 0x24, Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
+    D0 = '0', D1, D2, D3, D4, D5, D6, D7, D8, D9,
+    F1 = 0x70, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Comma = 0xBC, Period = 0xBE, LeftBracket = 0xDB, RightBracket = 0xDD,
     A = 'A', B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
 };
 // Down right now, whatever the message queue says (Windows: GetAsyncKeyState). For per-frame movement.

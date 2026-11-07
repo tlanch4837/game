@@ -94,6 +94,9 @@ bool DecodeImage(const uint8_t* data, size_t size, std::vector<uint8_t>& rgba, i
 // Key values are the virtual-key codes: KeyDownAsync / KeyDownSync are the exact calls the game made before.
 static_assert((int)Key::MouseLeft == VK_LBUTTON && (int)Key::MouseRight == VK_RBUTTON && (int)Key::MouseMiddle == VK_MBUTTON);
 static_assert((int)Key::Back == VK_BACK && (int)Key::Tab == VK_TAB && (int)Key::Return == VK_RETURN && (int)Key::Escape == VK_ESCAPE && (int)Key::Delete == VK_DELETE);
+static_assert((int)Key::PageUp == VK_PRIOR && (int)Key::PageDown == VK_NEXT && (int)Key::Home == VK_HOME && (int)Key::D0 == '0' && (int)Key::D9 == '9');
+static_assert((int)Key::F1 == VK_F1 && (int)Key::F2 == VK_F2 && (int)Key::F5 == VK_F5 && (int)Key::F9 == VK_F9 && (int)Key::F11 == VK_F11 && (int)Key::F12 == VK_F12);
+static_assert((int)Key::Comma == VK_OEM_COMMA && (int)Key::Period == VK_OEM_PERIOD && (int)Key::LeftBracket == VK_OEM_4 && (int)Key::RightBracket == VK_OEM_6);
 static_assert((int)Key::Shift == VK_SHIFT && (int)Key::Control == VK_CONTROL && (int)Key::Alt == VK_MENU && (int)Key::Space == VK_SPACE);
 static_assert((int)Key::Left == VK_LEFT && (int)Key::Up == VK_UP && (int)Key::Right == VK_RIGHT && (int)Key::Down == VK_DOWN);
 static_assert((int)Key::A == 'A' && (int)Key::Q == 'Q' && (int)Key::W == 'W' && (int)Key::Z == 'Z');
