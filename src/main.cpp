@@ -47,6 +47,7 @@
 #include "gui/gui.h"             // in-game GUI (portable, no Win32); see docs/gui.md
 #include "gui/terrain_toolbar.h" // its first user: the terrain sandbox toolbar
 #include "gui/city_hud.h"      // the CS2-style bottom toolbar, status bar and side icons
+#include "gui/city_overlays.h"     // the info overlays' toggles and legend
 #include "gui/zone_toolbar.h"     // zoning (src/city/zoning.h): zone painting, growth, the game clock
 #include "gui/transport_toolbar.h" // transport buildings (src/city/transport.h): depots, stations, harbours, airports
 #include "gui/utility_toolbar.h"   // utilities: electricity, water, sewage (city_utilities.inl hosts them)
@@ -2699,6 +2700,7 @@ static bool RemoteVec(const std::string& text, tbd::Vec3& v) { float x, y, z; if
 
 bool IndustryDemo(float x, float z, std::string& out); // city_industry.inl
 bool IndustryDump(const std::string& path, std::string& out);
+bool SimRemote(const std::vector<std::string>& a, std::string& out); // city_overlays.inl: the "sim" command
 // The command's reply, or false with the reason. A screenshot answers later, from RemoteShotAfterFrame.
 static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
     const std::vector<std::string>& a = q->args;
@@ -2854,6 +2856,7 @@ static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
         return IndustryDemo(x, z, out);
     }
     if (cmd == "industry_dump") return IndustryDump(a.size() > 1 ? a[1] : std::string("industry_models_data.js"), out); // industry_dump|path.js
+    if (cmd == "sim") return SimRemote(a, out); // sim|stats / overlay / budget / plant / boost (city_overlays.inl)
     if (cmd == "screenshot") { // screenshot|path.bmp|frames to wait: answered once that frame is drawn
         if (g_remoteShot.request) { out = "a screenshot is already pending"; return false; }
         g_remoteShot.request = q;
@@ -3156,6 +3159,7 @@ void RoadsWorldLabels() {
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
 
@@ -3281,9 +3285,11 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
                    : g_indTool.active ? (g_indTool.waste ? (int)tbd::gui::HudTool::Garbage : (int)tbd::gui::HudTool::Industry) : -1;
     hud.terrainOpen = terrainPanelOpen;
     SimHudFill(hud);
+    if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
     g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
     const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
     SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim
+    OverlaysHud(); // the info view toggles and legend, right column under the side icons
     g_gameSlot = hud.slot;
     if (hud.gameAction) g_gameAction = hud.gameAction, hud.gameAction = 0; // bottom centre, tight to the edge; the tools sit above it
     if (hud.request == (int)tbd::gui::HudTool::Terrain) {
@@ -3386,6 +3392,7 @@ void RenderFrame() {
     FrameMark("industry-sync");
     GarbageSync(dt);  // garbage produced, collected and processed
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
+    OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
     FrameMark("sim-sync");
     CityStressSync(); // TBD_CITY_STRESS only
     CityChunkCheckSync(); // TBD_CHUNK_CHECK only
@@ -4270,6 +4277,7 @@ void RenderFrame() {
     }
     const tbd::FrameCounts cityMark = r.Counts();
     ZonesDraw(r, sceneViewProj); // zone cells, construction sites, the zoning cursor
+    OverlaysDraw(r, sceneViewProj); // the info overlay (one draw)
     TransportDraw(r, sceneViewProj); // transport buildings, the hologram being placed, lot markers
     UtilDraw(r, sceneViewProj); // poles, pylons, wires, the underground view, the utilities cursor
     IndustryDraw(r, sceneViewProj); // industry hubs, work areas, the resource heat map

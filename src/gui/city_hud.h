@@ -245,7 +245,9 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
                 dl.Rect(x, row.y, x + size, row.y + size, Rgba(10, 11, 13, 150), Rgba(10, 11, 13, 150), th.widgetRadius);
                 DrawIcon(dl, Icon::Lock, x + size * 0.5f, row.y + size * 0.42f, size * 0.42f, th.iconStroke, Rgba(250, 210, 120));
                 char pop[16];
-                std::snprintf(pop, sizeof(pop), h.lockPop[it.tool] >= 1000 ? "%lldk" : "%lld", h.lockPop[it.tool] >= 1000 ? h.lockPop[it.tool] / 1000 : h.lockPop[it.tool]);
+                const long long lp = h.lockPop[it.tool];
+                if (lp >= 1000) std::snprintf(pop, sizeof(pop), lp % 1000 ? "%.1fk" : "%.0fk", lp / 1000.0);
+                else std::snprintf(pop, sizeof(pop), "%lld", lp);
                 g.TextIn({x, row.y + size * 0.68f, size, size * 0.3f}, pop, Rgba(250, 210, 120), 0.5f, th.smallSize, true);
             }
             x += size + gap;

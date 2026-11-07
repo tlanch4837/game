@@ -424,6 +424,13 @@ void SimPeopleSelect() {
     uint32_t first = 0, count = 0;
     g_simCitizenLines.clear();
     g_simCitizenTitle = "Lot " + std::to_string(lot);
+    for (size_t i = 0; i < g_zones.lots.size() && i < g_simFlags.size(); ++i) // its problems first (sim_flags.h)
+        if (g_zones.lots[i].id == lot && g_simFlags[i]) {
+            std::string line = "Problems:";
+            for (int b = 0; b < tbd::city::kFlagCount; ++b)
+                if (g_simFlags[i] & (1 << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
+            g_simCitizenLines.push_back(line);
+        }
     if (!tbd::city::SimPeople::LotSlots(g_citySim, lot, cell, first, count) || count == 0) {
         g_simCitizenLines.push_back("Nobody lives here (a workplace, or still being built).");
         return;
