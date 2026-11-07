@@ -1,6 +1,10 @@
 // TBD Engine project manager: lists projects, creates new ones, opens them in the engine.
 #define UNICODE
 #define _UNICODE
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include "../project.h"
 
 #include <commctrl.h>

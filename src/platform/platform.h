@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <string>
 #include <thread>
 
 namespace tbd::platform {
@@ -27,6 +28,10 @@ void WakeAddressAll(const void* address);
 std::filesystem::path CacheRoot();
 // fopen with a filesystem path (wide on Windows). Returns nullptr on failure.
 FILE* OpenFile(const std::filesystem::path& path, const char* mode);
+
+// UTF-8 <-> wide strings (UTF-16 on Windows, UTF-32 on Apple).
+std::wstring Utf8ToWide(const std::string& s);
+std::string WideToUtf8(const std::wstring& w);
 
 // Background worker threads (job system): below normal priority so the frame thread wins.
 void LowerThreadPriority(std::thread& t);
