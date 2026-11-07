@@ -3,7 +3,7 @@
 // No Windows code here: what the game needs from its host goes through src/game/shell.h and src/platform.
 
 enum class Drag { None, Orbit, Pan, Zoom, Transform, Fly, Terrain };
-enum class Api { D3D12, Vulkan };
+enum class Api { D3D12, Vulkan, Metal };
 
 enum Command : unsigned {
     IDM_NEW = 100, IDM_OPEN, IDM_SAVE, IDM_SAVEAS, IDM_EXIT,
@@ -231,7 +231,7 @@ tbd::script::LuauHost g_script;  // Luau gameplay scripts from <project>\Scripts
 std::vector<tbd::Entity> g_gamePlaySnapshot; // the scene's transforms when Play started, put back at Stop
 double g_lastAnimMs = 0.0;       // poses and skinning, last frame, for the playtest's trace
 
-const char* ApiName(Api api) { return api == Api::D3D12 ? "D3D12" : "VULKAN"; }
+const char* ApiName(Api api) { return api == Api::D3D12 ? "D3D12" : api == Api::Metal ? "METAL" : "VULKAN"; }
 int Sx(int v) { return tbd::platform::MulDiv(v, g_engine.dpi, 96); }
 float DpiScale() { return (float)g_engine.dpi / 96.0f; }
 
@@ -1436,8 +1436,8 @@ void PlaceImported(const std::wstring& path) {
 void OnOpenAsset(const std::wstring& path, void*) {
     const size_t dot = path.rfind(L'.');
     const wchar_t* ext = dot != std::wstring::npos ? path.c_str() + dot : L"";
-    if (_wcsicmp(ext, tbd::kSceneExtension) == 0) LoadScene(path);
-    else if (_wcsicmp(ext, L".obj") == 0 || _wcsicmp(ext, L".gltf") == 0 || _wcsicmp(ext, L".glb") == 0) PlaceImported(path);
+    if (tbd::platform::WStrICmp(ext, tbd::kSceneExtension) == 0) LoadScene(path);
+    else if (tbd::platform::WStrICmp(ext, L".obj") == 0 || tbd::platform::WStrICmp(ext, L".gltf") == 0 || tbd::platform::WStrICmp(ext, L".glb") == 0) PlaceImported(path);
     else Toast("NO EDITOR FOR " + ToastName(path));
 }
 
@@ -3803,4 +3803,49 @@ void DestroyNpcRig(std::vector<tbd::ai::RigPart>& parts) {
         g_stream.OnEntityErased(g_engine.renderer.get(), index);
     }
     parts.clear();
+}
+
+// ---- Entry points for shells that host only the game (iOS). The Windows editor starts the same pieces from main.cpp.
+// Order per frame: input events (ViewportInput / GuiPointer), then GameFrame.
+
+// Engine services the game needs before a renderer: the clock and the worker threads.
+void GameInit(const std::wstring& assetsRoot) {
+    g_engine.assetsRoot = assetsRoot;
+    g_lodCacheDir = tbd::Join(assetsRoot, L"LodCache");
+    g_engine.tickFreq = tbd::platform::TickFrequency();
+    if (!g_engine.jobs) g_engine.jobs = std::make_unique<tbd::JobSystem>();
+    g_engine.running = true;
+}
+
+// Takes a renderer the shell created and initialised on its surface (StartRenderer's tail on Windows).
+void GameAdoptRenderer(std::unique_ptr<tbd::Renderer> r, Api api, int w, int h) {
+    r->SetRenderScale(RenderScale());
+    g_engine.renderer = std::move(r);
+    g_engine.api = api;
+    g_engine.vpW = w;
+    g_engine.vpH = h;
+    RebuildSceneMeshes();
+    UploadUiFont(); // in-game GUI: smooth path and its font, or the classic fallback
+    tbd::Log("%s: renderer started (%d x %d)", ApiName(api), w, h);
+}
+
+// The city game on a new random map (what a project with "terrainSandbox" opens on Windows).
+void GameStartCity() { StartTerrainSandbox(); }
+
+// The drawable changed size (rotation, split view); device pixels.
+void GameResize(int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    g_engine.vpW = w;
+    g_engine.vpH = h;
+    if (g_engine.renderer) g_engine.renderer->Resize(w, h);
+}
+
+// One frame: simulation, streaming and drawing, presented by the renderer.
+void GameFrame() { RenderFrame(); }
+
+// Before the app goes away: stop the renderer and join the workers.
+void GameShutdown() {
+    g_engine.running = false;
+    g_engine.renderer.reset();
+    g_engine.jobs.reset();
 }

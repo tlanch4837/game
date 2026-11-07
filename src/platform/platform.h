@@ -59,6 +59,9 @@ uint64_t PhysicalMemoryBytes(); // installed RAM (Windows: GlobalMemoryStatusEx 
 // a * b / c rounded to the nearest integer, halves away from zero, in 64-bit (Windows: MulDiv). For DPI scaling.
 int MulDiv(int a, int b, int c);
 
+// Case-insensitive wide string compare (Windows: _wcsicmp). For file extensions.
+int WStrICmp(const wchar_t* a, const wchar_t* b);
+
 // Keys and mouse buttons the game polls. Values are the Windows virtual-key codes, so the Windows side is a plain cast.
 enum class Key : uint8_t {
     MouseLeft = 0x01, MouseRight = 0x02, MouseMiddle = 0x04,
