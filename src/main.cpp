@@ -285,28 +285,8 @@ struct SceneDraw {
 };
 
 struct Engine {
-    HINSTANCE instance = nullptr;
-    HWND window = nullptr;
-    HWND viewportWindow = nullptr; // child window owned by the current renderer
-    HWND floatWindow = nullptr;    // top-level host of the viewport while it is popped out
-    HWND toolbar = nullptr;   // top: menu strip and toolbar
-    HWND outliner = nullptr;  // right, upper: the scene's entities
-    HWND inspector = nullptr; // right, lower: the Details panel
-    HWND contentBrowser = nullptr;
-    HMENU menu = nullptr;
-    HACCEL accel = nullptr;
-    HFONT uiFont = nullptr;
     bool running = false;
     int dpi = 96;
-
-    bool viewportFloating = false;
-    RECT floatRect = {};
-    bool floatRectValid = false;
-    bool showBrowser = true;
-    int browserH = 0; // device pixels
-    bool splitDrag = false;
-    int dockW = 0;    // right dock width in device pixels; 0 = the default
-    bool dockDrag = false;
 
     Api api = Api::D3D12;
     bool validation = false;
@@ -351,7 +331,7 @@ struct Engine {
     int64_t tickFreq = {};
 
     std::string toast;
-    ULONGLONG toastUntil = 0;
+    uint64_t toastUntil = 0;
 
     Drag drag = Drag::None;
     int dragButton = -1; // the button that started it: 0 left, 1 right, 2 middle
@@ -359,6 +339,32 @@ struct Engine {
 };
 
 Engine g_engine;
+
+// The Windows editor shell's state: windows, menu, fonts, the docked / floating viewport and the panel layout.
+// Not part of the game (src/game); only main.cpp's window code should touch it.
+struct Shell {
+    HINSTANCE instance = nullptr;
+    HWND window = nullptr;
+    HWND viewportWindow = nullptr; // child window owned by the current renderer
+    HWND floatWindow = nullptr;    // top-level host of the viewport while it is popped out
+    HWND toolbar = nullptr;   // top: menu strip and toolbar
+    HWND outliner = nullptr;  // right, upper: the scene's entities
+    HWND inspector = nullptr; // right, lower: the Details panel
+    HWND contentBrowser = nullptr;
+    HMENU menu = nullptr;
+    HACCEL accel = nullptr;
+    HFONT uiFont = nullptr;
+
+    bool viewportFloating = false;
+    RECT floatRect = {};
+    bool floatRectValid = false;
+    bool showBrowser = true;
+    int browserH = 0; // device pixels
+    bool splitDrag = false;
+    int dockW = 0;    // right dock width in device pixels; 0 = the default
+    bool dockDrag = false;
+};
+Shell g_shell;
 tbd::profiler::Overlay g_profiler; // F3; does nothing while off, and never on in a TBD_SHOT / TBD_CAPTURE run
 // Draws and triangles by kind (F3's DRAWS BY KIND, TBD_DRAWCATS=1 HUD line, the 600-frame scene log): the renderer's counters
 // read before and after each part of the scene. Shadow casters come from FrameCounts' own shadow counters. UI is what the
@@ -539,23 +545,23 @@ struct Areas {
 
 Areas ComputeAreas() {
     RECT rc;
-    GetClientRect(g_engine.window, &rc);
+    GetClientRect(g_shell.window, &rc);
     Areas a = {};
     const int top = tbd::Toolbar_Height(g_engine.dpi);
     const int dockSplitW = Sx(5);
     const int minDock = Sx(220), maxDock = std::max(minDock, (int)rc.right - Sx(320) - dockSplitW);
-    const int dockW = std::clamp(g_engine.dockW > 0 ? g_engine.dockW : Sx(300), minDock, maxDock);
+    const int dockW = std::clamp(g_shell.dockW > 0 ? g_shell.dockW : Sx(300), minDock, maxDock);
     const int mainW = std::max(1, (int)rc.right - dockW - dockSplitW);
     a.toolbar = {0, 0, rc.right, top};
     a.dockSplit = {mainW, top, mainW + dockSplitW, std::max(top, (int)rc.bottom)};
     a.dock = {mainW + dockSplitW, top, mainW + dockSplitW + dockW, std::max(top, (int)rc.bottom)};
     int browserH = 0, splitH = 0;
-    if (g_engine.showBrowser && g_engine.contentBrowser) {
+    if (g_shell.showBrowser && g_shell.contentBrowser) {
         splitH = Sx(5);
         const int minH = tbd::ContentBrowser_MinHeight(g_engine.dpi);
-        browserH = std::clamp(g_engine.browserH, minH, std::max(minH, (int)rc.bottom - top - Sx(160) - splitH));
+        browserH = std::clamp(g_shell.browserH, minH, std::max(minH, (int)rc.bottom - top - Sx(160) - splitH));
     }
-    const int tabH = g_engine.viewportFloating ? 0 : tbd::FaceTab_StripHeight(g_engine.dpi);
+    const int tabH = g_shell.viewportFloating ? 0 : tbd::FaceTab_StripHeight(g_engine.dpi);
     a.tabStrip = {0, top, mainW, top + tabH};
     a.viewport = {0, top + tabH, mainW, std::max(top + tabH + 1, (int)rc.bottom - browserH - splitH)};
     tbd::character::Dock(a.viewport, g_engine.dpi); // the Character Creator workspace takes the viewport's left while open
@@ -564,12 +570,12 @@ Areas ComputeAreas() {
     return a;
 }
 
-HWND ViewportHost() { return g_engine.viewportFloating && g_engine.floatWindow ? g_engine.floatWindow : g_engine.window; }
+HWND ViewportHost() { return g_shell.viewportFloating && g_shell.floatWindow ? g_shell.floatWindow : g_shell.window; }
 
 void ViewportSize(int& w, int& h) {
-    if (g_engine.viewportFloating && g_engine.floatWindow) {
+    if (g_shell.viewportFloating && g_shell.floatWindow) {
         RECT rc;
-        GetClientRect(g_engine.floatWindow, &rc);
+        GetClientRect(g_shell.floatWindow, &rc);
         w = std::max(1, (int)rc.right);
         h = std::max(1, (int)rc.bottom);
         return;
@@ -582,29 +588,29 @@ void ViewportSize(int& w, int& h) {
 // The toolbar spans the top; the outliner and details panel are stacked on the right edge; the viewport and the
 // content drawer share the rest.
 void Layout() {
-    if (!g_engine.toolbar) return;
+    if (!g_shell.toolbar) return;
     RECT rc;
-    GetClientRect(g_engine.window, &rc);
+    GetClientRect(g_shell.window, &rc);
     const Areas a = ComputeAreas();
-    MoveWindow(g_engine.toolbar, a.toolbar.left, a.toolbar.top, a.toolbar.right - a.toolbar.left,
+    MoveWindow(g_shell.toolbar, a.toolbar.left, a.toolbar.top, a.toolbar.right - a.toolbar.left,
                a.toolbar.bottom - a.toolbar.top, TRUE);
     const int dockW = (int)(a.dock.right - a.dock.left), dockH = (int)(a.dock.bottom - a.dock.top);
     int detailsH = std::clamp(dockH * 55 / 100, tbd::Inspector_Height(g_engine.dpi), Sx(340));
-    if (g_engine.inspector) detailsH = std::max(detailsH, tbd::Inspector_DesiredHeight(g_engine.inspector)); // script rows need room
+    if (g_shell.inspector) detailsH = std::max(detailsH, tbd::Inspector_DesiredHeight(g_shell.inspector)); // script rows need room
     detailsH = std::min(detailsH, std::max(0, dockH - Sx(100))); // the outliner keeps at least 100 px
     const int outlinerH = dockH - detailsH;
-    if (g_engine.outliner) MoveWindow(g_engine.outliner, a.dock.left, a.dock.top, dockW, outlinerH, TRUE);
-    if (g_engine.inspector) MoveWindow(g_engine.inspector, a.dock.left, a.dock.top + outlinerH, dockW, detailsH, TRUE);
-    if (g_engine.contentBrowser) {
-        MoveWindow(g_engine.contentBrowser, a.browser.left, a.browser.top, a.browser.right - a.browser.left,
+    if (g_shell.outliner) MoveWindow(g_shell.outliner, a.dock.left, a.dock.top, dockW, outlinerH, TRUE);
+    if (g_shell.inspector) MoveWindow(g_shell.inspector, a.dock.left, a.dock.top + outlinerH, dockW, detailsH, TRUE);
+    if (g_shell.contentBrowser) {
+        MoveWindow(g_shell.contentBrowser, a.browser.left, a.browser.top, a.browser.right - a.browser.left,
                    a.browser.bottom - a.browser.top, TRUE);
-        ShowWindow(g_engine.contentBrowser, g_engine.showBrowser ? SW_SHOWNA : SW_HIDE);
+        ShowWindow(g_shell.contentBrowser, g_shell.showBrowser ? SW_SHOWNA : SW_HIDE);
     }
     int w, h;
     ViewportSize(w, h);
-    int vx = g_engine.viewportFloating ? 0 : (int)a.viewport.left, vy = g_engine.viewportFloating ? 0 : (int)a.viewport.top;
+    int vx = g_shell.viewportFloating ? 0 : (int)a.viewport.left, vy = g_shell.viewportFloating ? 0 : (int)a.viewport.top;
     RECT live;
-    if (!g_engine.viewportFloating && tbd::FaceTab_ViewportRect(a.viewport, &live)) { // the tab shows the live character
+    if (!g_shell.viewportFloating && tbd::FaceTab_ViewportRect(a.viewport, &live)) { // the tab shows the live character
         vx = live.left;
         vy = live.top;
         w = std::max(1, (int)(live.right - live.left));
@@ -619,14 +625,14 @@ void Layout() {
     }
     g_engine.vpW = w;
     g_engine.vpH = h;
-    if (g_engine.viewportWindow) MoveWindow(g_engine.viewportWindow, vx, vy, w, h, TRUE);
+    if (g_shell.viewportWindow) MoveWindow(g_shell.viewportWindow, vx, vy, w, h, TRUE);
     tbd::character::PlaceDock();
-    if (tbd::FaceTab_IsOpen() && !g_engine.viewportFloating)
-        tbd::FaceTab_Layout(a.tabStrip, a.viewport, g_engine.viewportWindow);
-    else if (g_engine.viewportWindow)
-        ShowWindow(g_engine.viewportWindow, SW_SHOWNA);
+    if (tbd::FaceTab_IsOpen() && !g_shell.viewportFloating)
+        tbd::FaceTab_Layout(a.tabStrip, a.viewport, g_shell.viewportWindow);
+    else if (g_shell.viewportWindow)
+        ShowWindow(g_shell.viewportWindow, SW_SHOWNA);
     if (g_engine.renderer && rc.right > 0 && rc.bottom > 0) g_engine.renderer->Resize(w, h);
-    InvalidateRect(g_engine.window, nullptr, FALSE);
+    InvalidateRect(g_shell.window, nullptr, FALSE);
 }
 
 // ----------------------------------------------------------------- renderer
@@ -637,7 +643,7 @@ void UpdateTitle() {
         const size_t cut = g_engine.scenePath.find_last_of(L"\\/");
         title += L" - " + g_engine.scenePath.substr(cut == std::wstring::npos ? 0 : cut + 1);
     }
-    SetWindowTextW(g_engine.window, title.c_str());
+    SetWindowTextW(g_shell.window, title.c_str());
 }
 
 // Imported files, parsed once per path (duplicating an entity or reloading a scene doesn't re-read the file).
@@ -1600,9 +1606,9 @@ void StopRenderer() {
     g_charSurfaces.clear(); // per-character skin maps die with the renderer too
     g_engine.terrain.ForgetMeshes();
     g_engine.renderer.reset(); // before the window it renders into
-    if (g_engine.viewportWindow) {
-        DestroyWindow(g_engine.viewportWindow);
-        g_engine.viewportWindow = nullptr;
+    if (g_shell.viewportWindow) {
+        DestroyWindow(g_shell.viewportWindow);
+        g_shell.viewportWindow = nullptr;
     }
 }
 
@@ -1680,16 +1686,16 @@ bool StartRenderer(Api api) {
     StopRenderer();
     int w, h;
     ViewportSize(w, h);
-    g_engine.viewportWindow = CreateWindowExW(0, kViewportClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, w, h,
-                                              ViewportHost(), nullptr, g_engine.instance, nullptr);
-    if (!g_engine.viewportWindow) return false;
+    g_shell.viewportWindow = CreateWindowExW(0, kViewportClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, w, h,
+                                              ViewportHost(), nullptr, g_shell.instance, nullptr);
+    if (!g_shell.viewportWindow) return false;
 
     if (api == Api::D3D12) { // the first start after a shader change compiles them all: the window stays alive and says so
         std::atomic<int> done{0}, total{0};
         std::atomic<bool> stop{false};
         std::thread compile([&] { tbd::PrecompileD3D12Shaders(done, total, stop); done = total.load() + 1; });
         wchar_t was[256] = {};
-        GetWindowTextW(g_engine.window, was, 256);
+        GetWindowTextW(g_shell.window, was, 256);
         ULONGLONG shown = 0;
         while (total == 0 || done <= total) {
             MSG msg;
@@ -1700,24 +1706,24 @@ bool StartRenderer(Api api) {
             }
             if (!g_engine.running) stop = true;
             const ULONGLONG now = tbd::platform::TickCountMs();
-            if (done > 0 && now - shown > 200 && g_engine.window) {
+            if (done > 0 && now - shown > 200 && g_shell.window) {
                 wchar_t title[320];
                 swprintf(title, 320, L"%s - compiling shaders %d of %d (first start only)", was, done.load(), total.load());
-                SetWindowTextW(g_engine.window, title);
+                SetWindowTextW(g_shell.window, title);
                 shown = now;
             }
             Sleep(10);
         }
         compile.join();
-        if (g_engine.window) SetWindowTextW(g_engine.window, was);
+        if (g_shell.window) SetWindowTextW(g_shell.window, was);
         if (!g_engine.running) return false;
     }
     std::unique_ptr<tbd::Renderer> r = api == Api::D3D12 ? tbd::CreateD3D12Renderer() : tbd::CreateVulkanRenderer();
     if (r) r->SetRenderScale(RenderScale());
-    if (!r || !r->Init(g_engine.viewportWindow, w, h, g_engine.validation)) {
+    if (!r || !r->Init(g_shell.viewportWindow, w, h, g_engine.validation)) {
         tbd::Log("%s: renderer failed to start", ApiName(api));
-        DestroyWindow(g_engine.viewportWindow);
-        g_engine.viewportWindow = nullptr;
+        DestroyWindow(g_shell.viewportWindow);
+        g_shell.viewportWindow = nullptr;
         return false;
     }
     g_engine.renderer = std::move(r);
@@ -1734,7 +1740,7 @@ void SwitchApi(Api api) {
     if (api == g_engine.api && g_engine.renderer) return;
     const Api previous = g_engine.api;
     if (!StartRenderer(api)) {
-        MessageBoxW(g_engine.window, L"That graphics API could not be started on this machine; staying on the previous one.",
+        MessageBoxW(g_shell.window, L"That graphics API could not be started on this machine; staying on the previous one.",
                     kWindowTitle, MB_ICONWARNING);
         StartRenderer(previous);
     }
@@ -1744,54 +1750,54 @@ void SwitchApi(Api api) {
 
 bool CreateFloatWindow() {
     RECT main;
-    GetWindowRect(g_engine.window, &main);
+    GetWindowRect(g_shell.window, &main);
     int x = main.left + Sx(60), y = main.top + Sx(60), w = Sx(1100), h = Sx(680);
-    if (g_engine.floatRectValid) {
-        x = g_engine.floatRect.left;
-        y = g_engine.floatRect.top;
-        w = g_engine.floatRect.right - g_engine.floatRect.left;
-        h = g_engine.floatRect.bottom - g_engine.floatRect.top;
+    if (g_shell.floatRectValid) {
+        x = g_shell.floatRect.left;
+        y = g_shell.floatRect.top;
+        w = g_shell.floatRect.right - g_shell.floatRect.left;
+        h = g_shell.floatRect.bottom - g_shell.floatRect.top;
     }
     // Owned by the main window, so it stays in front of it and minimizes with it.
-    g_engine.floatWindow = CreateWindowExW(0, kFloatClass, L"Viewport - TBD Engine  (F4 docks it back)",
-                                           WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, w, h, g_engine.window, nullptr,
-                                           g_engine.instance, nullptr);
-    return g_engine.floatWindow != nullptr;
+    g_shell.floatWindow = CreateWindowExW(0, kFloatClass, L"Viewport - TBD Engine  (F4 docks it back)",
+                                           WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, w, h, g_shell.window, nullptr,
+                                           g_shell.instance, nullptr);
+    return g_shell.floatWindow != nullptr;
 }
 
 void DestroyFloatWindow() {
-    if (!g_engine.floatWindow) return;
-    GetWindowRect(g_engine.floatWindow, &g_engine.floatRect);
-    g_engine.floatRectValid = true;
-    DestroyWindow(g_engine.floatWindow); // its WM_DESTROY clears g_engine.floatWindow
+    if (!g_shell.floatWindow) return;
+    GetWindowRect(g_shell.floatWindow, &g_shell.floatRect);
+    g_shell.floatRectValid = true;
+    DestroyWindow(g_shell.floatWindow); // its WM_DESTROY clears g_shell.floatWindow
 }
 
 void SetViewportFloating(bool floating) {
-    if (floating == g_engine.viewportFloating) return;
+    if (floating == g_shell.viewportFloating) return;
     StopRenderer(); // takes the viewport window with it
     if (floating) {
         if (!CreateFloatWindow()) {
             StartRenderer(g_engine.api);
             return;
         }
-        g_engine.viewportFloating = true;
-        ShowWindow(g_engine.floatWindow, SW_SHOW);
+        g_shell.viewportFloating = true;
+        ShowWindow(g_shell.floatWindow, SW_SHOW);
     } else {
-        g_engine.viewportFloating = false;
+        g_shell.viewportFloating = false;
         DestroyFloatWindow();
     }
     Layout();
     if (!StartRenderer(g_engine.api)) { // could not rebuild in the new place: go back
-        if (g_engine.viewportFloating) {
-            g_engine.viewportFloating = false;
+        if (g_shell.viewportFloating) {
+            g_shell.viewportFloating = false;
             DestroyFloatWindow();
         }
         Layout();
         StartRenderer(g_engine.api);
     }
     Layout();
-    if (g_engine.viewportWindow) SetFocus(g_engine.viewportWindow);
-    InvalidateRect(g_engine.window, nullptr, TRUE);
+    if (g_shell.viewportWindow) SetFocus(g_shell.viewportWindow);
+    InvalidateRect(g_shell.window, nullptr, TRUE);
 }
 
 // ---------------------------------------------------------------- inspector
@@ -1839,7 +1845,7 @@ void OnInspectorScriptEdit(const tbd::InspectorScriptEdit& e, void*) {
         if (files.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No scripts in the project's Scripts folder");
         POINT pt;
         GetCursorPos(&pt);
-        const int pick = (int)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, g_engine.window, nullptr);
+        const int pick = (int)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, g_shell.window, nullptr);
         DestroyMenu(menu);
         if (pick >= 1 && pick <= (int)files.size()) sel->scripts.push_back({files[pick - 1], ""});
         return;
@@ -1904,14 +1910,14 @@ void UpdateInspectorScripts(const tbd::Entity* sel) {
             list.push_back(std::move(out));
         }
     }
-    tbd::Inspector_ShowScripts(g_engine.inspector, sel != nullptr, list);
+    tbd::Inspector_ShowScripts(g_shell.inspector, sel != nullptr, list);
     static int lastDesired = 0;
-    const int desired = tbd::Inspector_DesiredHeight(g_engine.inspector);
+    const int desired = tbd::Inspector_DesiredHeight(g_shell.inspector);
     if (desired != lastDesired) { lastDesired = desired; Layout(); } // the panel grows to show every script row
 }
 
 void UpdateInspector() {
-    if (!g_engine.inspector) return;
+    if (!g_shell.inspector) return;
     const tbd::Entity* sel = g_engine.scene.Selected();
     float values[9] = {};
     if (sel) {
@@ -1920,7 +1926,7 @@ void UpdateInspector() {
                             euler.z, sel->scale.x, sel->scale.y, sel->scale.z};
         std::copy(v, v + 9, values);
     }
-    tbd::Inspector_Show(g_engine.inspector, sel ? sel->name.c_str() : nullptr, values);
+    tbd::Inspector_Show(g_shell.inspector, sel ? sel->name.c_str() : nullptr, values);
     UpdateInspectorScripts(sel);
 }
 
@@ -1938,7 +1944,7 @@ bool PickSceneFile(bool save, std::wstring& path) {
     const std::wstring dir = ScenesFolder();
     OPENFILENAMEW ofn = {};
     ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_engine.window;
+    ofn.hwndOwner = g_shell.window;
     ofn.lpstrFilter = L"TBD scene (*.tbdscene)\0*.tbdscene\0All files\0*.*\0";
     ofn.lpstrFile = buf;
     ofn.nMaxFile = tbd::platform::kMaxPath;
@@ -1993,7 +1999,7 @@ bool SaveScene(bool saveAs) {
     }
     g_engine.scenePath = path;
     UpdateTitle();
-    if (g_engine.contentBrowser) tbd::ContentBrowser_Refresh(g_engine.contentBrowser);
+    if (g_shell.contentBrowser) tbd::ContentBrowser_Refresh(g_shell.contentBrowser);
     Toast("SAVED " + ToastName(path));
     return true;
 }
@@ -2047,10 +2053,10 @@ void DeleteSelected() {
 
 // ---- Character creator (src/character/creator.h): what the panel may touch. Made once, on the first frame.
 void CharacterCreatorHost() {
-    if (tbd::character::HostSet() || !g_engine.window) return;
+    if (tbd::character::HostSet() || !g_shell.window) return;
     tbd::character::Host h;
-    h.instance = g_engine.instance;
-    h.parent = g_engine.window;
+    h.instance = g_shell.instance;
+    h.parent = g_shell.window;
     h.entityCount = [] { return (int)g_engine.scene.entities.size(); };
     h.selectedIndex = [] { return g_engine.scene.selected < (int)g_engine.scene.entities.size() ? g_engine.scene.selected : -1; };
     h.entityName = [](int i) { return i >= 0 && i < (int)g_engine.scene.entities.size() ? g_engine.scene.entities[(size_t)i].name : std::string(); };
@@ -2073,7 +2079,7 @@ void CharacterCreatorHost() {
         return ok;
     };
     h.sceneReady = [] { return !SceneLoadActive(); };
-    h.viewportFloating = [] { return g_engine.viewportFloating; }; // Character Creator: the 2D view fills the freed space
+    h.viewportFloating = [] { return g_shell.viewportFloating; }; // Character Creator: the 2D view fills the freed space
     h.relayout = [] { Layout(); };
     // The same file imported again (its hair style changed on disk): drop every cache keyed by its path, then rebuild the mesh.
     h.reloadEntity = [](int i) {
@@ -2173,8 +2179,8 @@ void OnToolAction(tbd::ToolId id) {
             }
         }
         tbd::FaceTabHost host;
-        host.instance = g_engine.instance;
-        host.parent = g_engine.window;
+        host.instance = g_shell.instance;
+        host.parent = g_shell.window;
         host.live = &g_engine.faceDriver.live;
         host.relayout = [] { Layout(); };
         host.selectedIndex = [] { return g_engine.scene.selected < (int)g_engine.scene.entities.size() ? g_engine.scene.selected : -1; };
@@ -2250,7 +2256,7 @@ void OnToolAction(tbd::ToolId id) {
     }
     wchar_t buf[tbd::platform::kMaxPath] = {};
     OPENFILENAMEW ofn{sizeof(ofn)};
-    ofn.hwndOwner = g_engine.window;
+    ofn.hwndOwner = g_shell.window;
     ofn.lpstrFilter = L"Face clip (*.tbdface)\0*.tbdface\0";
     ofn.lpstrFile = buf;
     ofn.nMaxFile = tbd::platform::kMaxPath;
@@ -2584,7 +2590,7 @@ void FaceShotStep(tbd::Renderer& r) {
         if (fs.posed) tbd::Log("face shot: Pose %.2f ms, mesh upload %.2f ms per pose, %d poses", fs.poseMs / fs.posed, fs.uploadMs / fs.posed, fs.posed);
         r.SetFrameCapture(false);
         fs.active = false;
-        DestroyWindow(g_engine.window);
+        DestroyWindow(g_shell.window);
         return;
     }
     const tbd::Entity& e = g_engine.scene.entities[fs.target];
@@ -4796,7 +4802,7 @@ bool HandleKey(int key, bool repeat) {
         return true;
     }
     if (g_engine.tools.ActivateByKey((wchar_t)key)) { // Q W E R, 1 2 3, H O Z
-        tbd::Toolbar_Refresh(g_engine.toolbar);
+        tbd::Toolbar_Refresh(g_shell.toolbar);
         return true;
     }
     return false;
@@ -5080,19 +5086,19 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 // ------------------------------------------------------------------- windows
 
 void UpdateMenu() {
-    if (!g_engine.menu) return;
-    auto check = [](UINT id, bool on) { CheckMenuItem(g_engine.menu, id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED)); };
-    check(IDM_POPOUT, g_engine.viewportFloating);
-    check(IDM_BROWSER, g_engine.showBrowser);
+    if (!g_shell.menu) return;
+    auto check = [](UINT id, bool on) { CheckMenuItem(g_shell.menu, id, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED)); };
+    check(IDM_POPOUT, g_shell.viewportFloating);
+    check(IDM_BROWSER, g_shell.showBrowser);
     check(IDM_PROFILER, g_profiler.Enabled());
     check(IDM_TERRAIN, g_engine.terrain.params.enabled);
     check(IDM_SUN_SKY, g_engine.sun.showSky);
     check(IDM_SUN_ANIMATE, g_engine.sun.animate);
     check(IDM_SUN_SHADOWS, g_engine.sun.shadows);
-    CheckMenuRadioItem(g_engine.menu, IDM_GFX_FULL, IDM_GFX_UNLIT, IDM_GFX_FULL + g_gfxQuality, MF_BYCOMMAND);
-    CheckMenuRadioItem(g_engine.menu, IDM_D3D12, IDM_VULKAN, g_engine.api == Api::D3D12 ? IDM_D3D12 : IDM_VULKAN, MF_BYCOMMAND);
+    CheckMenuRadioItem(g_shell.menu, IDM_GFX_FULL, IDM_GFX_UNLIT, IDM_GFX_FULL + g_gfxQuality, MF_BYCOMMAND);
+    CheckMenuRadioItem(g_shell.menu, IDM_D3D12, IDM_VULKAN, g_engine.api == Api::D3D12 ? IDM_D3D12 : IDM_VULKAN, MF_BYCOMMAND);
     const int radius = g_engine.terrain.params.radius;
-    CheckMenuRadioItem(g_engine.menu, IDM_RADIUS_NEAR, IDM_RADIUS_FAR,
+    CheckMenuRadioItem(g_shell.menu, IDM_RADIUS_NEAR, IDM_RADIUS_FAR,
                        radius <= 5 ? IDM_RADIUS_NEAR : (radius <= 8 ? IDM_RADIUS_MED : IDM_RADIUS_FAR), MF_BYCOMMAND);
 }
 
@@ -5187,12 +5193,12 @@ void OnCommand(UINT id) {
     }
     case IDM_SAVE: SaveScene(false); break;
     case IDM_SAVEAS: SaveScene(true); break;
-    case IDM_EXIT: DestroyWindow(g_engine.window); break;
+    case IDM_EXIT: DestroyWindow(g_shell.window); break;
     case IDM_DUPLICATE: DuplicateSelected(); break;
     case IDM_DELETE: DeleteSelected(); break;
-    case IDM_POPOUT: SetViewportFloating(!g_engine.viewportFloating); break;
+    case IDM_POPOUT: SetViewportFloating(!g_shell.viewportFloating); break;
     case IDM_BROWSER:
-        g_engine.showBrowser = !g_engine.showBrowser;
+        g_shell.showBrowser = !g_shell.showBrowser;
         Layout();
         break;
     case IDM_PROFILER: g_profiler.Toggle(); break;
@@ -5227,7 +5233,7 @@ void OnCommand(UINT id) {
     case IDM_GFX_CYCLE: g_gfxQuality = (g_gfxQuality + 1) % 3; break;
     case IDM_BRIGHT_DN: g_brightness = std::max(0.4f, g_brightness - 0.15f); break;
     case IDM_BRIGHT_UP: g_brightness = std::min(3.0f, g_brightness + 0.15f); break;
-    case IDM_BRIGHT_SLIDER: ShowBrightnessSlider(g_engine.window); break;
+    case IDM_BRIGHT_SLIDER: ShowBrightnessSlider(g_shell.window); break;
     }
 }
 
@@ -5284,7 +5290,7 @@ void OnTransport(int action, void*) {
     switch (action) {
     case 0:
         CompleteSceneLoad();
-        if (!g_play.active && g_engine.viewportWindow && g_play.Begin(g_engine.viewportWindow, g_engine.camera)) {
+        if (!g_play.active && g_shell.viewportWindow && g_play.Begin(g_shell.viewportWindow, g_engine.camera)) {
             if (g_engine.drag != Drag::None) { // a drag in progress ends; Begin has taken the mouse capture
                 g_engine.drag = Drag::None;
                 g_engine.gizmo.End();
@@ -5328,8 +5334,8 @@ void OnTransport(int action, void*) {
 }
 
 int TransportStateOf(void*) { return (g_engine.sun.animate || g_play.active) ? 1 : (g_engine.playStartHour >= 0.0f ? 2 : 0); }
-bool BrowserShown(void*) { return g_engine.showBrowser; }
-bool ViewportIsFloating(void*) { return g_engine.viewportFloating; }
+bool BrowserShown(void*) { return g_shell.showBrowser; }
+bool ViewportIsFloating(void*) { return g_shell.viewportFloating; }
 void BeforeMenu(void*) { UpdateMenu(); } // the menus live outside any window now, so refresh their check marks by hand
 
 int OutlinerCount(void*) { return (int)g_engine.scene.entities.size(); }
@@ -5352,7 +5358,7 @@ void OnOutlinerCommand(tbd::OutlinerCommand command, void*) {
 }
 
 bool OverSplitter(int x, int y) {
-    if (!g_engine.showBrowser) return false;
+    if (!g_shell.showBrowser) return false;
     RECT s = ComputeAreas().splitter;
     InflateRect(&s, 0, Sx(2));
     const POINT pt = {x, y};
@@ -5375,17 +5381,17 @@ void PaintMainWindow(HWND hwnd) {
         FillRect(dc, &a.dockSplit, b);
         DeleteObject(b);
     }
-    if (g_engine.showBrowser && g_engine.contentBrowser) {
+    if (g_shell.showBrowser && g_shell.contentBrowser) {
         HBRUSH b = CreateSolidBrush(tbd::theme::kLine);
         FillRect(dc, &a.splitter, b);
         DeleteObject(b);
     }
-    if (g_engine.viewportFloating) { // placeholder where the viewport used to be
+    if (g_shell.viewportFloating) { // placeholder where the viewport used to be
         HBRUSH b = CreateSolidBrush(kClearColor);
         FillRect(dc, &a.viewport, b);
         DeleteObject(b);
         SetBkMode(dc, TRANSPARENT);
-        HGDIOBJ old = SelectObject(dc, g_engine.uiFont);
+        HGDIOBJ old = SelectObject(dc, g_shell.uiFont);
         SetTextColor(dc, tbd::theme::kMuted);
         RECT text = a.viewport;
         DrawTextW(dc, L"The viewport is in its own window.\n\nClick here or press F4 to dock it back.", -1, &text,
@@ -5419,12 +5425,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_LBUTTONDOWN: {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
         if (OverSplitter(x, y)) {
-            g_engine.splitDrag = true;
+            g_shell.splitDrag = true;
             SetCapture(hwnd);
         } else if (OverDockSplit(x, y)) {
-            g_engine.dockDrag = true;
+            g_shell.dockDrag = true;
             SetCapture(hwnd);
-        } else if (g_engine.viewportFloating) {
+        } else if (g_shell.viewportFloating) {
             const RECT v = ComputeAreas().viewport;
             const POINT pt = {x, y};
             if (PtInRect(&v, pt)) SetViewportFloating(false);
@@ -5432,41 +5438,41 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_MOUSEMOVE:
-        if (g_engine.splitDrag) {
+        if (g_shell.splitDrag) {
             RECT rc;
             GetClientRect(hwnd, &rc);
             const int minH = tbd::ContentBrowser_MinHeight(g_engine.dpi);
             const int maxH = std::max(minH, (int)rc.bottom - tbd::Toolbar_Height(g_engine.dpi) - Sx(160) - Sx(5));
-            g_engine.browserH = std::clamp((int)rc.bottom - GET_Y_LPARAM(lparam) - Sx(3), minH, maxH); // kept in range, so no dead zone past the limits
+            g_shell.browserH = std::clamp((int)rc.bottom - GET_Y_LPARAM(lparam) - Sx(3), minH, maxH); // kept in range, so no dead zone past the limits
             Layout();
-        } else if (g_engine.dockDrag) {
+        } else if (g_shell.dockDrag) {
             RECT rc;
             GetClientRect(hwnd, &rc);
-            g_engine.dockW = (int)rc.right - GET_X_LPARAM(lparam) - Sx(2); // ComputeAreas clamps it
+            g_shell.dockW = (int)rc.right - GET_X_LPARAM(lparam) - Sx(2); // ComputeAreas clamps it
             Layout();
         }
         return 0;
     case WM_LBUTTONUP:
-        if (g_engine.splitDrag || g_engine.dockDrag) {
-            g_engine.splitDrag = false;
-            g_engine.dockDrag = false;
+        if (g_shell.splitDrag || g_shell.dockDrag) {
+            g_shell.splitDrag = false;
+            g_shell.dockDrag = false;
             ReleaseCapture();
         }
         return 0;
     case WM_CAPTURECHANGED:
-        g_engine.splitDrag = false;
-        g_engine.dockDrag = false;
+        g_shell.splitDrag = false;
+        g_shell.dockDrag = false;
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
             POINT pt;
             GetCursorPos(&pt);
             ScreenToClient(hwnd, &pt);
-            if (g_engine.splitDrag || OverSplitter(pt.x, pt.y)) {
+            if (g_shell.splitDrag || OverSplitter(pt.x, pt.y)) {
                 SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
                 return TRUE;
             }
-            if (g_engine.dockDrag || OverDockSplit(pt.x, pt.y)) {
+            if (g_shell.dockDrag || OverDockSplit(pt.x, pt.y)) {
                 SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
                 return TRUE;
             }
@@ -5480,7 +5486,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
     case WM_SIZE:
         Layout();
-        if (g_engine.toolbar) RenderFrame(); // keeps the view alive while the window is dragged
+        if (g_shell.toolbar) RenderFrame(); // keeps the view alive while the window is dragged
         return 0;
     case WM_DESTROY:
         g_engine.running = false;
@@ -5508,16 +5514,16 @@ LRESULT CALLBACK FloatProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_ERASEBKGND:
         return 1;
     case WM_SIZE:
-        if (wparam != SIZE_MINIMIZED && g_engine.viewportFloating) {
+        if (wparam != SIZE_MINIMIZED && g_shell.viewportFloating) {
             Layout();
             RenderFrame();
         }
         return 0;
     case WM_SETFOCUS: // keys go to the viewport window inside
-        if (g_engine.viewportWindow) SetFocus(g_engine.viewportWindow);
+        if (g_shell.viewportWindow) SetFocus(g_shell.viewportWindow);
         return 0;
     case WM_DESTROY:
-        if (hwnd == g_engine.floatWindow) g_engine.floatWindow = nullptr;
+        if (hwnd == g_shell.floatWindow) g_shell.floatWindow = nullptr;
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -5568,11 +5574,11 @@ const TbdGameHost& GameHost() {
 }
 
 bool Engine_Init(HINSTANCE instance, int show, const std::wstring& title) {
-    g_engine.instance = instance;
+    g_shell.instance = instance;
     g_engine.titleBase = title;
     g_engine.tickFreq = tbd::platform::TickFrequency();
     g_engine.jobs = std::make_unique<tbd::JobSystem>(); // every hardware thread but one (the main thread)
-    g_engine.uiFont = CreateFontW(-Sx(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+    g_shell.uiFont = CreateFontW(-Sx(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                   CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
 
     WNDCLASSEXW wc = {};
@@ -5594,19 +5600,19 @@ bool Engine_Init(HINSTANCE instance, int show, const std::wstring& title) {
     // Size the outer frame so the client area is exactly kStartWidth x kStartHeight.
     RECT rect = {0, 0, kStartWidth, kStartHeight};
     const DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
-    g_engine.menu = BuildMenu(); // not attached to the window: the toolbar draws its popups as the menu strip
+    g_shell.menu = BuildMenu(); // not attached to the window: the toolbar draws its popups as the menu strip
     AdjustWindowRect(&rect, style, FALSE);
 
-    g_engine.window = CreateWindowExW(0, kWindowClass, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT,
+    g_shell.window = CreateWindowExW(0, kWindowClass, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT,
                                       rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance,
                                       nullptr);
-    if (!g_engine.window) return false;
-    g_engine.accel = BuildAccelerators();
+    if (!g_shell.window) return false;
+    g_shell.accel = BuildAccelerators();
 
-    g_engine.browserH = tbd::ContentBrowser_DefaultHeight(g_engine.dpi);
+    g_shell.browserH = tbd::ContentBrowser_DefaultHeight(g_engine.dpi);
     g_engine.tools.onAction = OnToolAction;
     tbd::ToolbarHost bar;
-    bar.menu = g_engine.menu;
+    bar.menu = g_shell.menu;
     bar.tools = &g_engine.tools;
     bar.cmdSave = IDM_SAVE;
     bar.cmdFrame = IDM_FRAME;
@@ -5617,7 +5623,7 @@ bool Engine_Init(HINSTANCE instance, int show, const std::wstring& title) {
     bar.transportState = TransportStateOf;
     bar.browserShown = BrowserShown;
     bar.viewportFloating = ViewportIsFloating;
-    g_engine.toolbar = tbd::Toolbar_Create(g_engine.window, instance, g_engine.dpi, bar);
+    g_shell.toolbar = tbd::Toolbar_Create(g_shell.window, instance, g_engine.dpi, bar);
     tbd::OutlinerSource source;
     source.count = OutlinerCount;
     source.name = OutlinerName;
@@ -5625,20 +5631,20 @@ bool Engine_Init(HINSTANCE instance, int show, const std::wstring& title) {
     source.selected = OutlinerSelected;
     source.select = OutlinerSelect;
     source.command = OnOutlinerCommand;
-    g_engine.outliner = tbd::Outliner_Create(g_engine.window, instance, g_engine.dpi, source);
-    g_engine.inspector = tbd::Inspector_Create(g_engine.window, instance, g_engine.dpi, OnInspectorEdit, nullptr);
-    if (g_engine.inspector) tbd::Inspector_SetScriptHandler(g_engine.inspector, OnInspectorScriptEdit, nullptr);
+    g_shell.outliner = tbd::Outliner_Create(g_shell.window, instance, g_engine.dpi, source);
+    g_shell.inspector = tbd::Inspector_Create(g_shell.window, instance, g_engine.dpi, OnInspectorEdit, nullptr);
+    if (g_shell.inspector) tbd::Inspector_SetScriptHandler(g_shell.inspector, OnInspectorScriptEdit, nullptr);
     tbd::ContentBrowserCallbacks callbacks;
     callbacks.openAsset = OnOpenAsset;
-    g_engine.contentBrowser =
-        tbd::ContentBrowser_Create(g_engine.window, instance, g_engine.dpi, g_engine.assetsRoot, callbacks);
+    g_shell.contentBrowser =
+        tbd::ContentBrowser_Create(g_shell.window, instance, g_engine.dpi, g_engine.assetsRoot, callbacks);
     g_engine.running = true;
     Layout();
 
     // Requested API first, the other one as a fallback.
     const Api first = g_engine.api, second = first == Api::D3D12 ? Api::Vulkan : Api::D3D12;
-    ShowWindow(g_engine.window, show); // before the renderer: a first D3D12 start compiles shaders for a while
-    UpdateWindow(g_engine.window);
+    ShowWindow(g_shell.window, show); // before the renderer: a first D3D12 start compiles shaders for a while
+    UpdateWindow(g_shell.window);
     if (!StartRenderer(first) && (!g_engine.running || !StartRenderer(second))) return false;
     Layout(); // the renderer missed the size the window took when shown
     g_hotShaders.Init();
@@ -5657,13 +5663,13 @@ void Engine_Run() {
             if (msg.message == WM_QUIT) g_engine.running = false;
             if (scene_undo::Key(msg)) continue; // Ctrl+Z / Ctrl+Y anywhere in the engine (not in a text field)
             // During Play Ctrl is "down", so Ctrl+S / Ctrl+D / Ctrl+N and F1 / F2 / F4 must not fire as editor shortcuts.
-            if (!g_play.active && g_engine.window && g_engine.accel && TranslateAcceleratorW(g_engine.window, g_engine.accel, &msg)) continue;
+            if (!g_play.active && g_shell.window && g_shell.accel && TranslateAcceleratorW(g_shell.window, g_shell.accel, &msg)) continue;
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         if (!g_engine.running) break;
         const HWND host = ViewportHost();
-        if (IsIconic(g_engine.window) || (host && IsIconic(host))) {
+        if (IsIconic(g_shell.window) || (host && IsIconic(host))) {
             Sleep(50);
             continue;
         }
@@ -5708,17 +5714,17 @@ void Engine_Shutdown() {
     tbd::audio::Stop();
     StopRenderer();
     g_engine.jobs.reset(); // joins the workers; nothing is queued by now
-    if (g_engine.floatWindow) DestroyWindow(g_engine.floatWindow);
-    if (g_engine.window) {
-        DestroyWindow(g_engine.window);
-        g_engine.window = nullptr;
+    if (g_shell.floatWindow) DestroyWindow(g_shell.floatWindow);
+    if (g_shell.window) {
+        DestroyWindow(g_shell.window);
+        g_shell.window = nullptr;
     }
-    if (g_engine.accel) DestroyAcceleratorTable(g_engine.accel);
-    if (g_engine.menu) DestroyMenu(g_engine.menu);
-    if (g_engine.uiFont) DeleteObject(g_engine.uiFont);
-    UnregisterClassW(kViewportClass, g_engine.instance);
-    UnregisterClassW(kFloatClass, g_engine.instance);
-    UnregisterClassW(kWindowClass, g_engine.instance);
+    if (g_shell.accel) DestroyAcceleratorTable(g_shell.accel);
+    if (g_shell.menu) DestroyMenu(g_shell.menu);
+    if (g_shell.uiFont) DeleteObject(g_shell.uiFont);
+    UnregisterClassW(kViewportClass, g_shell.instance);
+    UnregisterClassW(kFloatClass, g_shell.instance);
+    UnregisterClassW(kWindowClass, g_shell.instance);
 }
 
 // Command line: [--api=d3d12|vulkan] [--validate] [--scene "<file>"] [--face-shot "<clip>" "<folder>"] ["<project folder>"]. The project manager passes
@@ -5786,7 +5792,7 @@ std::wstring AssetsFolderFor(const std::wstring& projectFolder) {
 } // namespace
 
 // ---- tbd::shell (src/game/shell.h), Windows implementation
-void tbd::shell::Alert(const std::wstring& text) { MessageBoxW(g_engine.window, text.c_str(), kWindowTitle, MB_ICONWARNING); }
+void tbd::shell::Alert(const std::wstring& text) { MessageBoxW(g_shell.window, text.c_str(), kWindowTitle, MB_ICONWARNING); }
 bool tbd::shell::AppHasFocus() {
     DWORD pid = 0;
     HWND fg = GetForegroundWindow();
@@ -5836,7 +5842,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdline, int show) {
         g_shot.video = !args.videoPath.empty();
         g_shot.videoPath = args.videoPath;
         if (!args.shotDir.empty()) std::filesystem::create_directories(args.shotDir);
-        if (g_shot.video) SetWindowPos(g_engine.window, nullptr, 0, 0, 1800, 1100, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (g_shot.video) SetWindowPos(g_shell.window, nullptr, 0, 0, 1800, 1100, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         FaceShotStart();
     }
     Engine_Run();

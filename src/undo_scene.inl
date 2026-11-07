@@ -145,9 +145,9 @@ inline bool Key(const MSG& msg) {
     S().lastLabel.clear();
     if (ok) S().base = g_engine.scene.entities; // the step restored the scene (or a tool's state); nothing new to record
     RECT area = {};
-    const HWND host = g_engine.viewportWindow ? g_engine.viewportWindow : g_engine.window;
+    const HWND host = g_shell.viewportWindow ? g_shell.viewportWindow : g_shell.window;
     GetWindowRect(host, &area);
-    ::tbd::undo::Toast(g_engine.window, area, ok ? std::string(undo ? "Undid " : "Redid ") + label : std::string(undo ? "Nothing to undo" : "Nothing to redo"));
+    ::tbd::undo::Toast(g_shell.window, area, ok ? std::string(undo ? "Undid " : "Redid ") + label : std::string(undo ? "Nothing to undo" : "Nothing to redo"));
     return true;
 }
 
