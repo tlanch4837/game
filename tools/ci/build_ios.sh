@@ -33,7 +33,7 @@ xcodebuild -project "$build/cityengine.xcodeproj" -scheme cityengine \
 
 app="$build/products/cityengine.app"
 test -x "$app/cityengine"
-xcrun lipo -verify_arch arm64 "$app/cityengine"
+xcrun lipo "$app/cityengine" -verify_arch arm64
 plutil -lint "$app/Info.plist"
 test "$(plutil -extract MinimumOSVersion raw -o - "$app/Info.plist")" = 16.0
 test -s "$app/default.metallib"
