@@ -43,9 +43,45 @@ set(TBD_SOURCES
     src/render/renderer_metal.mm
     src/platform/apple/log_apple.cpp
     src/platform/ios/main_ios.mm
+    src/platform/platform_ios.mm
 )
-# The rest of the engine (city, ai, physics, script, gui, ...) joins as each part is made platform-free; the Win32 shell
-# (src/main.cpp) and the D3D12 / Vulkan backends stay Windows-only.
+# The game without the editor: game_host.cpp includes the game module (src/game/game_core.inl, which includes the city
+# .inl files). Linked on Windows by tools/probe_game/link_game.bat with the same file list. The Win32 shell
+# (src/main.cpp), the editor panels, face mocap, the Character Creator and the D3D12 / Vulkan backends stay Windows-only.
+set(TBD_GAME_SOURCES
+    src/game/game_host.cpp
+    src/physics.cpp
+    src/ragdoll.cpp
+    src/ai/nav_mesh.cpp
+    src/ai/npc_system.cpp
+    src/script/luau_host.cpp
+    src/script/api_registry.cpp
+    src/script/api_builtin.cpp
+    src/script/script_remote.cpp
+    src/audio.cpp
+)
+# miniaudio's iOS backend uses AVAudioSession: compile its translation unit as Objective-C++.
+set_source_files_properties(src/audio.cpp PROPERTIES LANGUAGE OBJCXX COMPILE_OPTIONS "-fobjc-arc")
+
+# ---- Third-party code, compiled from source as build.bat does (no changes to it).
+set(TBD_JOLT ${CMAKE_CURRENT_SOURCE_DIR}/third_party/JoltPhysics)
+set(TBD_RECAST ${CMAKE_CURRENT_SOURCE_DIR}/third_party/recastnavigation)
+set(TBD_LUAU ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau)
+file(GLOB_RECURSE TBD_JOLT_SOURCES CONFIGURE_DEPENDS ${TBD_JOLT}/Jolt/*.cpp)
+file(GLOB TBD_RECAST_SOURCES CONFIGURE_DEPENDS ${TBD_RECAST}/Recast/Source/*.cpp ${TBD_RECAST}/Detour/Source/*.cpp ${TBD_RECAST}/DetourCrowd/Source/*.cpp)
+file(GLOB_RECURSE TBD_LUAU_SOURCES CONFIGURE_DEPENDS ${TBD_LUAU}/VM/src/*.cpp ${TBD_LUAU}/Compiler/src/*.cpp ${TBD_LUAU}/Ast/src/*.cpp
+     ${TBD_LUAU}/Bytecode/src/*.cpp ${TBD_LUAU}/Config/src/*.cpp ${TBD_LUAU}/Common/src/*.cpp)
+add_library(tbd_jolt STATIC ${TBD_JOLT_SOURCES})
+target_include_directories(tbd_jolt PUBLIC ${TBD_JOLT})
+add_library(tbd_recast STATIC ${TBD_RECAST_SOURCES})
+target_include_directories(tbd_recast PUBLIC ${TBD_RECAST}/Recast/Include ${TBD_RECAST}/Detour/Include ${TBD_RECAST}/DetourCrowd/Include)
+add_library(tbd_luau STATIC ${TBD_LUAU_SOURCES})
+target_include_directories(tbd_luau PUBLIC ${TBD_LUAU}/VM/include ${TBD_LUAU}/Compiler/include ${TBD_LUAU}/Ast/include
+    ${TBD_LUAU}/Common/include ${TBD_LUAU}/Bytecode/include ${TBD_LUAU}/Config/include
+    PRIVATE ${TBD_LUAU}/VM/src ${TBD_LUAU}/Compiler/src)
+foreach(lib tbd_jolt tbd_recast tbd_luau)
+    target_compile_options(${lib} PRIVATE -w) # third-party warnings are not ours to fix
+endforeach()
 
 # ---- Metal shaders: one .air per .metal, linked into default.metallib.
 file(GLOB TBD_MSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/msl/*.metal")
@@ -71,13 +107,15 @@ set_source_files_properties("${TBD_METALLIB}" PROPERTIES GENERATED TRUE MACOSX_P
 # These are fallback copies. Xcode must not infer a Metal source compile step from their extension.
 set_source_files_properties(${TBD_MSL} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/msl XCODE_EXPLICIT_FILE_TYPE text)
 
-add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} "${TBD_METALLIB}" ${TBD_MSL})
+add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} "${TBD_METALLIB}" ${TBD_MSL})
 target_include_directories(cityengine PRIVATE src third_party/metal-cpp)
 target_compile_definitions(cityengine PRIVATE TBD_HAVE_METAL=1)
 # metal-cpp manages its own references: no ARC in the Metal backend; the UIKit shell uses ARC.
 set_source_files_properties(src/render/renderer_metal.mm PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
-set_source_files_properties(src/platform/ios/main_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-target_link_libraries(cityengine PRIVATE "-framework Foundation" "-framework CoreGraphics" "-framework UIKit" "-framework QuartzCore" "-framework Metal")
+set_source_files_properties(src/platform/ios/main_ios.mm src/platform/platform_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+target_link_libraries(cityengine PRIVATE tbd_jolt tbd_recast tbd_luau
+    "-framework Foundation" "-framework CoreGraphics" "-framework UIKit" "-framework QuartzCore" "-framework Metal"
+    "-framework ImageIO" "-framework AudioToolbox" "-framework AVFoundation" "-framework CoreAudio")
 
 set_target_properties(cityengine PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/src/platform/ios/Info.plist.in
