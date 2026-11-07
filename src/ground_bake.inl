@@ -245,7 +245,7 @@ inline void Tick() { // main thread, every frame
         gNormal = g_engine.renderer->CreateTextureNoWait(ready->normal->levels, ready->normal->dims);
         gSurface = g_engine.renderer->CreateTextureNoWait(ready->surface->levels, ready->surface->dims);
     }
-    static const bool off = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_NODISPLACE", b, 8) > 0 && b[0] == '1'; }();
+    static const bool off = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_NODISPLACE", b, 8) > 0 && b[0] == '1'; }();
     if (off || !bake) return;
     const tbd::Vec3 focus = g_engine.camera.Eye();
     const float snap = 2.0f * kGridHalf / (kGrid - 1) * 10.0f;
@@ -267,7 +267,7 @@ inline void Tick() { // main thread, every frame
 
 // Captures wait for the bake and first grid, so they show the finished ground.
 inline bool Settled() {
-    static const bool off = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_NODISPLACE", b, 8) > 0 && b[0] == '1'; }();
+    static const bool off = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_NODISPLACE", b, 8) > 0 && b[0] == '1'; }();
     if (GroundTextures().empty() || !gStarted) return GroundTextures().empty();
     return gSurface != tbd::kNoTexture && (off || gGridMesh != tbd::kInvalidMesh);
 }

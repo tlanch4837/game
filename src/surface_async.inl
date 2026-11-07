@@ -25,8 +25,8 @@ inline std::map<std::pair<tbd::TextureId, tbd::TextureId>, Entry>& Table() { sta
 
 inline std::wstring CacheDir() {
     static const std::wstring cached = [] { // once: it was a module query and a CreateDirectory on every request
-        wchar_t exe[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        wchar_t exe[tbd::platform::kMaxPath] = {};
+        GetModuleFileNameW(nullptr, exe, tbd::platform::kMaxPath);
         std::wstring dir = exe;
         dir = dir.substr(0, dir.find_last_of(L"\\/")) + L"\\surfacecache";
         CreateDirectoryW(dir.c_str(), nullptr);
@@ -40,7 +40,7 @@ inline tbd::surface_maps::Result Derive(const std::wstring& dir, const std::vect
     wchar_t name[96];
     swprintf(name, 96, L"\\%016llx%016llx%016llx.bin", (unsigned long long)ContentHash(albedo), (unsigned long long)ContentHash(normal), (unsigned long long)ContentHash(rough));
     const std::wstring file = dir + name;
-    if (FILE* f = _wfopen(file.c_str(), L"rb")) {
+    if (FILE* f = tbd::platform::WOpen(file.c_str(), L"rb")) {
         int head[2] = {};
         bool ok = false;
         if (fread(head, sizeof(int), 2, f) == 2 && head[0] >= 0 && head[0] <= 512) {
@@ -64,7 +64,7 @@ inline tbd::surface_maps::Result Derive(const std::wstring& dir, const std::vect
         const bool hasR = !rough.empty() && tbd::DecodeImage(rough.data(), rough.size(), r, rw, rh);
         out = tbd::surface_maps::Make(a.data(), aw, ah, hasN ? n.data() : nullptr, nw, nh, hasR ? r.data() : nullptr, rw, rh);
     }
-    if (FILE* f = _wfopen(file.c_str(), L"wb")) { // size 0 remembers a cut-out
+    if (FILE* f = tbd::platform::WOpen(file.c_str(), L"wb")) { // size 0 remembers a cut-out
         const int head[2] = {out.size, out.normal.empty() ? 0 : 1};
         fwrite(head, sizeof(int), 2, f);
         fwrite(out.surface.data(), 1, out.surface.size(), f);
@@ -83,7 +83,7 @@ inline std::vector<uint8_t> DeriveExtra(const std::wstring& dir, const tbd::surf
     wchar_t name[112];
     swprintf(name, 112, L"\\x%016llx%016llx%016llx%016llx.bin", (unsigned long long)ContentHash(bytes(in.rough)), (unsigned long long)ContentHash(bytes(in.occlusion)), (unsigned long long)ContentHash(bytes(in.emissive)), f);
     const std::wstring file = dir + name;
-    if (FILE* fp = _wfopen(file.c_str(), L"rb")) {
+    if (FILE* fp = tbd::platform::WOpen(file.c_str(), L"rb")) {
         int n = 0;
         std::vector<uint8_t> out;
         bool ok = fread(&n, sizeof(int), 1, fp) == 1 && n >= 0 && n <= 512;
@@ -98,7 +98,7 @@ inline std::vector<uint8_t> DeriveExtra(const std::wstring& dir, const tbd::surf
     const bool hr = decode(in.rough, r), ho = decode(in.occlusion, o), he = decode(in.emissive, e);
     std::vector<uint8_t> out = tbd::surface_maps::MakeExtra(hr ? &r : nullptr, ho ? &o : nullptr, he ? &e : nullptr, in.emissiveFactor, in.metallic, size);
     if (out.empty()) size = 0;
-    if (FILE* fp = _wfopen(file.c_str(), L"wb")) { // size 0 remembers "says nothing"
+    if (FILE* fp = tbd::platform::WOpen(file.c_str(), L"wb")) { // size 0 remembers "says nothing"
         fwrite(&size, sizeof(int), 1, fp);
         fwrite(out.data(), 1, out.size(), fp);
         fclose(fp);

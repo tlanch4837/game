@@ -1699,7 +1699,7 @@ void IndustryDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
         { // cattle graze and wander; within 60 m of the eye the rigged, animated cow, further out its 12-triangle SPOM volume
             IndustryLoadCowRigs(r);
             const Vec3 eye = g_engine.camera.Eye();
-            const float rt = (float)std::fmod((double)GetTickCount64() / 1000.0, 1.0e5);
+            const float rt = (float)std::fmod((double)tbd::platform::TickCountMs() / 1000.0, 1.0e5);
             for (const ind::CowInst& cw : c.cows) {
                 Vec3 g, fd, sd;
                 int clip;

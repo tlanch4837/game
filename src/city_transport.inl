@@ -103,7 +103,7 @@ void TransportSync(float realDt) {
     if (!started) { // TBD_TRANSPORT=<building index>: open the tool with it chosen (captures)
         started = true;
         char v[16] = {};
-        if (GetEnvironmentVariableA("TBD_TRANSPORT", v, sizeof(v)) > 0) {
+        if (tbd::platform::GetEnvA("TBD_TRANSPORT", v, sizeof(v)) > 0) {
             g_transportTool.active = true;
             const int d = std::clamp(atoi(v), 0, (int)tbd::city::Defs().size() - 1);
             g_transportTool.Select(d);
@@ -113,7 +113,7 @@ void TransportSync(float realDt) {
     if (!demoDone && g_engine.terrain.params.enabled) { // TBD_TRANSPORT_DEMO="def x z progress;...": placed buildings for captures (progress < 0 planned, 0..1 building, 1 done)
         demoDone = true;
         char v[512] = {};
-        if (GetEnvironmentVariableA("TBD_TRANSPORT_DEMO", v, sizeof(v)) > 0) {
+        if (tbd::platform::GetEnvA("TBD_TRANSPORT_DEMO", v, sizeof(v)) > 0) {
             RoadsInit(); // the terrain levelling hook (TransportLevel) is set there
             for (char* tok = strtok(v, ";"); tok; tok = strtok(nullptr, ";")) {
                 int d = 0;
@@ -199,7 +199,7 @@ void CitizensSync() {
     if (clips.empty()) clips = {UtilAbsolute("assets/characters/anim_idle_happy.glb"), UtilAbsolute("assets/characters/anim_walk.glb"),
                                   UtilAbsolute("assets/characters/anim_sit_down.glb"), UtilAbsolute("assets/characters/anim_sit_hold.glb"),
                                   UtilAbsolute("assets/characters/anim_sit_to_stand.glb")};
-    const float now = (float)std::fmod((double)GetTickCount64() * 0.001, 10000.0);
+    const float now = (float)std::fmod((double)tbd::platform::TickCountMs() * 0.001, 10000.0);
     for (const Citizen& c : g_transit.citizens) {
         if (!c.alive) continue;
         int pick = -1;
@@ -413,7 +413,7 @@ void TransitDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     namespace td = transit_draw;
     static std::vector<tbd::Vertex> tris;
     tris.clear();
-    const float time = (float)std::fmod((double)GetTickCount64() * 0.001, 10000.0);
+    const float time = (float)std::fmod((double)tbd::platform::TickCountMs() * 0.001, 10000.0);
     const PlaceContext cx = TransportContext();
     const bool showAll = g_transportTool.active && g_transportTool.lines;
     for (const Route& rt : g_transit.routes) {
@@ -503,7 +503,7 @@ void TransportDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     using namespace tbd::city;
     static std::vector<tbd::Vertex> solid, holoTris, holoLines, tmp, tmpEdges;
     solid.clear(), holoTris.clear(), holoLines.clear();
-    const float time = (float)std::fmod((double)GetTickCount64() * 0.001, 10000.0);
+    const float time = (float)std::fmod((double)tbd::platform::TickCountMs() * 0.001, 10000.0);
     if (g_transportTool.active && !g_play.active) TransportCursor();
     for (const Placed& b : g_transport.items) {
         if (!b.alive) continue;

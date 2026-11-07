@@ -11,6 +11,7 @@
 #include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 
 namespace tbd::platform {
@@ -103,6 +104,31 @@ bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rg
     if (src) CFRelease(src);
     if (cf) CFRelease(cf);
     return ok;
+}
+
+uint32_t GetEnvA(const char* name, char* buf, uint32_t size) {
+    const char* v = std::getenv(name);
+    const uint32_t n = v ? (uint32_t)std::strlen(v) : 0;
+    if (!n) { if (buf && size) buf[0] = 0; return 0; }
+    if (!buf || size <= n) return n + 1;
+    std::memcpy(buf, v, n + 1);
+    return n;
+}
+
+uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) {
+    const char* v = std::getenv(WideToUtf8(name).c_str());
+    const std::wstring w = v ? Utf8ToWide(v) : std::wstring();
+    const uint32_t n = (uint32_t)w.size();
+    if (!n) { if (buf && size) buf[0] = 0; return 0; }
+    if (!buf || size <= n) return n + 1;
+    std::memcpy(buf, w.c_str(), (n + 1) * sizeof(wchar_t));
+    return n;
+}
+
+uint64_t TickCountMs() { return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1000000ull; }
+
+FILE* WOpen(const wchar_t* path, const wchar_t* mode) {
+    return std::fopen(WideToUtf8(path).c_str(), WideToUtf8(mode).c_str());
 }
 
 // Fed by the UIKit shell (touches as MouseLeft, hardware keyboard keys) on the main thread; read on the main thread.

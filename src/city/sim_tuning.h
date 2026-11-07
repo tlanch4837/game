@@ -3,6 +3,8 @@
 // names are reported, missing ones keep their default. Headless: tests use the defaults.
 #pragma once
 
+#include "../platform/platform.h"
+
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -100,7 +102,7 @@ struct SimTuning {
         return applied;
     }
     bool LoadFile(const wchar_t* path, std::vector<std::string>* unknown, int* applied) {
-        FILE* f = _wfopen(path, L"rb");
+        FILE* f = tbd::platform::WOpen(path, L"rb");
         if (!f) return false;
         std::string text;
         char buf[4096];

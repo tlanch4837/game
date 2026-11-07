@@ -96,6 +96,12 @@ static_assert((int)Key::Shift == VK_SHIFT && (int)Key::Control == VK_CONTROL && 
 static_assert((int)Key::Left == VK_LEFT && (int)Key::Up == VK_UP && (int)Key::Right == VK_RIGHT && (int)Key::Down == VK_DOWN);
 static_assert((int)Key::A == 'A' && (int)Key::Q == 'Q' && (int)Key::W == 'W' && (int)Key::Z == 'Z');
 
+uint32_t GetEnvA(const char* name, char* buf, uint32_t size) { return GetEnvironmentVariableA(name, buf, size); }
+uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) { return GetEnvironmentVariableW(name, buf, size); }
+uint64_t TickCountMs() { return GetTickCount64(); }
+static_assert(kMaxPath == MAX_PATH);
+FILE* WOpen(const wchar_t* path, const wchar_t* mode) { return _wfopen(path, mode); }
+
 bool KeyDownAsync(Key k) { return (GetAsyncKeyState((int)k) & 0x8000) != 0; }
 bool KeyDownSync(Key k) { return (GetKeyState((int)k) & 0x8000) != 0; }
 void SetKeyDown(Key, bool) {}
@@ -105,3 +111,9 @@ void LowerThreadPriority(std::thread& t) {
 }
 
 } // namespace tbd::platform
+
+// The portable BMP headers (src/bmp_header.h) must match Windows' byte for byte.
+#include "../bmp_header.h"
+static_assert(sizeof(tbd::BmpFileHeader) == sizeof(BITMAPFILEHEADER) && sizeof(tbd::BmpInfoHeader) == sizeof(BITMAPINFOHEADER));
+static_assert(offsetof(tbd::BmpFileHeader, bfOffBits) == offsetof(BITMAPFILEHEADER, bfOffBits));
+static_assert(offsetof(tbd::BmpInfoHeader, biCompression) == offsetof(BITMAPINFOHEADER, biCompression) && tbd::kBmpRgb == BI_RGB);

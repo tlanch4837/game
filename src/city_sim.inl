@@ -35,7 +35,7 @@ struct SimTotals {
 namespace sim_host {
 inline double EnvDouble(const char* name, double fallback) {
     char v[32] = {};
-    return GetEnvironmentVariableA(name, v, sizeof(v)) > 0 ? atof(v) : fallback;
+    return tbd::platform::GetEnvA(name, v, sizeof(v)) > 0 ? atof(v) : fallback;
 }
 } // namespace sim_host
 
@@ -568,19 +568,19 @@ void SimSync(float realDt) {
 
     static const bool log = sim_host::EnvDouble("TBD_SIM_LOG", 0.0) > 0.0;
     if (log) {
-        static ULONGLONG lastLog = GetTickCount64();
+        static ULONGLONG lastLog = tbd::platform::TickCountMs();
         static double worstFrame = 0.0;
         static int frames = 0;
         static int64_t ticksAtLog = 0;
         worstFrame = std::max(worstFrame, g_sim.FrameMs());
         ++frames;
-        if (GetTickCount64() - lastLog >= 5000) {
+        if (tbd::platform::TickCountMs() - lastLog >= 5000) {
             tbd::Log("Sim: speed %d (%.0f min/s), %lld ticks in %d frames, avg %.3f ms, worst %.3f ms (budget %.2f), backlog %.1f, dropped %lld",
                      g_clock.speed, g_clock.Rate(), (long long)(g_sim.Minute() - ticksAtLog), frames, g_sim.AvgFrameMs(), worstFrame, g_sim.budgetMs,
                      g_sim.Backlog(), (long long)g_sim.DroppedMinutes());
             for (const tbd::city::SimSystem& s : g_sim.Systems())
                 tbd::Log("Sim:   %-12s avg %.3f ms/frame, worst call %.3f ms, %llu calls", s.name.c_str(), s.avgMs, s.worstMs, (unsigned long long)s.calls);
-            lastLog = GetTickCount64();
+            lastLog = tbd::platform::TickCountMs();
             worstFrame = 0.0;
             frames = 0;
             ticksAtLog = g_sim.Minute();

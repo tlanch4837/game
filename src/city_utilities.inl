@@ -189,7 +189,7 @@ void UtilDemo() {
     static int frames = 0;
     static bool done = false;
     static char flags[32] = {};
-    static const bool on = GetEnvironmentVariableA("TBD_UTIL_DEMO", flags, sizeof(flags)) > 0;
+    static const bool on = tbd::platform::GetEnvA("TBD_UTIL_DEMO", flags, sizeof(flags)) > 0;
     if (!on || done || ++frames < 40 || g_roads.net.segs.empty() || g_zones.cells.empty()) return;
     done = true;
     using namespace tbd::city;
@@ -352,7 +352,7 @@ void UtilWorldLabels() {
     // when each bubble first showed (the pop-up), forgotten once it stops showing
     static std::unordered_map<uint64_t, double> born;
     static std::unordered_map<uint64_t, double> bornNext;
-    const double now = (double)GetTickCount64() / 1000.0;
+    const double now = (double)tbd::platform::TickCountMs() / 1000.0;
     bornNext.clear();
 
     tbd::gui::Context& g = g_gui;

@@ -103,7 +103,7 @@ inline bool Streamable(const tbd::Entity& e) {
 
 inline bool EnvFloat(const char* name, float& out) {
     char v[32] = {};
-    if (GetEnvironmentVariableA(name, v, sizeof(v)) == 0) return false;
+    if (tbd::platform::GetEnvA(name, v, sizeof(v)) == 0) return false;
     out = (float)atof(v);
     return true;
 }
@@ -1107,7 +1107,7 @@ struct ShotTour {
     int settledFrames = 0;
     ShotTour() {
         char v[96] = {};
-        wanted = GetEnvironmentVariableA("TBD_SHOT2", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", to, to + 1, to + 2, &speed) == 4;
+        wanted = tbd::platform::GetEnvA("TBD_SHOT2", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", to, to + 1, to + 2, &speed) == 4;
     }
     bool Done() const { return !wanted || finished; }
     void Advance(float* target, float dt, bool idle) {

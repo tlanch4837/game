@@ -31,7 +31,7 @@ inline State g;
 
 inline int EnvInt(const char* name, int fallback) {
     char v[32] = {};
-    return GetEnvironmentVariableA(name, v, sizeof(v)) > 0 ? atoi(v) : fallback;
+    return tbd::platform::GetEnvA(name, v, sizeof(v)) > 0 ? atoi(v) : fallback;
 }
 
 // A dense UV sphere, about 2 M triangles, written once.
@@ -42,7 +42,7 @@ inline std::string DenseObj() {
     fs::create_directories(dir, ec);
     const fs::path file = dir / L"dense.obj";
     if (!fs::exists(file, ec)) {
-        FILE* f = _wfopen(file.c_str(), L"wb");
+        FILE* f = tbd::platform::WOpen(file.c_str(), L"wb");
         if (!f) return "";
         constexpr int kU = 1000, kV = 1000; // 2 M triangles
         const float R = 12.0f;
@@ -202,14 +202,14 @@ void CityStressSync() {
         if (g.grow) {
             g_clock.speed = 2;
             g_clock.paused = false;
-            g.growLast = GetTickCount64();
+            g.growLast = tbd::platform::TickCountMs();
             g.growEnd = g.growLast + (ULONGLONG)EnvInt("TBD_CITY_GROW_SECONDS", 300) * 1000ull;
             SetView(std::clamp(EnvInt("TBD_CITY_GROW_VIEW", 1), 0, 2));
         }
         return;
     }
     if (g.phase == 5) { // grow mode: a status line every 15 s, then quit (or stay) at the end
-        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG now = tbd::platform::TickCountMs();
         if (now - g.growLast >= 15000) {
             g.growLast = now;
             int lots = 0, building = 0, l2 = 0;
@@ -279,14 +279,14 @@ void CityStressSync() {
         g.phase = 3;
         g.view = 0;
         SetView(0);
-        g.phaseStart = GetTickCount64();
+        g.phaseStart = tbd::platform::TickCountMs();
         return;
     }
     static const ULONGLONG hold = (ULONGLONG)EnvInt("TBD_CITY_STRESS_HOLD", 12) * 1000ull;
-    if (GetTickCount64() - g.phaseStart < hold) return;
+    if (tbd::platform::TickCountMs() - g.phaseStart < hold) return;
     if (++g.view < 3) {
         SetView(g.view);
-        g.phaseStart = GetTickCount64();
+        g.phaseStart = tbd::platform::TickCountMs();
         return;
     }
     tbd::Log("City stress: views done");

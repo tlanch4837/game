@@ -17,7 +17,7 @@ struct ZoneInput {
     tbd::city::V2 boxStart{}, boxDir{1, 0};
 } g_zoneIn;
 // TBD_ZONE_ENTITIES=1: the old path, one scene entity (and mesh upload) per lot. Otherwise city_buildings.inl draws lots per CityCell.
-const bool g_zoneEntities = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_ZONE_ENTITIES", v, sizeof(v)) > 0 && v[0] == '1'; }();
+const bool g_zoneEntities = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_ZONE_ENTITIES", v, sizeof(v)) > 0 && v[0] == '1'; }();
 std::unordered_map<uint64_t, std::string> g_zoneEntity; // lot id -> its entity's name
 std::unordered_map<uint64_t, std::string> g_zoneEntityPath; // lot id -> the model its entity shows (a level change swaps it)
 namespace zones_overlay { inline void Sync(tbd::Renderer& r); } // the zone cell overlay mesh (below ZonesDraw)
@@ -414,7 +414,7 @@ inline void Sync(tbd::Renderer& r) {
         builtFor = ~0ull;
     }
     if (builtFor == g_zones.version && builtTool == g_zoneTool.active) return;
-    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG now = tbd::platform::TickCountMs();
     if (!g_zoneTool.active && builtTool == g_zoneTool.active && mesh != tbd::kInvalidMesh && now - lastBuild < 500) return;
     builtFor = g_zones.version, builtTool = g_zoneTool.active, lastBuild = now;
     static std::vector<tbd::Vertex> v;

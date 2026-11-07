@@ -8,7 +8,7 @@ constexpr size_t kMinTriangles = 300000;
 constexpr int kTiles = 16; // per axis
 
 inline bool Wanted(const tbd::Entity& e, const std::vector<tbd::Vertex>& v) {
-    static const bool on = [] { char b[8] = {}; return !(GetEnvironmentVariableA("TBD_TERRAINLOD", b, 8) > 0 && b[0] == '0'); }();
+    static const bool on = [] { char b[8] = {}; return !(tbd::platform::GetEnvA("TBD_TERRAINLOD", b, 8) > 0 && b[0] == '0'); }();
     return on && v.size() / 3 >= kMinTriangles && e.name.rfind("Terrain/", 0) == 0 && e.animClip.empty();
 }
 

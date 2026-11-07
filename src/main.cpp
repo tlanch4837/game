@@ -25,6 +25,7 @@
 #include "material_lab.h"
 #include <tuple>
 #include "audio.h"
+#include "bmp_header.h"
 #include "camera.h"
 #include "content_browser.h"
 #include <set>
@@ -176,12 +177,12 @@ struct MatPart {
 // alone does not. Off by default while building chains at load is slow; TBD_AUTOLOD=1 builds them for every static part.
 // TBD_LODSTEP: the triangle ratio between levels (default 0.5).
 inline bool AutoLodOn() {
-    static const bool on = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_AUTOLOD", b, 8) > 0 && b[0] == '1'; }();
+    static const bool on = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_AUTOLOD", b, 8) > 0 && b[0] == '1'; }();
     return on;
 }
 inline float EnvFloat(const char* name, float fallback, float lo, float hi) {
     char b[32] = {};
-    if (GetEnvironmentVariableA(name, b, sizeof(b)) == 0) return fallback;
+    if (tbd::platform::GetEnvA(name, b, sizeof(b)) == 0) return fallback;
     char* end = nullptr;
     const float f = strtof(b, &end);
     return end == b ? fallback : std::clamp(f, lo, hi);
@@ -392,7 +393,7 @@ float DpiScale() { return (float)g_engine.dpi / 96.0f; }
 
 void Toast(const std::string& text) {
     g_engine.toast = text;
-    g_engine.toastUntil = GetTickCount64() + 3500;
+    g_engine.toastUntil = tbd::platform::TickCountMs() + 3500;
 }
 
 // ------------------------------------------------------------------- terrain editor
@@ -422,8 +423,8 @@ tbd::gui::Context g_gui;
 tbd::gui::InputQueue g_guiInput;
 bool g_guiVisible = [] {
     char v[8] = {};
-    if (GetEnvironmentVariableA("TBD_GUI", v, sizeof(v)) > 0) return v[0] != '0';
-    return !GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) && !GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0);
+    if (tbd::platform::GetEnvA("TBD_GUI", v, sizeof(v)) > 0) return v[0] != '0';
+    return !tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) && !tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0);
 }();
 bool g_guiOwnsButton = false;  // the GUI took the last left press: its moves and the release are not the engine's
 bool g_terrainSandbox = false; // the project opened as a terrain sandbox
@@ -482,14 +483,14 @@ void StartTerrainSandbox() {
     g_engine.terrain.params.mapKind = 2; // the random city map (city_map.h); NewCityGame sets the seed and the default corridor
     RebuildSceneMeshes();
     g_terrainEdit.on = false;
-    int seed = (int)(GetTickCount64() % 900000ull) + 100; // random every start; TBD_SEED=<n> pins it
+    int seed = (int)(tbd::platform::TickCountMs() % 900000ull) + 100; // random every start; TBD_SEED=<n> pins it
     char sv[16] = {};
-    if (GetEnvironmentVariableA("TBD_SEED", sv, sizeof(sv)) > 0) seed = atoi(sv);
+    if (tbd::platform::GetEnvA("TBD_SEED", sv, sizeof(sv)) > 0) seed = atoi(sv);
     NewCityGame(seed);
     { // TBD_BRUSHTEST="x z radius metres": one stroke at startup, so a capture can show the brush's effect without a mouse
         char v[96] = {};
         float x, z, radius, metres;
-        if (GetEnvironmentVariableA("TBD_BRUSHTEST", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", &x, &z, &radius, &metres) == 4)
+        if (tbd::platform::GetEnvA("TBD_BRUSHTEST", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", &x, &z, &radius, &metres) == 4)
             g_engine.terrain.Brush(x, z, radius, metres);
     }
 }
@@ -497,14 +498,14 @@ void StartTerrainSandbox() {
 void SaveTerrainEdits() {
     std::vector<uint8_t> bytes;
     g_engine.terrain.field.Save(bytes);
-    FILE* f = _wfopen(TerrainEditPath().c_str(), L"wb");
+    FILE* f = tbd::platform::WOpen(TerrainEditPath().c_str(), L"wb");
     const bool ok = f && fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
     if (f) fclose(f);
     Toast(ok ? "TERRAIN SAVED (" + std::to_string(g_engine.terrain.field.TileCount()) + " TILES)" : "TERRAIN SAVE FAILED");
 }
 
 void LoadTerrainEdits() {
-    FILE* f = _wfopen(TerrainEditPath().c_str(), L"rb");
+    FILE* f = tbd::platform::WOpen(TerrainEditPath().c_str(), L"rb");
     if (!f) { Toast("NO SAVED TERRAIN"); return; }
     std::vector<uint8_t> bytes;
     uint8_t chunk[65536];
@@ -611,7 +612,7 @@ void Layout() {
     // TBD_VIEWPORT="w h": render at a fixed size whatever the window's size, for benchmarks.
     char forced[32];
     int forcedW = 0, forcedH = 0;
-    if (GetEnvironmentVariableA("TBD_VIEWPORT", forced, sizeof(forced)) > 0 && sscanf_s(forced, "%d %d", &forcedW, &forcedH) == 2 && forcedW > 0 && forcedH > 0) {
+    if (tbd::platform::GetEnvA("TBD_VIEWPORT", forced, sizeof(forced)) > 0 && sscanf_s(forced, "%d %d", &forcedW, &forcedH) == 2 && forcedW > 0 && forcedH > 0) {
         w = forcedW;
         h = forcedH;
     }
@@ -672,7 +673,7 @@ void ImportFile(const std::string& path, ImportResult& out) {
     if (!tbd::ImportMesh(path.substr(0, nativeTag), v, &out.error, options, &out.model)) return;
     // TBD_WRINKLE=0..1: a fixed wrinkle amount on all skin, for test captures of a face with no rig driving it.
     char wrinkle[16] = {};
-    if (GetEnvironmentVariableA("TBD_WRINKLE", wrinkle, sizeof(wrinkle)) > 0)
+    if (tbd::platform::GetEnvA("TBD_WRINKLE", wrinkle, sizeof(wrinkle)) > 0)
         for (tbd::Vertex& x : v)
             if (x.a == 0.5f) x.a = 0.5f + 0.09f * (float)atof(wrinkle);
     tbd::Vec3 lo = {1e30f, 1e30f, 1e30f}, hi = {-1e30f, -1e30f, -1e30f};
@@ -876,7 +877,7 @@ struct BuiltPart { MatPart part; std::vector<tbd::Vertex> vertices; std::vector<
 // finer, in cells about a sixth of its size and at least 4 m, so a material that runs through every room is cut per room and
 // only the rooms in view are drawn; small props stay one draw. TBD_ROOMSPLIT=0: the old whole-material parts, to compare.
 inline void RoomSplit(const tbd::Sphere& whole, size_t& splitTriangles, float& splitCell) {
-    static const bool on = [] { char f[4] = {}; return GetEnvironmentVariableA("TBD_ROOMSPLIT", f, sizeof(f)) == 0 || f[0] != '0'; }();
+    static const bool on = [] { char f[4] = {}; return tbd::platform::GetEnvA("TBD_ROOMSPLIT", f, sizeof(f)) == 0 || f[0] != '0'; }();
     if (!on || whole.radius <= 6.0f || whole.radius >= 200.0f) return;
     splitTriangles = 2000;
     splitCell = std::max(4.0f, whole.radius / 3.0f);
@@ -1067,7 +1068,7 @@ bool SetEntitySkinPoreDepth(int entity, float depth) {
 inline void ApplySkinDetailScales() {
     for (const auto& [entity, depth] : g_skinPoreDepth) ApplySkinPoreDepth(entity, depth);
     // TBD_SKINSCALE=<scale>: every entity's skin at that scale, for testing a look without a script.
-    static const float all = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_SKINSCALE", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
+    static const float all = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_SKINSCALE", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
     if (all > 0.0f)
         for (size_t i = 0; i < g_engine.meshes.size(); ++i) ApplySkinDetailScale((int)i, all);
     for (const auto& [entity, scale] : g_skinDetailScale) ApplySkinDetailScale(entity, scale);
@@ -1522,7 +1523,7 @@ void SceneLoadTick(double budgetMs) {
     while (g_load.phase == SceneLoad::Instances) {
         if (g_load.instance >= g_engine.scene.instances.size()) {
             DecodedImages().clear(); // anything not consumed by a texture upload
-            tbd::Log("Scene load: %llu ms", GetTickCount64() - g_load.started);
+            tbd::Log("Scene load: %llu ms", tbd::platform::TickCountMs() - g_load.started);
             g_load = SceneLoad();
             return;
         }
@@ -1559,7 +1560,7 @@ void RebuildSceneMeshes() {
         g_engine.meshes.assign(g_engine.scene.entities.size(), tbd::kInvalidMesh);
         return;
     }
-    g_load.started = GetTickCount64();
+    g_load.started = tbd::platform::TickCountMs();
     g_load.work = std::make_shared<SceneLoadWork>();
     std::vector<std::string> wanted; // every imported file of the scene, entities first
     for (const tbd::Entity& e : g_engine.scene.entities)
@@ -1613,7 +1614,7 @@ static float g_dynamicScale = 0.0f; // set by UpdateDynamicResolution; 0 = TBD_S
 float RenderScale() {
     static const float scale = [] {
         char v[32] = {};
-        if (GetEnvironmentVariableA("TBD_SCALE", v, sizeof(v)) == 0) return 1.0f;
+        if (tbd::platform::GetEnvA("TBD_SCALE", v, sizeof(v)) == 0) return 1.0f;
         char* end = nullptr;
         const float s = strtof(v, &end);
         return end == v ? 1.0f : tbd::ClampRenderScale(s);
@@ -1624,7 +1625,7 @@ float RenderScale() {
 // TBD_DYNRES=<fps>: holds that frame rate by stepping the render scale, 0.7..1.0, after a second of evidence. Off by default:
 // a step remakes the post targets, so TAA history and the probes restart, which shows for about half a second.
 void UpdateDynamicResolution(tbd::Renderer& r, float dt) {
-    static const float target = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_DYNRES", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
+    static const float target = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_DYNRES", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
     if (target <= 0.0f || dt <= 0.0f) return;
     static float sum = 0.0f;
     static int frames = 0;
@@ -1653,7 +1654,7 @@ void UpdateDynamicResolution(tbd::Renderer& r, float dt) {
 void UploadUiFont() {
     static const bool forceClassic = [] {
         char v[8] = {};
-        return GetEnvironmentVariableA("TBD_GUI_CLASSIC", v, sizeof(v)) > 0 && v[0] != '0';
+        return tbd::platform::GetEnvA("TBD_GUI_CLASSIC", v, sizeof(v)) > 0 && v[0] != '0';
     }();
     tbd::Renderer& r = *g_engine.renderer;
     bool smooth = !forceClassic && r.UiSupported();
@@ -1697,7 +1698,7 @@ bool StartRenderer(Api api) {
                 DispatchMessageW(&msg);
             }
             if (!g_engine.running) stop = true;
-            const ULONGLONG now = GetTickCount64();
+            const ULONGLONG now = tbd::platform::TickCountMs();
             if (done > 0 && now - shown > 200 && g_engine.window) {
                 wchar_t title[320];
                 swprintf(title, 320, L"%s - compiling shaders %d of %d (first start only)", was, done.load(), total.load());
@@ -1931,7 +1932,7 @@ std::wstring ScenesFolder() {
 }
 
 bool PickSceneFile(bool save, std::wstring& path) {
-    wchar_t buf[MAX_PATH] = {};
+    wchar_t buf[tbd::platform::kMaxPath] = {};
     if (save) wcsncpy_s(buf, path.empty() ? L"Untitled.tbdscene" : path.c_str(), _TRUNCATE);
     const std::wstring dir = ScenesFolder();
     OPENFILENAMEW ofn = {};
@@ -1939,7 +1940,7 @@ bool PickSceneFile(bool save, std::wstring& path) {
     ofn.hwndOwner = g_engine.window;
     ofn.lpstrFilter = L"TBD scene (*.tbdscene)\0*.tbdscene\0All files\0*.*\0";
     ofn.lpstrFile = buf;
-    ofn.nMaxFile = MAX_PATH;
+    ofn.nMaxFile = tbd::platform::kMaxPath;
     ofn.lpstrInitialDir = dir.c_str();
     ofn.lpstrDefExt = L"tbdscene";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
@@ -2222,8 +2223,8 @@ void OnToolAction(tbd::ToolId id) {
         host.setMirror =[](bool m) { g_engine.faceDriver.mirror = m; };
         host.stopCapture = [] { g_engine.faceDriver.StopLive(g_engine.scene); Toast("WEBCAM OFF"); };
         host.startVideoLog = [live = host.live] {
-            wchar_t exe[MAX_PATH] = {};
-            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            wchar_t exe[tbd::platform::kMaxPath] = {};
+            GetModuleFileNameW(nullptr, exe, tbd::platform::kMaxPath);
             if (!g_engine.renderer || !g_faceLog.Start(live, std::filesystem::path(exe).parent_path() / L"facelog")) return false;
             g_engine.renderer->SetFrameCapture(true);
             return true;
@@ -2248,12 +2249,12 @@ void OnToolAction(tbd::ToolId id) {
         Toast("STOPPED DRIVING " + sel->name);
         return;
     }
-    wchar_t buf[MAX_PATH] = {};
+    wchar_t buf[tbd::platform::kMaxPath] = {};
     OPENFILENAMEW ofn{sizeof(ofn)};
     ofn.hwndOwner = g_engine.window;
     ofn.lpstrFilter = L"Face clip (*.tbdface)\0*.tbdface\0";
     ofn.lpstrFile = buf;
-    ofn.nMaxFile = MAX_PATH;
+    ofn.nMaxFile = tbd::platform::kMaxPath;
     ofn.lpstrTitle = L"Drive the selected entity with a face clip";
     ofn.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
@@ -2419,7 +2420,7 @@ bool PlayGround(float x, float z, float& y) {
 bool g_maxGraphics = false;
 // Graphics > Quality: 0 full; 1 fast (modeling: textures and sun shadows only, no ray tracing, probes, clouds, sky, relief, grass);
 // 2 unlit (vertex colours only, no shadows). F6 cycles.
-int g_gfxQuality = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_QUALITY", v, sizeof(v)) > 0 ? std::clamp(atoi(v), 0, 2) : 0; }(); // TBD_QUALITY=0/1/2 starts there
+int g_gfxQuality = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_QUALITY", v, sizeof(v)) > 0 ? std::clamp(atoi(v), 0, 2) : 0; }(); // TBD_QUALITY=0/1/2 starts there
 void SetMaxGraphics(bool on) {
     static float hour = 0, tilt = 0;
     static bool sky = true, shadows = true, animate = false;
@@ -2649,14 +2650,14 @@ void FaceShotStep(tbd::Renderer& r) {
         ++fs.index;
         return;
     }
-    wchar_t path[MAX_PATH];
-    swprintf(path, MAX_PATH, L"%s\\%S_%s_%s.bmp", fs.dir.c_str(), r.Name(), std::wstring(fs.cases[fs.index].name.begin(), fs.cases[fs.index].name.end()).c_str(), fs.shot == 0 ? L"head" : fs.shot == 1 ? L"mouth" : L"eyes");
-    if (FILE* f = _wfopen(path, L"wb")) {
-        BITMAPFILEHEADER fh{};
-        BITMAPINFOHEADER bi{sizeof(bi), w, -h, 1, 32, BI_RGB};
+    wchar_t path[tbd::platform::kMaxPath];
+    swprintf(path, tbd::platform::kMaxPath, L"%s\\%S_%s_%s.bmp", fs.dir.c_str(), r.Name(), std::wstring(fs.cases[fs.index].name.begin(), fs.cases[fs.index].name.end()).c_str(), fs.shot == 0 ? L"head" : fs.shot == 1 ? L"mouth" : L"eyes");
+    if (FILE* f = tbd::platform::WOpen(path, L"wb")) {
+        tbd::BmpFileHeader fh{};
+        tbd::BmpInfoHeader bi{sizeof(bi), w, -h, 1, 32, tbd::kBmpRgb};
         fh.bfType = 0x4D42;
         fh.bfOffBits = sizeof(fh) + sizeof(bi);
-        fh.bfSize = fh.bfOffBits + (DWORD)pixels.size();
+        fh.bfSize = fh.bfOffBits + (uint32_t)pixels.size();
         fwrite(&fh, sizeof(fh), 1, f);
         fwrite(&bi, sizeof(bi), 1, f);
         fwrite(pixels.data(), 1, pixels.size(), f);
@@ -2863,8 +2864,8 @@ static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
 }
 
 static void RemotePump() {
-    static const bool on = !GetEnvironmentVariableA("TBD_NOREMOTE", nullptr, 0) && !GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) &&
-                           !GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0);
+    static const bool on = !tbd::platform::GetEnvA("TBD_NOREMOTE", nullptr, 0) && !tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) &&
+                           !tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0);
     if (!on) return;
     tbd::remote::Server& server = tbd::remote::Instance();
     server.Start();
@@ -2893,9 +2894,9 @@ static void RemoteShotAfterFrame(tbd::Renderer& r) {
     r.SetFrameCapture(false);
     if (ok) {
         for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-        BITMAPFILEHEADER fh = {0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + px.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
-        BITMAPINFOHEADER ih = {sizeof(ih), w, -h, 1, 32, BI_RGB};
-        FILE* f = _wfopen(RemoteWide(g_remoteShot.path).c_str(), L"wb");
+        tbd::BmpFileHeader fh = {0x4D42, (uint32_t)(sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader) + px.size()), 0, 0, sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader)};
+        tbd::BmpInfoHeader ih = {sizeof(ih), w, -h, 1, 32, tbd::kBmpRgb};
+        FILE* f = tbd::platform::WOpen(RemoteWide(g_remoteShot.path).c_str(), L"wb");
         ok = f != nullptr;
         if (f) { fwrite(&fh, sizeof(fh), 1, f); fwrite(&ih, sizeof(ih), 1, f); fwrite(px.data(), 1, px.size(), f); fclose(f); }
     }
@@ -2937,7 +2938,7 @@ void RoadsInit() {
         g_engine.terrain.Brush(x, z, radius, 1.0f, tbd::HeightField::BrushMode::Flatten, target, hard);
     };
     char v[16] = {};
-    if (GetEnvironmentVariableA("TBD_ROADS", v, sizeof(v)) <= 0) return;
+    if (tbd::platform::GetEnvA("TBD_ROADS", v, sizeof(v)) <= 0) return;
     g_roads.Open();
     if (strcmp(v, "demo") != 0) return;
     using tbd::city::Cubic;
@@ -2990,7 +2991,7 @@ void RoadsInit() {
     char st[64] = {};
     float sx, sz;
     int mode = 0;
-    if (GetEnvironmentVariableA("TBD_ROADS_START", st, sizeof(st)) > 0 && sscanf(st, "%f %f %d", &sx, &sz, &mode) >= 2) {
+    if (tbd::platform::GetEnvA("TBD_ROADS_START", st, sizeof(st)) > 0 && sscanf(st, "%f %f %d", &sx, &sz, &mode) >= 2) {
         g_roads.SetMode((tbd::city::ToolMode)std::clamp(mode, 0, 7));
         const V2 q = P(sx, sz);
         g_roads.Move(true, {q.x, RoadsGround(q.x, q.z), q.z});
@@ -3229,7 +3230,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     static ScriptedPointer pointer = [] {
         ScriptedPointer p;
         char v[64] = {}, word[16] = {};
-        if (GetEnvironmentVariableA("TBD_GUI_POINTER", v, sizeof(v)) > 0) {
+        if (tbd::platform::GetEnvA("TBD_GUI_POINTER", v, sizeof(v)) > 0) {
             const int n = sscanf(v, "%f %f %15s", &p.x, &p.y, word);
             p.on = n >= 2;
             p.down = n == 3 && strcmp(word, "down") == 0;
@@ -3342,10 +3343,10 @@ void RenderFrame() {
         f.entry = now;
     }
     // TBD_HITCHLOG=<ms>: logs every gap between frames longer than that, in any run: the way to catch a freeze in the editor or in Play.
-    static const int hitchMs = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_HITCHLOG", v, sizeof(v)) > 0 ? atoi(v) : 0; }();
+    static const int hitchMs = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_HITCHLOG", v, sizeof(v)) > 0 ? atoi(v) : 0; }();
     if (hitchMs > 0) {
         static ULONGLONG lastFrame = 0;
-        const ULONGLONG t = GetTickCount64();
+        const ULONGLONG t = tbd::platform::TickCountMs();
         if (lastFrame && t - lastFrame >= (ULONGLONG)hitchMs) tbd::Log("Hitch: %llu ms between frames at %llu ms", t - lastFrame, t);
         lastFrame = t;
     }
@@ -3398,17 +3399,17 @@ void RenderFrame() {
     }
     if (g_playtest.Active()) dt = 1.0f / 60.0f;
     UpdateDynamicResolution(r, dt);
-    static wchar_t capturePath[MAX_PATH] = {};
+    static wchar_t capturePath[tbd::platform::kMaxPath] = {};
     // TBD_BENCH_FRAMES=<n>: how many frames a benchmark measures after the warm-up (default 179). The count restarts whenever a capture still
     // has to wait for loading, so those waits are never measured and a run reports exactly the frames asked for.
     static const int benchFrames = [] {
         char v[16] = {};
-        return GetEnvironmentVariableA("TBD_BENCH_FRAMES", v, sizeof(v)) > 0 ? std::max(10, atoi(v)) : 179;
+        return tbd::platform::GetEnvA("TBD_BENCH_FRAMES", v, sizeof(v)) > 0 ? std::max(10, atoi(v)) : 179;
     }();
     // TBD_SETTLE=<frames>: more frames before a capture, for the irradiance probes to converge (192 of 18432 a frame, blending
     // 15% each pass: about 1500 frames). gameenginetools\lighting_reference\compare.ps1 sets it.
-    static const int settleFrames = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_SETTLE", v, sizeof(v)) > 0 ? std::max(0, atoi(v)) : 0; }();
-    static int captureFramesLeft = GetEnvironmentVariableW(L"TBD_CAPTURE", capturePath, MAX_PATH) > 0 ? benchFrames + 61 + settleFrames : -1;
+    static const int settleFrames = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_SETTLE", v, sizeof(v)) > 0 ? std::max(0, atoi(v)) : 0; }();
+    static int captureFramesLeft = tbd::platform::GetEnvW(L"TBD_CAPTURE", capturePath, tbd::platform::kMaxPath) > 0 ? benchFrames + 61 + settleFrames : -1;
     // TBD_FRAMELOG=<file.csv>: one row of section times per measured frame, to find what a slow frame spent its time on.
     enum TraceMark { kTraceStart, kTracePre, kTraceBegin, kTraceAnim, kTraceShadow, kTraceScene, kTraceEnd, kTraceMarks };
     int64_t traceTick[kTraceMarks] = {};
@@ -3418,7 +3419,7 @@ void RenderFrame() {
     static float shot[7];
     static const bool testShot = [] {
         char v[128] = {};
-        return GetEnvironmentVariableA("TBD_SHOT", v, sizeof(v)) > 0 &&
+        return tbd::platform::GetEnvA("TBD_SHOT", v, sizeof(v)) > 0 &&
                sscanf(v, "%f %f %f %f %f %f %f", shot, shot + 1, shot + 2, shot + 3, shot + 4, shot + 5, shot + 6) == 7;
     }();
     static world_streaming::ShotTour shotTour;
@@ -3469,7 +3470,7 @@ void RenderFrame() {
         nf.hour = g_engine.sun.hour;
         if (!g_play.player) g_physics.Update(nf.focus, dt); // the player's update does this otherwise
         g_npcs.Update(nf);
-        static const float overview = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_NAVDEBUG_CAM", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
+        static const float overview = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_NAVDEBUG_CAM", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
         if (overview > 0.0f) { g_engine.camera.distance = overview; g_engine.camera.pitch = 1.25f; } // TBD_NAVDEBUG_CAM=<meters>: look down from above for captures
     }
     tbd::audio::UpdateFrame(g_engine.camera.Eye(), g_engine.camera.Forward(), g_engine.camera.Up(), g_play.active,
@@ -3483,13 +3484,13 @@ void RenderFrame() {
     if (g_engine.sun.animate) g_engine.sun.Advance(dt);
     // The sun's shadow map follows the camera's focus; it covers more ground the farther the camera is.
     tbd::Lighting light = tbd::ComputeLighting(g_engine.sun);
-    static const float lightDebug = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_LIGHTDEBUG", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
+    static const float lightDebug = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_LIGHTDEBUG", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
     static uint32_t lightFrame = 0;
     light.lightDebug[1] = (float)(lightFrame++ & 1023); // the shadow filter's noise moves each frame; mesh shaders only, the post block overwrites it
     // TBD_FEATURECOST=<file>: with a TBD_SHOT, turns features off one at a time and writes the GPU's scene pass and whole frame for each, then quits.
     // A real feature comparison on one loaded scene, on either API. Bits: FEATURE_OFF in the shaders, and the grid and the grass below.
-    static wchar_t costPath[MAX_PATH] = {};
-    static const bool costOn = GetEnvironmentVariableW(L"TBD_FEATURECOST", costPath, MAX_PATH) > 0;
+    static wchar_t costPath[tbd::platform::kMaxPath] = {};
+    static const bool costOn = tbd::platform::GetEnvW(L"TBD_FEATURECOST", costPath, tbd::platform::kMaxPath) > 0;
     static int featureOff = 0;
     if (costOn) {
         struct Step { const char* name; int bits; };
@@ -3497,7 +3498,7 @@ void RenderFrame() {
             {"tight map off", 128}, {"near grid off", 512}, {"grass off", 1024}, {"flat shading", 256}, {"all on again", 0}};
         static int step = 0, seen = 0;
         static double scene = 0, frame = 0;
-        static FILE* out = _wfopen(costPath, L"w");
+        static FILE* out = tbd::platform::WOpen(costPath, L"w");
         if (!SceneLoadActive() && ground_bake::Settled() && g_stream.CaptureMayStart() && out) {
             constexpr int kSettle = 45, kCount = 120;
             if (seen >= kSettle) { const double* gpu = r.GpuPasses(); double all = 0; for (int k = 0; k < 8; ++k) all += gpu[k]; scene += gpu[1]; frame += all; }
@@ -3516,12 +3517,12 @@ void RenderFrame() {
     g_sceneExposure = g_engine.scene.exposure; // both renderers pass it to post.hlsl ExposureValue
     light.lightDebug[0] = lightDebug; // 1 indirect diffuse, 2 sun, 3 reflections, 4 haze only, 8 surface light (vs tbd_reference); see lighting.hlsli and post.hlsl
     const tbd::Vec3 shadowFocus = g_engine.camera.target;
-    static const bool probesOn = GetEnvironmentVariableA("TBD_NOPROBES", nullptr, 0) == 0;
+    static const bool probesOn = tbd::platform::GetEnvA("TBD_NOPROBES", nullptr, 0) == 0;
     tbd::ComputeProbeGrid(shadowFocus, probesOn && g_gfxQuality == 0, light);
-    static const float envWet = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_WETNESS", v, sizeof(v)) > 0 ? (float)atof(v) : -1.0f; }();
+    static const float envWet = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_WETNESS", v, sizeof(v)) > 0 ? (float)atof(v) : -1.0f; }();
     if (envWet >= 0.0f) g_engine.sun.wetness = envWet;
     light.probePrev[3] = g_engine.sun.wetness; // the spare slot: mesh.hlsl reads it as gLight.probePrev.w
-    static const bool cloudShadowOn = GetEnvironmentVariableA("TBD_NOCLOUDSHADOW", nullptr, 0) == 0;
+    static const bool cloudShadowOn = tbd::platform::GetEnvA("TBD_NOCLOUDSHADOW", nullptr, 0) == 0;
     // TBD_LIGHTDEBUG=8 compares with tbd_reference (gameenginetools\lighting_reference), which has no clouds.
     tbd::ComputeCloudMap(shadowFocus, cloudShadowOn && g_gfxQuality == 0 && g_engine.sun.showSky && light.sunDir[1] > 0.0f && lightDebug != 8.0f, light);
     // At MAX the map closes in on what the camera is looking at: 20 m across a 4096 map is a centimetre per texel, which saws a face's shadows.
@@ -3554,7 +3555,7 @@ void RenderFrame() {
         waterJitter[1] = jitter.At(1, 3);
         static float cloudTime = 0.0f;
         // TBD_CLOUDTIME=<s>: clouds held at that time, for comparing captures.
-        static const float fixedCloudTime = [] { char v[32] = {}; return GetEnvironmentVariableA("TBD_CLOUDTIME", v, sizeof(v)) > 0 ? (float)atof(v) : -1.0f; }();
+        static const float fixedCloudTime = [] { char v[32] = {}; return tbd::platform::GetEnvA("TBD_CLOUDTIME", v, sizeof(v)) > 0 ? (float)atof(v) : -1.0f; }();
         // Clouds keep the day clock's pace: a game hour blows them about 0.6 km, whatever the day length. True time-lapse
         // speed would flicker at short days. With the clock stopped, or at long days, they drift at the real wind.
         const float cloudRate = g_engine.sun.animate ? std::max(1.0f, 45.0f * 24.0f / g_engine.sun.dayLengthSeconds) : 1.0f;
@@ -3566,7 +3567,7 @@ void RenderFrame() {
         frameView.time = cloudTime;
         frameView.sky = g_engine.sun.showSky && g_gfxQuality == 0;
         frameView.dt = dt;
-        static const bool motionOff = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_TAAMV", b, 8) > 0 && b[0] == '0'; }(); // test: the old depth-only reprojection
+        static const bool motionOff = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_TAAMV", b, 8) > 0 && b[0] == '0'; }(); // test: the old depth-only reprojection
         frameView.motionVectors = !motionOff;
         r.SetFrameView(frameView);
     }
@@ -3586,7 +3587,7 @@ void RenderFrame() {
     }
     { // TBD_BRUSHSTREAM="x z radius metres": one stroke every frame, sweeping 400 m east and back, to time a brush drag without a mouse
         static float sx, sz, sr, sm;
-        static const bool stream = [] { char v[96] = {}; return GetEnvironmentVariableA("TBD_BRUSHSTREAM", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", &sx, &sz, &sr, &sm) == 4; }();
+        static const bool stream = [] { char v[96] = {}; return tbd::platform::GetEnvA("TBD_BRUSHSTREAM", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", &sx, &sz, &sr, &sm) == 4; }();
         static int streamFrame = 0;
         if (stream && g_engine.terrain.params.enabled) {
             const float phase = (float)(streamFrame++ % 240) / 240.0f, sweep = phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
@@ -3600,7 +3601,7 @@ void RenderFrame() {
     FrameMark("streaming");
     // A capture's frames start counting only when everything near the camera is loaded, so captures stay deterministic.
     { // TBD_GENLODS=1: World > Generate LODs once the first streaming pass is idle, for an unattended test of the command
-        static bool genLods = GetEnvironmentVariableA("TBD_GENLODS", nullptr, 0) > 0;
+        static bool genLods = tbd::platform::GetEnvA("TBD_GENLODS", nullptr, 0) > 0;
         if (genLods && !SceneLoadActive() && (!g_stream.Active() || g_stream.IsIdle())) {
             genLods = false;
             GenerateOutdoorLods();
@@ -3714,7 +3715,7 @@ void RenderFrame() {
         std::sort(rooms.begin(), rooms.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         std::vector<tbd::InteriorRoom> nearest;
         for (size_t k = 0; k < rooms.size() && k < tbd::kMaxRooms; ++k) nearest.push_back(rooms[k].second);
-        static const bool roomsOn = GetEnvironmentVariableA("TBD_NOROOMS", nullptr, 0) == 0;
+        static const bool roomsOn = tbd::platform::GetEnvA("TBD_NOROOMS", nullptr, 0) == 0;
         r.SetInteriorRooms(nearest.data(), roomsOn ? (uint32_t)nearest.size() : 0u);
     }
     if (r.RayTracingSupported() && g_gfxQuality == 0) { // what the ray traced occlusion can hit: the static parts near the camera, glass and hair left out
@@ -3835,7 +3836,7 @@ void RenderFrame() {
     // Per-room culling: with the camera inside one of a building's rooms, its interior parts draw only for that room and the rooms
     // touching it (through doors and windows); everything else in the building is behind walls. 0: no restriction (camera outside
     // every room, or the building has none). TBD_ROOMCULL=0 turns it off.
-    static const bool roomCull = [] { char f[4] = {}; return GetEnvironmentVariableA("TBD_ROOMCULL", f, sizeof(f)) == 0 || f[0] != '0'; }();
+    static const bool roomCull = [] { char f[4] = {}; return tbd::platform::GetEnvA("TBD_ROOMCULL", f, sizeof(f)) == 0 || f[0] != '0'; }();
     roomAllowed.assign(entityCount, 0);
     for (size_t i = 0; roomCull && i < entityCount; ++i) {
         const auto it = g_engine.matParts.find(g_engine.meshes[i]);
@@ -3884,7 +3885,7 @@ void RenderFrame() {
     }
     const auto boundsOf = [](tbd::MeshId id) { return id < g_engine.meshBounds.size() ? g_engine.meshBounds[id] : tbd::Sphere{}; };
     // TBD_NOCULL=1: draw everything, to compare a capture against the culled one.
-    static const bool noCull = GetEnvironmentVariableA("TBD_NOCULL", nullptr, 0) > 0;
+    static const bool noCull = tbd::platform::GetEnvA("TBD_NOCULL", nullptr, 0) > 0;
     const auto visibleTo = [&](const tbd::Sphere& world) {
         if (noCull) return (uint8_t)(kVisibleCamera | (shadows ? kVisibleSun : 0) | (tightCasters.empty() ? 0 : kVisibleTight));
         uint8_t flags = 0;
@@ -3988,9 +3989,9 @@ void RenderFrame() {
     static float waterTest[5] = {};
     static const bool waterTestOn = [] {
         char v[128] = {};
-        return GetEnvironmentVariableA("TBD_WATER_TEST", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f %f", waterTest, waterTest + 1, waterTest + 2, waterTest + 3, waterTest + 4) == 5;
+        return tbd::platform::GetEnvA("TBD_WATER_TEST", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f %f", waterTest, waterTest + 1, waterTest + 2, waterTest + 3, waterTest + 4) == 5;
     }();
-    static const int waterTestFrames = [] { char v[32] = {}; return GetEnvironmentVariableA("TBD_WATER_TEST_FRAMES", v, sizeof(v)) > 0 ? atoi(v) : 0; }();
+    static const int waterTestFrames = [] { char v[32] = {}; return tbd::platform::GetEnvA("TBD_WATER_TEST_FRAMES", v, sizeof(v)) > 0 ? atoi(v) : 0; }();
     static int waterTestFrame = 0;
     static tbd::MeshId waterTestMesh = tbd::kInvalidMesh;
     static const tbd::Renderer* waterTestOwner = nullptr;
@@ -4028,7 +4029,7 @@ void RenderFrame() {
 
     traceMark(kTracePre);
     FrameMark("water");
-    static const bool matLab = GetEnvironmentVariableA("TBD_MATLAB", nullptr, 0) > 0; // see material_lab.h
+    static const bool matLab = tbd::platform::GetEnvA("TBD_MATLAB", nullptr, 0) > 0; // see material_lab.h
     static tbd::material_lab::Lab materialLab;
     if (matLab) materialLab.Build(r); // makes textures, so it runs before the frame opens
     RoadsSync(r);                       // road textures and meshes: also before the frame opens
@@ -4065,7 +4066,7 @@ void RenderFrame() {
         // camera pays for no copies. TBD_SHADOW_CACHE=0 turns this off.
         static const bool sunCacheOn = [] {
             char v[8] = {};
-            return GetEnvironmentVariableA("TBD_SHADOW_CACHE", v, sizeof(v)) == 0 || v[0] != '0';
+            return tbd::platform::GetEnvA("TBD_SHADOW_CACHE", v, sizeof(v)) == 0 || v[0] != '0';
         }();
         uint64_t sunKey = 14695981039346656037ull;
         const auto mix = [&](const void* data, size_t bytes) {
@@ -4159,7 +4160,7 @@ void RenderFrame() {
     };
     // Depth pre-pass: the opaque parts lay down depth first with no pixel shader, so the lit shader then runs about once per pixel
     // instead of four times (ground under street under cobbles, buildings behind buildings). TBD_PREPASS=0 turns it off.
-    static const bool prepassOn = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_PREPASS", v, sizeof(v)) == 0 || v[0] != '0'; }();
+    static const bool prepassOn = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_PREPASS", v, sizeof(v)) == 0 || v[0] != '0'; }();
     const auto drawInstanced = [&] {
         r.SetScenePrepass(0);
         uint64_t mark = trisNow();
@@ -4360,7 +4361,7 @@ void RenderFrame() {
         if (!ghostTris.empty()) r.DrawTransient(ghostTris.data(), (uint32_t)ghostTris.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), false);
         if (!ghostLines.empty()) r.DrawTransient(ghostLines.data(), (uint32_t)ghostLines.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), false);
     }
-    static const bool navDebug = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_NAVDEBUG", v, sizeof(v)) > 0 && v[0] != '0'; }();
+    static const bool navDebug = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_NAVDEBUG", v, sizeof(v)) > 0 && v[0] != '0'; }();
     if (navDebug && !testShot && g_npcs.Active()) g_npcs.DebugDraw(r, viewProj, g_player.Placed() ? g_player.State().feet : g_engine.camera.target);
     if (static std::vector<tbd::Vertex> brush; !testShot && !g_play.active && (brush.clear(), tbd::character::BrushLines(brush))) // Character Creator hair brush
         r.DrawTransient(brush.data(), (uint32_t)brush.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), false);
@@ -4389,7 +4390,7 @@ void RenderFrame() {
     if (g_engine.terrain.params.enabled)
         lines.push_back("TERRAIN " + std::to_string(g_engine.terrain.LoadedChunks()) + " CHUNKS");
     if (g_stream.Active()) lines.push_back(g_stream.StatusLine());
-    static const bool drawCatsLine = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
+    static const bool drawCatsLine = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
     if (drawCatsLine) { // the building budget's two numbers, and the shadow pass
         lines.push_back("ZONED " + Grouped(g_drawCatsShown.draws[kCatZoned]) + " DRAWS " + Grouped(g_drawCatsShown.tris[kCatZoned] / 1000) + "K TRIS");
         lines.push_back("SHADOW " + Grouped(g_drawCatsShown.draws[kCatShadow]) + " DRAWS " + Grouped(g_drawCatsShown.tris[kCatShadow] / 1000) + "K TRIS");
@@ -4400,12 +4401,12 @@ void RenderFrame() {
         snprintf(speed, sizeof(speed), "FLY SPEED %.0f", g_engine.flySpeed);
         lines.push_back(speed);
     }
-    if (GetTickCount64() < g_engine.toastUntil) lines.push_back(g_engine.toast);
+    if (tbd::platform::TickCountMs() < g_engine.toastUntil) lines.push_back(g_engine.toast);
     if (g_play.active) { // just the FPS chip and the controls
         char mode[48];
         snprintf(mode, sizeof(mode), "%s SPEED %.0f", g_play.player ? "PLAYER" : g_play.walking ? "WALK" : "FLY", g_play.player ? g_player.Speed() : g_play.Speed());
         lines = {fps, mode, g_player.Active() ? "WASD MOVE  SHIFT RUN  SPACE JUMP   G FLY   ESC STOP" : "G WALK FLY   ESC STOP"};
-        if (GetTickCount64() < g_engine.toastUntil) lines.push_back(g_engine.toast);
+        if (tbd::platform::TickCountMs() < g_engine.toastUntil) lines.push_back(g_engine.toast);
     }
     float statsBottom = 0.0f; // where the top-left stats text ends: the in-game GUI keeps its panels below it
     if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines);
@@ -4431,8 +4432,8 @@ void RenderFrame() {
         int w = 0, h = 0;
         if (r.CapturedFrame(px, w, h)) {
             for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-            BITMAPFILEHEADER fh = {0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + px.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
-            BITMAPINFOHEADER ih = {sizeof(ih), w, -h, 1, 32, BI_RGB};
+            tbd::BmpFileHeader fh = {0x4D42, (uint32_t)(sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader) + px.size()), 0, 0, sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader)};
+            tbd::BmpInfoHeader ih = {sizeof(ih), w, -h, 1, 32, tbd::kBmpRgb};
             if (FILE* f = fopen(playtestShot.c_str(), "wb")) {
                 fwrite(&fh, sizeof(fh), 1, f); fwrite(&ih, sizeof(ih), 1, f); fwrite(px.data(), 1, px.size(), f);
                 fclose(f);
@@ -4443,8 +4444,8 @@ void RenderFrame() {
     }
     // TBD_PLAYTEST with TBD_BENCH=<file>: frame times of the moving run, once the ground has loaded. A frame that wrote a shot is left out; the worst ones are listed.
     if (g_playtest.Active() && g_player.Placed()) {
-        static wchar_t path[MAX_PATH] = {};
-        static const bool wanted = GetEnvironmentVariableW(L"TBD_BENCH", path, MAX_PATH) > 0;
+        static wchar_t path[tbd::platform::kMaxPath] = {};
+        static const bool wanted = tbd::platform::GetEnvW(L"TBD_BENCH", path, tbd::platform::kMaxPath) > 0;
         static std::vector<std::pair<double, int>> times;
         static int64_t last = {};
         static int frame = 0;
@@ -4457,7 +4458,7 @@ void RenderFrame() {
             std::sort(times.begin(), times.end());
             double sum = 0;
             for (const auto& t : times) sum += t.first;
-            if (FILE* f = _wfopen(path, L"w")) {
+            if (FILE* f = tbd::platform::WOpen(path, L"w")) {
                 const size_t n = times.size();
                 fprintf(f, "%s frames=%zu avg_ms=%.2f p50_ms=%.2f p99_ms=%.2f p999_ms=%.2f max_ms=%.2f over_16ms=%zu over_33ms=%zu\n", r.Name(), n, sum / n, times[n / 2].first, times[n * 99 / 100].first, times[n * 999 / 1000].first, times.back().first,
                         (size_t)std::count_if(times.begin(), times.end(), [](const auto& t) { return t.first > 16.67; }), (size_t)std::count_if(times.begin(), times.end(), [](const auto& t) { return t.first > 33.3; }));
@@ -4467,16 +4468,16 @@ void RenderFrame() {
         }
     }
     if (g_playtest.Finished()) {
-        char reportPath[MAX_PATH] = {};
-        if (g_npcs.Active() && GetEnvironmentVariableA("TBD_NPC_REPORT", reportPath, MAX_PATH) > 0)
+        char reportPath[tbd::platform::kMaxPath] = {};
+        if (g_npcs.Active() && tbd::platform::GetEnvA("TBD_NPC_REPORT", reportPath, tbd::platform::kMaxPath) > 0)
             if (FILE* f = fopen(reportPath, "w")) { g_npcs.WriteReport(f, r.Name()); fclose(f); }
         tbd::Log("Playtest: done");
         PostQuitMessage(0);
     }
     if (captureFrames == 1) { g_vegetation.LogCounts(r); g_water.LogRipples(r); }
     // TBD_BENCH=<file.txt> with TBD_CAPTURE: frame times after a 60 frame warm-up, written when the capture quits.
-    static wchar_t benchPath[MAX_PATH] = {};
-    static const bool bench = GetEnvironmentVariableW(L"TBD_BENCH", benchPath, MAX_PATH) > 0;
+    static wchar_t benchPath[tbd::platform::kMaxPath] = {};
+    static const bool bench = tbd::platform::GetEnvW(L"TBD_BENCH", benchPath, tbd::platform::kMaxPath) > 0;
     if (bench && captureFrames > 0) {
         static std::vector<double> times;
         static int64_t last = {};
@@ -4487,8 +4488,8 @@ void RenderFrame() {
         const double frameMs = (now - last) * 1000.0 / g_engine.tickFreq;
         if (measured) times.push_back(frameMs);
         last = now;
-        static wchar_t logPath[MAX_PATH] = {};
-        static FILE* frameLog = GetEnvironmentVariableW(L"TBD_FRAMELOG", logPath, MAX_PATH) > 0 ? _wfopen(logPath, L"w") : nullptr;
+        static wchar_t logPath[tbd::platform::kMaxPath] = {};
+        static FILE* frameLog = tbd::platform::GetEnvW(L"TBD_FRAMELOG", logPath, tbd::platform::kMaxPath) > 0 ? tbd::platform::WOpen(logPath, L"w") : nullptr;
         static int64_t lastEnd = {};
         if (frameLog && measured) {
             const auto ms = [&](int64_t a, int64_t b) { return (b - a) * 1000.0 / g_engine.tickFreq; };
@@ -4509,7 +4510,7 @@ void RenderFrame() {
             std::sort(times.begin(), times.end());
             double sum = 0;
             for (double t : times) sum += t;
-            if (FILE* f = _wfopen(benchPath, L"w")) {
+            if (FILE* f = tbd::platform::WOpen(benchPath, L"w")) {
                 fprintf(f, "%s frames=%zu avg_ms=%.2f p50_ms=%.2f p99_ms=%.2f fps=%.1f\n", r.Name(), times.size(), sum / times.size(),
                         times[times.size() / 2], times[times.size() * 99 / 100], 1000.0 * times.size() / sum);
                 size_t over = 0;
@@ -4524,9 +4525,9 @@ void RenderFrame() {
         int w = 0, h = 0;
         if (r.CapturedFrame(px, w, h)) {
             for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-            BITMAPFILEHEADER fh = {0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + px.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
-            BITMAPINFOHEADER ih = {sizeof(ih), w, -h, 1, 32, BI_RGB};
-            if (FILE* f = _wfopen(capturePath, L"wb")) {
+            tbd::BmpFileHeader fh = {0x4D42, (uint32_t)(sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader) + px.size()), 0, 0, sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader)};
+            tbd::BmpInfoHeader ih = {sizeof(ih), w, -h, 1, 32, tbd::kBmpRgb};
+            if (FILE* f = tbd::platform::WOpen(capturePath, L"wb")) {
                 fwrite(&fh, sizeof(fh), 1, f); fwrite(&ih, sizeof(ih), 1, f); fwrite(px.data(), 1, px.size(), f);
                 fclose(f);
             }
@@ -4551,7 +4552,7 @@ void RenderFrame() {
         g_drawCats.draws[kCatShadow] = end.shadowDraws;
         g_drawCats.tris[kCatShadow] = end.shadowTriangles;
         g_drawCatsShown = g_drawCats;
-        static const bool drawCatsLog = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
+        static const bool drawCatsLog = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
         static uint32_t drawCatsFrame = 0;
         if (drawCatsLog && ++drawCatsFrame % 300 == 0) {
             std::string line;
@@ -5158,7 +5159,7 @@ void OnCommand(UINT id) {
     case IDM_FRAME: FrameSelected(); break;
     case IDM_TERRAIN: g_engine.terrain.params.enabled = !g_engine.terrain.params.enabled; break;
     case IDM_NEWSEED:
-        g_engine.terrain.params.seed = (int)(GetTickCount64() & 0x7FFFFFFF);
+        g_engine.terrain.params.seed = (int)(tbd::platform::TickCountMs() & 0x7FFFFFFF);
         g_engine.terrain.params.enabled = true;
         break;
     case IDM_RADIUS_NEAR: g_engine.terrain.params.radius = 5; break;
@@ -5624,8 +5625,8 @@ void Engine_Run() {
         // Another app in front: at most 30 frames a second; the editor, outside Play, at most TBD_EDITORFPS (default 60, 0 for
         // the display's rate). The same image, fewer of them; vsync paces the loop otherwise. A message (input, a resize) wakes
         // the wait early. TBD_NOTHROTTLE and the scripted runs keep every frame.
-        static const bool throttle = !GetEnvironmentVariableA("TBD_NOTHROTTLE", nullptr, 0) && !GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) &&
-                                     !GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) && !GetEnvironmentVariableA("TBD_PLAYTEST", nullptr, 0);
+        static const bool throttle = !tbd::platform::GetEnvA("TBD_NOTHROTTLE", nullptr, 0) && !tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) &&
+                                     !tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0) && !tbd::platform::GetEnvA("TBD_PLAYTEST", nullptr, 0);
         static HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
         static int64_t freq = [] { int64_t f; f = tbd::platform::TickFrequency(); return f; }(), last = {};
         DWORD foreground = 0;
@@ -5732,9 +5733,9 @@ Args ParseArgs(const std::wstring& cmdline) {
 // engine was started without a project.
 std::wstring AssetsFolderFor(const std::wstring& projectFolder) {
     std::wstring base = projectFolder.empty() ? tbd::ExeDirectory() + L"\\..\\Assets" : tbd::Join(projectFolder, L"Assets");
-    wchar_t full[MAX_PATH] = {};
-    const DWORD n = GetFullPathNameW(base.c_str(), MAX_PATH, full, nullptr);
-    return n > 0 && n < MAX_PATH ? std::wstring(full) : base;
+    wchar_t full[tbd::platform::kMaxPath] = {};
+    const DWORD n = GetFullPathNameW(base.c_str(), tbd::platform::kMaxPath, full, nullptr);
+    return n > 0 && n < tbd::platform::kMaxPath ? std::wstring(full) : base;
 }
 
 } // namespace

@@ -103,7 +103,7 @@ inline void Restore(const std::vector<::tbd::Entity>& target) {
     S().have = true;
 }
 
-inline double NowSeconds() { return (double)GetTickCount64() / 1000.0; }
+inline double NowSeconds() { return (double)tbd::platform::TickCountMs() / 1000.0; }
 
 // Once per frame. Quiet while a button is held, a drag runs, a scene loads, or Play owns the scene.
 inline void Checkpoint() {

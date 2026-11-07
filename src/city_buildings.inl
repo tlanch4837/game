@@ -30,14 +30,14 @@ enum Mode : int { kAuto = 0, kModeNear, kModeVol, kModeMerged };
 
 inline int EnvI(const char* name, int fallback) {
     char v[32] = {};
-    return GetEnvironmentVariableA(name, v, sizeof(v)) > 0 ? atoi(v) : fallback;
+    return tbd::platform::GetEnvA(name, v, sizeof(v)) > 0 ? atoi(v) : fallback;
 }
 inline int forceRuntime = -2; // -2: not read yet; CityBuildingsCycleForce changes it
 inline int ForcedMode() {
     if (forceRuntime != -2) return forceRuntime;
     return forceRuntime = [] {
         char v[16] = {};
-        if (GetEnvironmentVariableA("TBD_CHUNK_FORCE", v, sizeof(v)) == 0) return (int)kAuto;
+        if (tbd::platform::GetEnvA("TBD_CHUNK_FORCE", v, sizeof(v)) == 0) return (int)kAuto;
         const std::string s = v;
         return s == "near" ? (int)kModeNear : s == "vol" ? (int)kModeVol : s == "merged" ? (int)kModeMerged : (int)kAuto;
     }();
@@ -46,14 +46,14 @@ inline int ForcedMode() {
 inline int QualityCap() {
     static const int q = [] {
         char v[16] = {};
-        if (GetEnvironmentVariableA("TBD_CHUNK_QUALITY", v, sizeof(v)) == 0) return 2;
+        if (tbd::platform::GetEnvA("TBD_CHUNK_QUALITY", v, sizeof(v)) == 0) return 2;
         const std::string s = v;
         return s == "low" ? 0 : s == "medium" ? 1 : 2;
     }();
     return q;
 }
 inline bool FarMerged() {
-    static const bool on = [] { char v[16] = {}; return GetEnvironmentVariableA("TBD_CHUNK_FAR", v, sizeof(v)) > 0 && std::string(v) == "merged"; }();
+    static const bool on = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_CHUNK_FAR", v, sizeof(v)) > 0 && std::string(v) == "merged"; }();
     return on;
 }
 
@@ -264,7 +264,7 @@ inline std::wstring CacheFile(const Cell& c) {
     return dir + name;
 }
 inline bool CacheLoad(tbd::Renderer& r, Cell& c) {
-    FILE* f = _wfopen(CacheFile(c).c_str(), L"rb");
+    FILE* f = tbd::platform::WOpen(CacheFile(c).c_str(), L"rb");
     if (!f) return false;
     const size_t bytes = (size_t)tile * tbd::kChunkFaceCount * tile * 4;
     std::vector<uint8_t> data(bytes * 3);
@@ -291,7 +291,7 @@ inline void CacheSave(tbd::Renderer& r, Cell& c) {
     c.saved = true;
     if (!ReadStrip(r, c, ch)) { tbd::Log("City buildings: could not read cell %d,%d back for the cache", c.key.x, c.key.z); return; }
     const std::wstring file = CacheFile(c);
-    FILE* f = _wfopen((file + L".tmp").c_str(), L"wb");
+    FILE* f = tbd::platform::WOpen((file + L".tmp").c_str(), L"wb");
     if (!f) return;
     for (const auto& v : ch) fwrite(v.data(), 1, v.size(), f);
     fclose(f);
@@ -690,7 +690,7 @@ void CityBuildingsCycleForce() {
     static const char* const kName[4] = {"automatic", "real meshes", "chunk volumes", "merged proxies"};
     forceRuntime = (ForcedMode() + 1) % 4;
     g_engine.toast = std::string("Zoned buildings: ") + kName[forceRuntime];
-    g_engine.toastUntil = GetTickCount64() + 2000;
+    g_engine.toastUntil = tbd::platform::TickCountMs() + 2000;
     tbd::Log("City buildings: forced to %s", kName[forceRuntime]);
 }
 
@@ -877,9 +877,9 @@ inline std::wstring Dir() {
     return d;
 }
 inline void WriteBmp(const std::wstring& file, const uint8_t* bgra, int w, int h) {
-    BITMAPFILEHEADER fh = {0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + (size_t)w * h * 4), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
-    BITMAPINFOHEADER ih = {sizeof(ih), w, -h, 1, 32, BI_RGB};
-    if (FILE* f = _wfopen(file.c_str(), L"wb")) {
+    tbd::BmpFileHeader fh = {0x4D42, (uint32_t)(sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader) + (size_t)w * h * 4), 0, 0, sizeof(tbd::BmpFileHeader) + sizeof(tbd::BmpInfoHeader)};
+    tbd::BmpInfoHeader ih = {sizeof(ih), w, -h, 1, 32, tbd::kBmpRgb};
+    if (FILE* f = tbd::platform::WOpen(file.c_str(), L"wb")) {
         fwrite(&fh, sizeof(fh), 1, f);
         fwrite(&ih, sizeof(ih), 1, f);
         fwrite(bgra, 1, (size_t)w * h * 4, f);

@@ -225,13 +225,13 @@ bool SaveCityGame(int slot) {
     }
     SimSaveLines(o);
     const std::string text = o.str();
-    FILE* f = _wfopen(GameSavePath(slot, L".tbdgame").c_str(), L"wb");
+    FILE* f = tbd::platform::WOpen(GameSavePath(slot, L".tbdgame").c_str(), L"wb");
     const bool ok = f && fwrite(text.data(), 1, text.size(), f) == text.size();
     if (f) fclose(f);
     if (ok) { // the terrain edits beside it
         std::vector<uint8_t> bytes;
         g_engine.terrain.field.Save(bytes);
-        FILE* t = _wfopen(GameSavePath(slot, L".hfd").c_str(), L"wb");
+        FILE* t = tbd::platform::WOpen(GameSavePath(slot, L".hfd").c_str(), L"wb");
         if (t) {
             fwrite(bytes.data(), 1, bytes.size(), t);
             fclose(t);
@@ -281,7 +281,7 @@ bool LoadCityGame(int slot) {
     g_engine.terrain.params.seed = seed;
     g_engine.terrain.field.Clear();
     {
-        FILE* t = _wfopen(GameSavePath(slot, L".hfd").c_str(), L"rb");
+        FILE* t = tbd::platform::WOpen(GameSavePath(slot, L".hfd").c_str(), L"rb");
         if (t) {
             std::vector<uint8_t> bytes;
             uint8_t chunk[65536];
@@ -457,7 +457,7 @@ void GameSync() {
         g_gameAction = 0;
         if (a == 1) SaveCityGame(g_gameSlot);
         else if (a == 2) LoadCityGame(g_gameSlot);
-        else if (a == 3) NewCityGame((int)(GetTickCount64() % 900000ull) + 100);
+        else if (a == 3) NewCityGame((int)(tbd::platform::TickCountMs() % 900000ull) + 100);
     }
     if (g_pendingZones.empty() || g_zones.builtFrom != g_roads.net.version || g_zones.cells.empty()) return;
     std::unordered_map<long long, std::vector<int>> grid; // 16 m buckets

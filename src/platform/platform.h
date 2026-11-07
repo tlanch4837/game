@@ -37,6 +37,20 @@ std::string WideToUtf8(const std::wstring& w);
 // PNG / JPEG in memory -> top-down RGBA8, straight alpha. False if it cannot be decoded.
 bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rgba, int& width, int& height);
 
+// Environment variables (the game's TBD_* test switches), with GetEnvironmentVariableA/W's contract: returns the
+// value's length when it fits in `size` (written, NUL terminated), the size needed including the NUL when it does not,
+// and 0 when unset or empty. `buf` may be null with size 0 to test for presence.
+uint32_t GetEnvA(const char* name, char* buf, uint32_t size);
+uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size);
+
+// Milliseconds since boot (Windows: GetTickCount64). For coarse timeouts such as toasts.
+uint64_t TickCountMs();
+
+// Path buffer size the game's fixed buffers use (Windows MAX_PATH).
+constexpr int kMaxPath = 260;
+// _wfopen: wide path and mode. nullptr on failure.
+FILE* WOpen(const wchar_t* path, const wchar_t* mode);
+
 // Keys and mouse buttons the game polls. Values are the Windows virtual-key codes, so the Windows side is a plain cast.
 enum class Key : uint8_t {
     MouseLeft = 0x01, MouseRight = 0x02, MouseMiddle = 0x04,
