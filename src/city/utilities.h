@@ -17,6 +17,8 @@
 // Platform free: the host feeds the road network, the zone grid and the ground, and draws the results.
 #pragma once
 #include <algorithm>
+#include <array>
+#include <unordered_map>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -97,17 +99,19 @@ inline const std::vector<UtilDef>& UtilDefs() {
         {"Water Tower", "Water Tower", "Compact groundwater source for dense areas.", UTab::Water, Util::Water,
          "assets/buildings/water/glb/WT_2x2_tower.glb", 2, 2, 29.0f, 2500.0f, false, 45000, 450, "Wants groundwater (not enforced yet)", {0.40f, 0.70f, 0.95f}},
         {"Water Pumping Station", "Pumping", "Pumps surface water from a river, lake or sea. Keep it upstream of sewage outlets.", UTab::Water, Util::Water,
-         "assets/buildings/water/glb/WT_4x3_pumping.glb", 4, 3, 8.6f, 20000.0f, false, 200000, 2000, "Shoreline, back of lot in water (not enforced yet)", {0.25f, 0.55f, 0.85f}},
+         "assets/buildings/water/glb/WT_4x3_pumping.glb", 4, 3, 8.6f, 20000.0f, false, 200000, 2000, "Shoreline: back of lot on the water", {0.25f, 0.55f, 0.85f}},
         {"Large Water Pumping Station", "Large Pumping", "High-capacity shoreline station with extension pump houses.", UTab::Water, Util::Water,
-         "assets/buildings/water/glb/WT_6x4_pumping_large.glb", 6, 4, 14.2f, 80000.0f, false, 750000, 6500, "Shoreline, back of lot in water (not enforced yet)", {0.20f, 0.45f, 0.80f}},
+         "assets/buildings/water/glb/WT_6x4_pumping_large.glb", 6, 4, 14.2f, 80000.0f, false, 750000, 6500, "Shoreline: back of lot on the water", {0.20f, 0.45f, 0.80f}},
         {"Sewage Outlet", "Outlet", "Dumps untreated sewage straight into the water. Cheap but pollutes downstream.", UTab::Water, Util::Sewage,
-         "assets/buildings/water/glb/WT_2x2_sewage_outlet.glb", 2, 2, 3.3f, 20000.0f, false, 60000, 600, "Shoreline, back of lot in water (not enforced yet)", {0.60f, 0.50f, 0.30f}},
+         "assets/buildings/water/glb/WT_2x2_sewage_outlet.glb", 2, 2, 3.3f, 20000.0f, false, 60000, 600, "Shoreline: back of lot on the water", {0.60f, 0.50f, 0.30f}},
         {"Wastewater Treatment Plant", "Treatment", "Cleans sewage before releasing it. Much less water pollution than an outlet.", UTab::Water, Util::Sewage,
          "assets/buildings/water/glb/WT_6x6_treatment.glb", 6, 6, 16.0f, 60000.0f, false, 900000, 7000, "Shoreline or with an outfall pipe", {0.45f, 0.65f, 0.40f}},
     };
     return v;
 }
 inline bool UtilDefBackup(int def) { return UtilDefs()[def].backup; }
+// Surface-water buildings (pumping stations, the sewage outlet) take or dump water: the back of the lot must touch the sea.
+inline bool UtilDefShore(int def) { const char* r = UtilDefs()[def].rule; return r && std::string(r).rfind("Shoreline", 0) == 0; }
 
 // What a building takes from each network, per 8 m cell of its lot, by zone type (ZoneTypes() order).
 inline float UtilDemandPerCell(Util u, int zoneType) {
@@ -196,6 +200,9 @@ public:
     std::vector<UtilLine> lines;
     uint64_t version = 1;
     std::vector<uint64_t> removed; // sources demolished since the host last emptied this (it deletes their entities)
+    // Cities: Skylines 1 style conduction: a building passes electricity to buildings (and sources) within this many metres
+    // of its lot, so a block touching a powered one is powered too, roads or not. 0 = off (roads and lines only).
+    float conductRange = 0.0f;
 
     // ------------------------------------------------------------------------------------------ placing a source
     // The best placement for def with the cursor at p. With snapRoad the building jumps to the nearest utility road within
@@ -400,6 +407,7 @@ public:
                 const Lot& l = zones.lots[z];
                 if (l.alive && l.hasRoad && l.frontSeg >= 0 && l.frontSeg < S && CarriesUtilities(net, l.frontSeg)) dsu.Join(lotBase + z, l.frontSeg);
             }
+            if (kind == Util::Electricity && conductRange > 0.0f) Conduct(zones, B, srcBase, lotBase, dsu);
             // supply and demand per network
             std::vector<float> supply(total, 0.0f), backup(total, 0.0f), demand(total, 0.0f);
             for (int i = 0; i < B; ++i) {
@@ -456,17 +464,57 @@ private:
         void Join(int a, int b) { p[Find(a)] = Find(b); }
     };
 
+    // Joins every lot (and electricity source) to the ones within conductRange of it, through a bucket grid: O(n).
+    void Conduct(const ZoneGrid& zones, int B, int srcBase, int lotBase, Dsu& dsu) const {
+        struct E { BlockRect r; int node; };
+        std::vector<E> es;
+        for (int z = 0; z < (int)zones.lots.size(); ++z) {
+            const Lot& l = zones.lots[z];
+            if (l.alive && l.Built()) es.push_back({RectOf(l.c, l.front, l.w, l.d), lotBase + z});
+        }
+        for (int i = 0; i < B; ++i)
+            if (items[i].alive && UtilDefs()[items[i].def].kind == Util::Electricity)
+                es.push_back({RectOf(items[i].c, items[i].front, UtilDefs()[items[i].def].w, UtilDefs()[items[i].def].d), srcBase + i});
+        const float cell = 64.0f;
+        std::unordered_map<uint64_t, std::vector<int>> grid;
+        auto key = [](int x, int z) { return ((uint64_t)(uint32_t)x << 32) | (uint32_t)z; };
+        std::vector<std::array<int, 4>> span(es.size());
+        for (size_t i = 0; i < es.size(); ++i) {
+            const BlockRect& r = es[i].r;
+            const float ext = std::sqrt(r.hw * r.hw + r.hd * r.hd) + conductRange, extz = ext; // the rect's circumcircle
+            span[i] = {(int)std::floor((r.c.x - ext) / cell), (int)std::floor((r.c.z - extz) / cell), (int)std::floor((r.c.x + ext) / cell), (int)std::floor((r.c.z + extz) / cell)};
+            for (int gz = span[i][1]; gz <= span[i][3]; ++gz)
+                for (int gx = span[i][0]; gx <= span[i][2]; ++gx) grid[key(gx, gz)].push_back((int)i);
+        }
+        for (auto& [k, list] : grid)
+            for (size_t a = 0; a < list.size(); ++a)
+                for (size_t b = a + 1; b < list.size(); ++b) {
+                    const E &ea = es[(size_t)list[a]], &eb = es[(size_t)list[b]];
+                    if (dsu.Find(ea.node) != dsu.Find(eb.node) && Overlaps(ea.r, eb.r, conductRange)) dsu.Join(ea.node, eb.node);
+                }
+    }
+
     void Validate(const PlaceContext& cx, const UtilDef& D, Placement& r) const {
         const BlockRect me = RectOf(r.c, r.front, D.w, D.d);
         const Frame fr(r.c, r.front);
         const float W = D.W(), H = D.D();
+        const bool shore = UtilDefShore((int)(&D - UtilDefs().data()));
+        if (shore && cx.HasWater()) { // the same idea as a harbour's coast: water right behind the lot (the map's sea)
+            bool wet = false;
+            for (float back = 0.0f; back <= 24.0f && !wet; back += 4.0f)
+                for (int ix = 0; ix <= 4 && !wet; ++ix) wet = cx.IsWater(fr.World(W * (ix / 4.0f - 0.5f), -H * 0.5f - back), 0.3f);
+            if (!wet) {
+                r.error = "Must be built on the shoreline, back to the water";
+                return;
+            }
+        }
         float lo = 1e9f, hi = -1e9f;
         for (int iz = 0; iz <= 4; ++iz)
             for (int ix = 0; ix <= 4; ++ix) {
                 const V2 q = fr.World(W * (ix / 4.0f - 0.5f), H * (iz / 4.0f - 0.5f));
                 const float g = cx.Ground(q);
                 lo = std::min(lo, g), hi = std::max(hi, g);
-                if (cx.IsWater(q, 0.3f)) {
+                if (cx.IsWater(q, 0.3f) && !(shore && iz == 0)) { // a shore building's back edge may stand in the water
                     r.error = "Cannot build on water";
                     return;
                 }

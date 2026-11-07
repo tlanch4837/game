@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "sim_cells.h"
+#include "sim_flags.h"
 #include "sim_tuning.h"
 
 namespace tbd {
@@ -44,9 +45,12 @@ public:
         int64_t resWeighted = 0; // residents x wealth permille
         int64_t jobs[3] = {};
         for (const CellSim& c : s.sim) {
-            for (int w = 0; w < 4; ++w) resWeighted += (int64_t)c.wealth[w] * kWealth[w];
-            for (int k = 0; k < 3; ++k) jobs[k] += c.employed[k];
+            // a cell short of power or water works at reduced efficiency (sim_flags.h): it pays less tax
+            const int64_t eff = CellEfficiencyPermille(c);
+            for (int w = 0; w < 4; ++w) resWeighted += (int64_t)c.wealth[w] * kWealth[w] * eff / 1000;
+            for (int k = 0; k < 3; ++k) jobs[k] += (int64_t)c.employed[k] * eff;
         }
+        for (int k = 0; k < 3; ++k) jobs[k] /= 1000;
         const int64_t perRes = (int64_t)t.taxResidentialPerResidentDay, perC = (int64_t)t.taxCommercialPerJobDay;
         const int64_t perI = (int64_t)t.taxIndustrialPerJobDay, perO = (int64_t)t.taxOfficePerJobDay;
         out[0] = resWeighted * perRes * taxRate10[0] / (1000 * 100);

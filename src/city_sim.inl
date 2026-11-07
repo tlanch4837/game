@@ -40,6 +40,8 @@ inline double EnvDouble(const char* name, double fallback) {
 } // namespace sim_host
 
 std::vector<uint8_t> g_simLotUtil; // per lot (zones.lots order): LotUtil flags from the last utilities solve
+std::vector<uint8_t> g_simFlags;   // per lot (zones.lots order): SimFlag bits (sim_flags.h), for the icons, overlays and info card
+uint64_t g_simFlagsVersion = 0;    // bumped when g_simFlags changed
 float g_simFunding[tbd::city::kServices] = {1, 1, 1, 1, 1, 1}; // S4's budget sliders scale the service radii
 uint64_t g_simCoverageRuns = 0;
 
@@ -69,6 +71,11 @@ void SimServices() {
                 g_simLotUtil[i] = (uint8_t)((u.elec ? kLotPower : 0) | (u.water ? kLotWater : 0) | (u.sewage ? kLotSewage : 0) | (u.road ? kLotRoad : 0));
             }
         ApplyUtilities(g_citySim, g_zones, g_simLotUtil);
+    }
+    { // the per-building flags: O(lots), every 10 game minutes (abandonment creeps up with time, so no cheaper key)
+        static std::vector<uint8_t> fresh;
+        ComputeSimFlags(g_zones, g_citySim, g_simGrowth, g_simTune, g_simLotUtil, fresh);
+        if (fresh != g_simFlags) g_simFlags.swap(fresh), ++g_simFlagsVersion;
     }
     // coverage: only when the services, the roads, the lots or the funding changed
     static uint64_t kTrans = ~0ull, kNet = ~0ull, kZones = ~0ull;
@@ -491,6 +498,7 @@ void SimInit() {
     if (done) return;
     done = true;
     g_sim.budgetMs = sim_host::EnvDouble("TBD_SIM_BUDGET_MS", 2.0);
+    g_util.conductRange = (float)sim_host::EnvDouble("TBD_UTIL_CONDUCT_M", 8.0); // CS1 style: power passes between touching buildings
     const double speed = sim_host::EnvDouble("TBD_SIM_SPEED", -1.0);
     if (speed >= 0.0) g_clock.speed = std::clamp((int)speed, 0, 2);
     g_clockBoost = (float)std::clamp(sim_host::EnvDouble("TBD_CLOCK_BOOST", 1.0), 0.1, 200.0);

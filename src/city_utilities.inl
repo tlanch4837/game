@@ -304,6 +304,8 @@ inline float EaseOutBack(float x) {
 }
 } // namespace ufx
 
+extern std::vector<uint8_t> g_simFlags; // city_sim.inl: SimFlag bits per lot (sim_flags.h)
+
 void UtilWorldLabels() {
     using namespace tbd::city;
     using tbd::gui::Rgba;
@@ -325,20 +327,23 @@ void UtilWorldLabels() {
         bool condemned;
         float demolishIn; // minutes
         bool lot;
+        uint8_t flags; // the sim's other problems: no workers, no customers, being abandoned
     };
     const tbd::Vec3 eye = g_engine.camera.Eye();
     std::vector<Item> items;
-    auto consider = [&](tbd::Vec3 at, uint64_t key, const UtilStatus& st, float noRoad, bool condemned, float demolishIn, bool lot) {
-        if (st.Ok()) return;
+    constexpr uint8_t kSimOnly = kFlagNoWorkers | kFlagNoCustomers | kFlagAbandoned;
+    auto consider = [&](tbd::Vec3 at, uint64_t key, const UtilStatus& st, float noRoad, bool condemned, float demolishIn, bool lot, uint8_t flags = 0) {
+        if (st.Ok() && !(flags & kSimOnly)) return;
         const tbd::Vec3 d = at - eye;
         const float dist = std::sqrt(tbd::Dot(d, d));
         if (dist > 420.0f) return;
-        items.push_back({dist, at, key, st, noRoad, condemned, demolishIn, lot});
+        items.push_back({dist, at, key, st, noRoad, condemned, demolishIn, lot, (uint8_t)(flags & kSimOnly)});
     };
     for (size_t i = 0; i < g_zones.lots.size(); ++i) {
         const Lot& l = g_zones.lots[i];
         if (!l.alive || !l.Built()) continue;
-        consider({l.c.x, l.y + ZoneModelHeight(l.path) + 5.0f, l.c.z}, l.id, g_utilReport.lots[i], l.noRoadMinutes, l.Condemned(), l.DemolishInMinutes(), true);
+        consider({l.c.x, l.y + ZoneModelHeight(l.path) + 5.0f, l.c.z}, l.id, g_utilReport.lots[i], l.noRoadMinutes, l.Condemned(), l.DemolishInMinutes(), true,
+                 i < g_simFlags.size() ? g_simFlags[i] : (uint8_t)0);
     }
     for (size_t i = 0; i < g_util.items.size() && i < g_utilReport.buildings.size(); ++i) {
         const UtilBuilding& b = g_util.items[i];
@@ -394,6 +399,17 @@ void UtilWorldLabels() {
                     std::snprintf(bd.text, sizeof(bd.text), "%s", UtilProblem((Util)u));
                     badges.push_back(bd);
                 }
+        static const struct { uint8_t bit; tbd::gui::Icon icon; int r, g, b; } kSim[] = {
+            {kFlagNoWorkers, tbd::gui::Icon::Citizens, 120, 110, 220}, {kFlagNoCustomers, tbd::gui::Icon::Cart, 60, 170, 120},
+            {kFlagAbandoned, tbd::gui::Icon::Skull, 90, 90, 96}};
+        for (const auto& f : kSim)
+            if (it.flags & f.bit) {
+                Badge bd{f.icon, Rgba(f.r, f.g, f.b), {}};
+                int bit = 0;
+                while ((1 << bit) != f.bit) ++bit;
+                std::snprintf(bd.text, sizeof(bd.text), "%s", SimFlagText(bit));
+                badges.push_back(bd);
+            }
         if (badges.empty()) continue;
         // the bubble: one disc per problem in a pill, with a pointer toward the building
         const float gap = std::round(3.0f * s), pad = std::round(3.0f * s);
