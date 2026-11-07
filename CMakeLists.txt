@@ -77,7 +77,7 @@ target_compile_definitions(cityengine PRIVATE TBD_HAVE_METAL=1)
 # metal-cpp manages its own references: no ARC in the Metal backend; the UIKit shell uses ARC.
 set_source_files_properties(src/render/renderer_metal.mm PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
 set_source_files_properties(src/platform/ios/main_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-target_link_libraries(cityengine PRIVATE "-framework Foundation" "-framework UIKit" "-framework QuartzCore" "-framework Metal")
+target_link_libraries(cityengine PRIVATE "-framework Foundation" "-framework CoreGraphics" "-framework UIKit" "-framework QuartzCore" "-framework Metal")
 
 set_target_properties(cityengine PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/src/platform/ios/Info.plist.in
