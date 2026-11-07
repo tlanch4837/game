@@ -4,6 +4,8 @@
 // Keep this as small as real callers justify (docs/platform_split_audit.md).
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <thread>
 
 namespace tbd::platform {
@@ -20,6 +22,11 @@ inline double NowMs() { return TicksToMs(Ticks()); }
 // timeoutMs passes. May return early (spuriously); callers re-check. WakeAddressAll only uses the address as a key.
 void WaitOnAddress(const volatile void* address, const void* expected, std::size_t size, uint32_t timeoutMs);
 void WakeAddressAll(const void* address);
+
+// Writable folder for rebuildable caches (nav meshes). Windows: the executable's folder. iOS: Library/Caches.
+std::filesystem::path CacheRoot();
+// fopen with a filesystem path (wide on Windows). Returns nullptr on failure.
+FILE* OpenFile(const std::filesystem::path& path, const char* mode);
 
 // Background worker threads (job system): below normal priority so the frame thread wins.
 void LowerThreadPriority(std::thread& t);

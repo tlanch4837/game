@@ -199,7 +199,8 @@ public:
 
     const char* Name() const override { return "D3D12"; }
 
-    bool Init(HWND window, int width, int height, bool validation) override {
+    bool Init(void* nativeWindow, int width, int height, bool validation) override {
+        const HWND window = (HWND)nativeWindow;
         w_ = (UINT)std::max(1, width);
         h_ = (UINT)std::max(1, height);
         UpdateRenderSize();

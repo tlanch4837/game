@@ -26,6 +26,20 @@ void WaitOnAddress(const volatile void* address, const void* expected, std::size
 
 void WakeAddressAll(const void* address) { ::WakeByAddressAll(const_cast<void*>(address)); }
 
+std::filesystem::path CacheRoot() {
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    const std::filesystem::path exe = path;
+    return exe.has_parent_path() ? exe.parent_path() : std::filesystem::path(L".");
+}
+
+FILE* OpenFile(const std::filesystem::path& path, const char* mode) {
+    wchar_t wmode[8] = {};
+    for (int i = 0; i < 7 && mode[i]; ++i) wmode[i] = (wchar_t)mode[i];
+    FILE* f = nullptr;
+    return _wfopen_s(&f, path.c_str(), wmode) == 0 ? f : nullptr;
+}
+
 void LowerThreadPriority(std::thread& t) {
     SetThreadPriority((HANDLE)t.native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
 }

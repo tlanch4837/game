@@ -2,6 +2,8 @@
 // Not compiled on Windows; first compiled by the Codemagic iOS build (unverified until then).
 #include "platform/platform.h"
 
+#import <Foundation/Foundation.h>
+
 #include <pthread.h>
 #include <time.h>
 #include <chrono>
@@ -22,6 +24,16 @@ void WaitOnAddress(const volatile void* address, const void* expected, std::size
 }
 
 void WakeAddressAll(const void*) {}
+
+std::filesystem::path CacheRoot() {
+    @autoreleasepool {
+        NSArray<NSString*>* dirs = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+        NSString* dir = dirs.count ? dirs[0] : NSTemporaryDirectory();
+        return std::filesystem::path(dir.fileSystemRepresentation);
+    }
+}
+
+FILE* OpenFile(const std::filesystem::path& path, const char* mode) { return std::fopen(path.c_str(), mode); }
 
 void LowerThreadPriority(std::thread& t) {
     // Lower the worker's scheduling priority a little; QoS classes can only be set on the calling thread.

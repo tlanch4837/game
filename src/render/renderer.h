@@ -7,7 +7,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <vector>
-#include <windows.h>
 #include "../platform/platform.h"
 
 #include <algorithm>
@@ -192,7 +191,7 @@ public:
 
     virtual const char* Name() const = 0;
     // `window` becomes the render target; it must not be used by another graphics API.
-    virtual bool Init(HWND window, int width, int height, bool validation) = 0;
+    virtual bool Init(void* nativeWindow, int width, int height, bool validation) = 0; // Windows: HWND. Apple: CAMetalLayer*
     virtual void Resize(int width, int height) = 0;
     // Internal resolution as a fraction of the window (clamped 0.5..1.0, see ScaledSize). Call outside BeginFrame..EndFrame;
     // before Init it is only remembered. Targets are made again when it changes.

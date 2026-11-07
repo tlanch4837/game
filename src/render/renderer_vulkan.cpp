@@ -96,7 +96,8 @@ public:
 
     const char* Name() const override { return "VULKAN"; }
 
-    bool Init(HWND window, int width, int height, bool validation) override {
+    bool Init(void* nativeWindow, int width, int height, bool validation) override {
+        const HWND window = (HWND)nativeWindow;
         w_ = (uint32_t)std::max(1, width);
         h_ = (uint32_t)std::max(1, height);
         if (!CreateInstance(validation)) return false;
