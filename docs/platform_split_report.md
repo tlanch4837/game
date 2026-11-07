@@ -46,7 +46,7 @@ and cells (40) as before the split, and `TBD_CITY_STRESS=200` matches the origin
 - Editor mouse and keyboard by hand (select, drags, wheel, Play, the panels). A synthetic-message test could not drive the
   viewport for either the old or the new exe, so input changes were checked by reading the diff only.
 - The nav-mesh cache, the streaming RAM cap and the process-start log line were not reached in the test runs.
-- iOS: see the Codemagic section below. Nothing has run on a device yet.
+- iOS: launches on the iPad and draws the same view as Windows; touch, audio and performance not yet checked.
 
 ## Codemagic
 
@@ -59,8 +59,8 @@ Workflow `ios-sideload-ipa` on branch `ios-metal`, 2026-11-07:
 | #8 | 0edd544 | failed (link) | everything compiled; the Jolt / Recast / Luau static libraries were not found because build_ios.sh moves CONFIGURATION_BUILD_DIR |
 | #9 | 0c6923a | **passed** | `cityengine.ipa` produced (unsigned, arm64, iOS 16+), with the game module, Jolt, Recast, Luau and the Metal backend |
 
-Not yet seen: the app running on the iPad. Install the build #9 IPA with Sideloadly and check that it launches, draws the
-city map (terrain, roads; no models or textures without assets), and that touch, pan and pinch move the camera.
+On the iPad (iPadOS 26), installed with Sideloadly: the build #9 IPA launches into the same view as the Windows engine
+viewport (reported by the user, 2026-11-07). Touch, pan, pinch, audio and performance on device are not yet checked.
 
 ## Next steps
 
