@@ -11,3 +11,6 @@ makehuman.zip
 *.whl
 # local Claude settings
 .claude/settings.local.json
+
+# prebuilt ONNX Runtime SDK (copy in by hand)
+third_party/onnxruntime/

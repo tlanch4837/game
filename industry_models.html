@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Industry Models</title>
+<style>
+  :root { --bg:#14171b; --card:#1d2127; --line:#2c323a; --text:#e7e9ec; --dim:#8c96a3; --acc:#e8b84a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  h1 { font-size:16px; margin:0 12px 0 0; }
+  .sum { color:var(--dim); }
+  button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
+  button.on { border-color:var(--acc); color:var(--acc); }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:18px 16px 8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:12px; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .card canvas { display:block; width:100%; height:260px; cursor:grab; }
+  .meta { display:flex; justify-content:space-between; padding:8px 10px; border-top:1px solid var(--line); }
+  .tris { color:var(--acc); font-variant-numeric:tabular-nums; }
+  .note { color:var(--dim); padding:14px 16px 30px; max-width:900px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Specialized industry: hubs, vehicles, field props</h1>
+  <button id="wire">Wireframe</button>
+  <button id="spin" class="on">Auto-rotate</button>
+  <span class="sum" id="sum"></span>
+</header>
+<div id="root"></div>
+<p class="note">Geometry is dumped from the engine (<code>industry_dump</code> in src/city_industry.inl), so these are the in-game meshes. Walls and flat roofs are SPOM slabs: in-game their relief (pilasters, recessed windows, doors, ribs) is ray-marched from the texture's height channel; here they show the albedo only. Triangle counts include every slab face (10 per face).</p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="industry_models_data.js"></script>
+<script>
+const views = [];
+let wire = false, spin = true;
+const texCache = {};
+const loader = new THREE.TextureLoader();
+function tex(kind, slot) {
+  const k = kind + '_' + slot;
+  if (!texCache[k]) {
+    const t = loader.load('assets/industry/tex/' + k + '.png', () => views.forEach(v => v.dirty = true));
+    t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+    texCache[k] = t;
+  }
+  return texCache[k];
+}
+// Rigged cattle (tools/building_gen/gen_cattle.py): skinned GLBs playing their walk / graze clip.
+const mixers = [];
+function b64buf(s) { const b = atob(s.split(',')[1]); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u.buffer; }
+function buildGlb(m, g, mats) {
+  const proxy = new THREE.Mesh(new THREE.BoxGeometry(2.9, 1.8, 0.7), new THREE.MeshBasicMaterial({ visible: false }));
+  proxy.position.set(0.2, 0.9, 0); g.add(proxy);                         // framing before the file is parsed
+  const src = window.IND_GLB && IND_GLB[m.glb];
+  const done = gl => {
+    gl.scene.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.material.side = THREE.DoubleSide; mats.push(o.material); o.frustumCulled = false; } });
+    g.add(gl.scene);
+    const mx = new THREE.AnimationMixer(gl.scene);
+    const clip = gl.animations.find(a => a.name === m.clip) || gl.animations[0];
+    if (clip) mx.clipAction(clip).play();
+    mixers.push(mx);
+  };
+  const L = new THREE.GLTFLoader();
+  if (src) L.parse(b64buf(src), '', done); else L.load('assets/industry/cattle/glb/' + m.glb + '.glb', done);
+}
+function build(m) {
+  const g = new THREE.Group(), mats = [];
+  if (m.glb) { buildGlb(m, g, mats); return { g, mats }; }
+  if (m.plain.length) {
+    const n = m.plain.length / 6, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { pos.set(m.plain.slice(i*6, i*6+3), i*3); col.set(m.plain.slice(i*6+3, i*6+6), i*3); }
+    for (let i = 0; i < col.length; i++) col[i] = Math.pow(col[i], 2.2);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:.8, metalness:.05, flatShading:true, side:THREE.DoubleSide });
+    mats.push(mat); g.add(new THREE.Mesh(geo, mat));
+  }
+  m.slab.forEach((a, s) => {
+    if (!a.length) return;
+    const n = a.length / 5, pos = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { pos.set(a.slice(i*5, i*5+3), i*3); uv.set(a.slice(i*5+3, i*5+5), i*2); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ map: tex(m.tex, s), roughness:.85, flatShading:true, side:THREE.DoubleSide });
+    mats.push(mat); g.add(new THREE.Mesh(geo, mat));
+  });
+  for (const [key, a] of Object.entries(m.spom || {})) {
+    const n = a.length / 11, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), whz = new Float32Array(n * 3), uvm = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      pos.set(a.slice(i*11, i*11+3), i*3); nrm.set(a.slice(i*11+3, i*11+6), i*3);
+      whz.set(a.slice(i*11+6, i*11+9), i*3); uvm.set(a.slice(i*11+9, i*11+11), i*2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('vN', new THREE.BufferAttribute(nrm, 3));
+    geo.setAttribute('vWHZ', new THREE.BufferAttribute(whz, 3)); geo.setAttribute('vUVm', new THREE.BufferAttribute(uvm, 2));
+    const mat = spomMaterial(key);
+    mats.push(mat); g.add(new THREE.Mesh(geo, mat));
+  }
+  return { g, mats };
+}
+// SpomPS (src/shaders/mesh.hlsl) ported: each pixel of the 12-triangle box marches the eye ray through the two-layer relief
+// (albedo.a = where solid ends, normal.a = where it starts, x kSpomDepth) and discards where it leaves empty-handed.
+const SPOM_VS = `
+attribute vec3 vN; attribute vec3 vWHZ; attribute vec2 vUVm;
+varying vec3 fN; varying vec3 fWHZ; varying vec2 fUV; varying vec3 fW;
+void main() { fN = vN; fWHZ = vWHZ; fUV = vUVm; vec4 w = modelMatrix * vec4(position, 1.0); fW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
+const SPOM_FS = `
+uniform sampler2D alb; uniform sampler2D nor; uniform sampler2D colr; uniform vec2 dim; uniform vec3 sunDir;
+varying vec3 fN; varying vec3 fWHZ; varying vec2 fUV; varying vec3 fW;
+const float D = 1.2;
+vec2 size;
+vec2 range(vec2 m) {
+  vec2 uv = (floor(vec2(m.x / size.x, m.y / size.y) * dim) + 0.5) / dim;
+  return vec2(texture2D(nor, uv).a, texture2D(alb, uv).a) * D;
+}
+bool solid(vec3 q) { vec2 r = range(q.xy); return r.y > r.x + 0.004 && q.z >= r.x && q.z <= r.y; }
+void main() {
+  vec3 N = normalize(fN), T = normalize(cross(vec3(0.0, 1.0, 0.0), N)), B = normalize(cross(N, T));
+  size = max(fWHZ.xy, vec2(0.05));
+  vec3 p0 = vec3(fUV, fWHZ.z);
+  vec3 vw = normalize(fW - cameraPosition);
+  vec3 d = vec3(dot(vw, T), dot(vw, B), dot(vw, N));
+  vec3 tf = vec3(1e9);
+  if (abs(d.x) > 1e-5) tf.x = d.x > 0.0 ? (size.x - p0.x) / d.x : -p0.x / d.x;
+  if (abs(d.y) > 1e-5) tf.y = d.y > 0.0 ? (size.y - p0.y) / d.y : -p0.y / d.y;
+  if (abs(d.z) > 1e-5) tf.z = d.z > 0.0 ? (D - p0.z) / d.z : -p0.z / d.z;
+  float tExit = max(min(tf.x, min(tf.y, tf.z)), 0.0);
+  if (tExit < 1e-4) discard;
+  float dt = tExit / 192.0, tLo = 0.0, tHi = 0.0; bool hit = false;
+  for (int k = 0; k <= 192; ++k) { tHi = dt * float(k); if (solid(p0 + d * tHi)) { hit = true; break; } tLo = tHi; }
+  if (!hit) discard;
+  for (int r = 0; r < 6; ++r) { float tm = 0.5 * (tLo + tHi); if (solid(p0 + d * tm)) tHi = tm; else tLo = tm; }
+  vec3 q = p0 + d * tHi;
+  vec2 uv = vec2(q.x / size.x, q.y / size.y);
+  vec3 albedo = texture2D(colr, (floor(uv * dim) + 0.5) / dim).rgb;
+  vec2 e = 3.5 / dim * size;
+  vec2 rC = range(q.xy);
+  bool back = abs(q.z - rC.x) < abs(q.z - rC.y) && rC.y > rC.x + 0.004 && rC.x > 0.02;
+  vec2 rx = range(q.xy + vec2(e.x, 0.0)) - range(q.xy - vec2(e.x, 0.0));
+  vec2 ry = range(q.xy + vec2(0.0, e.y)) - range(q.xy - vec2(0.0, e.y));
+  float gx = (back ? rx.x : rx.y) / (2.0 * e.x), gy = (back ? ry.x : ry.y) / (2.0 * e.y);
+  vec3 nl = normalize(vec3(-gx, -gy, 1.0) * (back ? -1.0 : 1.0));
+  vec3 n = normalize(T * nl.x + B * nl.y + N * nl.z);
+  vec3 lin = pow(albedo, vec3(2.2));
+  float sun = max(dot(n, normalize(sunDir)), 0.0);
+  vec3 col = lin * (vec3(1.0, 0.95, 0.86) * 1.5 * sun + mix(vec3(0.24, 0.21, 0.17), vec3(0.42, 0.46, 0.52), n.y * 0.5 + 0.5) * 0.9);
+  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+}`;
+const spomCache = {};
+function spomTex(key, kind) {
+  const k = key + '_' + kind;
+  if (!spomCache[k]) {
+    const src = (window.IND_TEX && IND_TEX['assets/industry/spom/' + k + '.png']) || ('assets/industry/spom/' + k + '.png');
+    const t = loader.load(src, () => views.forEach(v => v.dirty = true));
+    t.minFilter = THREE.NearestFilter; t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.premultiplyAlpha = false;
+    spomCache[k] = t;
+  }
+  return spomCache[k];
+}
+function spomMaterial(key) {
+  const a = spomTex(key, 'a'), nrm = spomTex(key, 'n'), colr = spomTex(key, 'c');
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { alb: { value: a }, nor: { value: nrm }, colr: { value: colr }, dim: { value: new THREE.Vector2(512, 512) }, sunDir: { value: new THREE.Vector3(0.45, 0.8, 0.35) } },
+    vertexShader: SPOM_VS, fragmentShader: SPOM_FS, side: THREE.DoubleSide });
+  const setDim = () => { if (a.image) mat.uniforms.dim.value.set(a.image.width, a.image.height); };
+  if (a.image) setDim(); else { const iv = setInterval(() => { if (a.image) { setDim(); clearInterval(iv); views.forEach(v => v.dirty = true); } }, 50); }
+  return mat;
+}
+const groups = {};
+let total = 0;
+IND_MODELS.forEach(m => { (groups[m.group] = groups[m.group] || []).push(m); total += m.tris; });
+const root = document.getElementById('root');
+const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+for (const [name, list] of Object.entries(groups)) {
+  const h = document.createElement('h2'); h.textContent = name + ' (' + list.length + ')'; root.appendChild(h);
+  const grid = document.createElement('div'); grid.className = 'grid'; root.appendChild(grid);
+  for (const m of list) {
+    const card = document.createElement('div'); card.className = 'card';
+    const cv = document.createElement('canvas'); card.appendChild(cv);
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.innerHTML = '<span>' + m.name + '</span><span class="tris">' + m.tris.toLocaleString() + ' tris</span>';
+    card.appendChild(meta); grid.appendChild(card);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0xa9b8c6); scene.fog = new THREE.Fog(0xa9b8c6, 1, 1);
+    scene.add(new THREE.HemisphereLight(0xcfd8e2, 0x4a4234, .55));
+    const sun = new THREE.DirectionalLight(0xfff0d8, 1.5); sun.position.set(40, 70, 30); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; scene.add(sun);
+    const { g, mats } = build(m); g.traverse(o => { if (o.isMesh && !o.material.isShaderMaterial) { o.castShadow = true; o.receiveShadow = true; } }); scene.add(g);
+    const box = new THREE.Box3().setFromObject(g), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+    const r = Math.max(size.x, size.y, size.z);
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(r * 1.2, 40), new THREE.MeshStandardMaterial({ color:0x5d6447, roughness:1 })); ground.receiveShadow = true;
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.62; scene.add(ground);
+    const sc = sun.shadow.camera; sc.left = sc.bottom = -r; sc.right = sc.top = r; sc.near = 1; sc.far = 200 + r * 4; sun.position.set(c.x + r * 1.2, c.y + r * 2.2, c.z + r * 0.9); sun.target.position.copy(c); scene.add(sun.target);
+    scene.fog.near = r * 3; scene.fog.far = r * 9;
+    const cam = new THREE.PerspectiveCamera(35, 1, r * .02, r * 20);
+    cam.position.set(c.x + r * 1.3, c.y + r * .8, c.z + r * 1.3);
+    const ctl = new THREE.OrbitControls(cam, cv); ctl.target.copy(c); ctl.enableDamping = true; ctl.update();
+    const v = { cv, scene, cam, ctl, mats, dirty:true };
+    ctl.addEventListener('change', () => v.dirty = true);
+    views.push(v);
+  }
+}
+document.getElementById('sum').textContent = IND_MODELS.length + ' models, ' + total.toLocaleString() + ' tris total';
+document.getElementById('wire').onclick = e => { wire = !wire; e.target.classList.toggle('on', wire); views.forEach(v => { v.mats.forEach(m => m.wireframe = wire); v.dirty = true; }); };
+document.getElementById('spin').onclick = e => { spin = !spin; e.target.classList.toggle('on', spin); };
+// one shared WebGL context, drawn into each card's 2D canvas
+const off = renderer.domElement;
+const clock = new THREE.Clock();
+function frame() {
+  const dt = clock.getDelta();
+  if (mixers.length) { mixers.forEach(mx => mx.update(dt)); views.forEach(v => v.dirty = true); }
+  for (const v of views) {
+    const rect = v.cv.getBoundingClientRect();
+    if (rect.width < 2) continue;
+    if (spin) { v.ctl.autoRotate = true; v.ctl.autoRotateSpeed = 1.2; v.dirty = true; } else v.ctl.autoRotate = false;
+    v.ctl.update();
+    if (!v.dirty) continue;
+    const w = Math.round(rect.width), h = Math.round(rect.height);
+    if (v.cv.width !== w * renderer.getPixelRatio()) { v.cv.width = w * renderer.getPixelRatio(); v.cv.height = h * renderer.getPixelRatio(); }
+    renderer.setSize(w, h, false);
+    v.cam.aspect = w / h; v.cam.updateProjectionMatrix();
+    renderer.render(v.scene, v.cam);
+    const ctx = v.cv.getContext('2d'); ctx.drawImage(off, 0, 0, v.cv.width, v.cv.height);
+    v.dirty = false;
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
