@@ -8,6 +8,7 @@
 #define NOMINMAX
 #include <vector>
 #include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -442,10 +443,10 @@ protected:
     double gpuPasses_[8] = {};
     double fenceWaitMs_ = 0.0, presentMs_ = 0.0;
     static double TraceNowMs() {
-        LARGE_INTEGER now, freq;
-        QueryPerformanceCounter(&now);
-        QueryPerformanceFrequency(&freq);
-        return (double)now.QuadPart * 1000.0 / (double)freq.QuadPart;
+        int64_t now, freq;
+        now = tbd::platform::Ticks();
+        freq = tbd::platform::TickFrequency();
+        return (double)now * 1000.0 / (double)freq;
     }
     // Scoped step timer for the streaming upload calls: Mark() after each step; Done() logs the steps when the call was slow.
     struct UploadSteps {

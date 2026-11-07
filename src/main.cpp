@@ -244,17 +244,17 @@ inline std::vector<tbd::LodLevel> LodLevelsFor(const std::string& path, const st
     if (tbd::LoadLodLevels(file, levels)) return levels;
     levels.clear();
     if (!AutoLodOn() && !LodRequested(path)) return levels;
-    LARGE_INTEGER t0, t1;
-    QueryPerformanceCounter(&t0);
+    int64_t t0, t1;
+    t0 = tbd::platform::Ticks();
     levels = tbd::BuildLodChain(vertices, indices, LodStep(), radius);
     const bool pieces = levels.empty(); // a kit of small hard-edged pieces: no edge may collapse, but whole pieces can go
     if (pieces) levels = tbd::BuildPieceLevels(vertices, indices, radius);
-    QueryPerformanceCounter(&t1);
+    t1 = tbd::platform::Ticks();
     CreateDirectoryW(g_lodCacheDir.c_str(), nullptr);
     tbd::SaveLodLevels(file, levels);
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    const double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
+    int64_t freq;
+    freq = tbd::platform::TickFrequency();
+    const double ms = (t1 - t0) * 1000.0 / (double)freq;
     tbd::Log("LOD: %s, %zu triangles: %zu %slevels%s in %.0f ms", path.c_str(), indices.size() / 3, levels.size(), pieces && !levels.empty() ? "piece " : "",
              levels.empty() ? "" : (" down to " + std::to_string(levels.back().indices.size() / 3)).c_str(), ms);
     return levels;
@@ -345,8 +345,8 @@ struct Engine {
     int nextEntityId = 1;
 
     float flySpeed = 14.0f; // world units per second
-    LARGE_INTEGER lastTick = {};
-    LARGE_INTEGER tickFreq = {};
+    int64_t lastTick = {};
+    int64_t tickFreq = {};
 
     std::string toast;
     ULONGLONG toastUntil = 0;
@@ -1471,10 +1471,10 @@ void StartDecodes(const std::shared_ptr<SceneLoadWork>& work) { // gathers on th
 // Once per frame while a load runs, on the main thread, before the frame begins. budgetMs <= 0: no limit (CompleteSceneLoad).
 void SceneLoadTick(double budgetMs) {
     if (!SceneLoadActive() || !g_engine.renderer) return;
-    LARGE_INTEGER begin, now, freq;
-    QueryPerformanceCounter(&begin);
-    QueryPerformanceFrequency(&freq);
-    const auto spent = [&] { QueryPerformanceCounter(&now); return budgetMs > 0.0 && (now.QuadPart - begin.QuadPart) * 1000.0 / freq.QuadPart > budgetMs; };
+    int64_t begin, now, freq;
+    begin = tbd::platform::Ticks();
+    freq = tbd::platform::TickFrequency();
+    const auto spent = [&] { now = tbd::platform::Ticks(); return budgetMs > 0.0 && (now - begin) * 1000.0 / freq > budgetMs; };
     if (g_load.phase == SceneLoad::Imports) {
         if (g_load.work->left.load() > 0) return;
         for (size_t i = 0; i < g_load.work->paths.size(); ++i) PublishImport(g_load.work->paths[i], std::move(g_load.work->results[i]));
@@ -2331,11 +2331,11 @@ std::string Grouped(uint64_t v) {
 }
 
 float FrameDelta() {
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
+    int64_t now;
+    now = tbd::platform::Ticks();
     float dt = 0.0f;
-    if (g_engine.lastTick.QuadPart != 0)
-        dt = (float)((double)(now.QuadPart - g_engine.lastTick.QuadPart) / (double)g_engine.tickFreq.QuadPart);
+    if (g_engine.lastTick != 0)
+        dt = (float)((double)(now - g_engine.lastTick) / (double)g_engine.tickFreq);
     g_engine.lastTick = now;
     return std::clamp(dt, 0.0f, 0.1f);
 }
@@ -2594,15 +2594,15 @@ void FaceShotStep(tbd::Renderer& r) {
     const tbd::Entity& e = g_engine.scene.entities[fs.target];
     if (fs.wait == 0) { // set up this pose and view
         std::vector<tbd::Vertex> posed;
-        LARGE_INTEGER t0, t1, t2, hz;
-        QueryPerformanceFrequency(&hz);
-        QueryPerformanceCounter(&t0);
+        int64_t t0, t1, t2, hz;
+        hz = tbd::platform::TickFrequency();
+        t0 = tbd::platform::Ticks();
         fs.rig.Pose(fs.cases[fs.index].w, posed, fs.cases[fs.index].head);
-        QueryPerformanceCounter(&t1);
+        t1 = tbd::platform::Ticks();
         ReplaceEntityVertices(fs.target, posed, fs.rig.PartRanges());
-        QueryPerformanceCounter(&t2);
-        fs.poseMs += 1000.0 * (t1.QuadPart - t0.QuadPart) / hz.QuadPart;
-        fs.uploadMs += 1000.0 * (t2.QuadPart - t1.QuadPart) / hz.QuadPart;
+        t2 = tbd::platform::Ticks();
+        fs.poseMs += 1000.0 * (t1 - t0) / hz;
+        fs.uploadMs += 1000.0 * (t2 - t1) / hz;
         ++fs.posed;
         g_engine.camera.yaw = 0.0f;
         g_engine.camera.pitch = 0.05f;
@@ -2868,11 +2868,11 @@ static void RemotePump() {
     if (!on) return;
     tbd::remote::Server& server = tbd::remote::Instance();
     server.Start();
-    static LARGE_INTEGER last = {}, hz = {};
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    if (!hz.QuadPart) QueryPerformanceFrequency(&hz);
-    if (last.QuadPart) g_remoteFrameMs = g_remoteFrameMs * 0.9 + 0.1 * (double)(now.QuadPart - last.QuadPart) * 1000.0 / (double)hz.QuadPart;
+    static int64_t last = {}, hz = {};
+    int64_t now;
+    now = tbd::platform::Ticks();
+    if (!hz) hz = tbd::platform::TickFrequency();
+    if (last) g_remoteFrameMs = g_remoteFrameMs * 0.9 + 0.1 * (double)(now - last) * 1000.0 / (double)hz;
     last = now;
     for (int k = 0; k < 16; ++k) {
         tbd::remote::Request* q = server.Next();
@@ -2908,10 +2908,10 @@ static void RemoteShotAfterFrame(tbd::Renderer& r) {
 struct FrameSections {
     static constexpr int kMax = 16;
     const char* name[kMax] = {};
-    LARGE_INTEGER at[kMax] = {};
+    int64_t at[kMax] = {};
     int n = 0;
-    LARGE_INTEGER entry = {}, end = {};
-    void Mark(const char* what) { if (n < kMax) { name[n] = what; QueryPerformanceCounter(&at[n++]); } }
+    int64_t entry = {}, end = {};
+    void Mark(const char* what) { if (n < kMax) { name[n] = what; at[n++] = tbd::platform::Ticks(); } }
 };
 FrameSections g_frameSections;
 inline void FrameMark(const char* what) { g_frameSections.Mark(what); }
@@ -3242,10 +3242,10 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         g_terrainEdit.mouseX = (int)pointer.x, g_terrainEdit.mouseY = (int)pointer.y; // the status line reads the cursor
     }
     g_gui.SetInsets(0.0f, topInset, 0.0f, 0.0f);
-    static LARGE_INTEGER last = {};
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    const float guiDt = last.QuadPart ? (float)((now.QuadPart - last.QuadPart) / (double)g_engine.tickFreq.QuadPart) : 1.0f / 60.0f; // eases transitions
+    static int64_t last = {};
+    int64_t now;
+    now = tbd::platform::Ticks();
+    const float guiDt = last ? (float)((now - last) / (double)g_engine.tickFreq) : 1.0f / 60.0f; // eases transitions
     last = now;
     g_gui.BeginFrame(g_guiInput.Take((float)g_engine.vpW, (float)g_engine.vpH, DpiScale() * g_guiScaleSel, guiDt));
     tbd::gui::TerrainStatus status;
@@ -3323,13 +3323,13 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
 void RenderFrame() {
     {
         FrameSections& f = g_frameSections;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        const auto ms = [](LARGE_INTEGER a, LARGE_INTEGER b) { return (double)(b.QuadPart - a.QuadPart) * 1000.0 / (double)g_engine.tickFreq.QuadPart; };
-        if (f.entry.QuadPart && g_engine.tickFreq.QuadPart && ms(f.entry, now) > 50.0) {
+        int64_t now;
+        now = tbd::platform::Ticks();
+        const auto ms = [](int64_t a, int64_t b) { return (double)(b - a) * 1000.0 / (double)g_engine.tickFreq; };
+        if (f.entry && g_engine.tickFreq && ms(f.entry, now) > 50.0) {
             char line[768];
             int pos = snprintf(line, sizeof(line), "Frame: %.1f ms:", ms(f.entry, now));
-            LARGE_INTEGER prev = f.entry;
+            int64_t prev = f.entry;
             for (int i = 0; i < f.n && pos > 0 && pos < (int)sizeof(line); ++i) {
                 const double d = ms(prev, f.at[i]);
                 if (d >= 1.0) pos += snprintf(line + pos, sizeof(line) - (size_t)pos, " %s %.1f", f.name[i], d);
@@ -3368,8 +3368,8 @@ void RenderFrame() {
     tbd::Renderer& r = *g_engine.renderer;
     g_engine.stats.BeginFrame();
     g_profiler.BeginFrame();
-    static LARGE_INTEGER frameCpuStart;
-    QueryPerformanceCounter(&frameCpuStart); // TBD_DRAWCATS: CPU ms of the frame = this to the end, less the fence wait and Present
+    static int64_t frameCpuStart;
+    frameCpuStart = tbd::platform::Ticks(); // TBD_DRAWCATS: CPU ms of the frame = this to the end, less the fence wait and Present
     float dt = FrameDelta();
     FrameMark("frame-start");
     ZonesSync(dt); // the game clock, zone growth and construction
@@ -3411,8 +3411,8 @@ void RenderFrame() {
     static int captureFramesLeft = GetEnvironmentVariableW(L"TBD_CAPTURE", capturePath, MAX_PATH) > 0 ? benchFrames + 61 + settleFrames : -1;
     // TBD_FRAMELOG=<file.csv>: one row of section times per measured frame, to find what a slow frame spent its time on.
     enum TraceMark { kTraceStart, kTracePre, kTraceBegin, kTraceAnim, kTraceShadow, kTraceScene, kTraceEnd, kTraceMarks };
-    LARGE_INTEGER traceTick[kTraceMarks] = {};
-    const auto traceMark = [&](TraceMark m) { QueryPerformanceCounter(&traceTick[m]); };
+    int64_t traceTick[kTraceMarks] = {};
+    const auto traceMark = [&](TraceMark m) { traceTick[m] = tbd::platform::Ticks(); };
     traceMark(kTraceStart);
     // TBD_SHOT="hour tx ty tz distance yaw pitch": a fixed test view without editor overlays, for captures.
     static float shot[7];
@@ -3746,8 +3746,8 @@ void RenderFrame() {
     r.SetLighting(light); // takes effect at BeginFrame, now with the tight map's matrix (or without it)
 
     // Visibility: each batch writes only its own entities' and assets' slots, so no locks.
-    LARGE_INTEGER cullStart, cullEnd;
-    QueryPerformanceCounter(&cullStart);
+    int64_t cullStart, cullEnd;
+    cullStart = tbd::platform::Ticks();
     const auto matrixOf = [](const float* m) { tbd::Mat4 out; std::copy(m, m + 16, out.m); return out; };
     const tbd::ViewVolume cameraVolume = tbd::ViewVolume::FromMatrix(viewProj, false);
     const tbd::ViewVolume sunVolume = tbd::ViewVolume::FromMatrix(matrixOf(light.shadowVP), true);
@@ -3980,7 +3980,7 @@ void RenderFrame() {
         if (a.normal != b.normal) return a.normal < b.normal;
         return a.surface < b.surface;
     });
-    QueryPerformanceCounter(&cullEnd);
+    cullEnd = tbd::platform::Ticks();
     FrameMark("cull");
 
     // TBD_WATER_TEST="x z radius speed extent": a sphere through the water on a fixed path, stepping 1/60 s a frame so captures reproduce.
@@ -4037,11 +4037,11 @@ void RenderFrame() {
     traceMark(kTraceBegin);
     FrameMark("begin-frame");
     {
-        LARGE_INTEGER animStart, animEnd;
-        QueryPerformanceCounter(&animStart);
+        int64_t animStart, animEnd;
+        animStart = tbd::platform::Ticks();
         if (g_engine.jobs) g_engine.animator.Update(r, *g_engine.jobs, dt); // after BeginFrame: this frame's vertex copy is free
-        QueryPerformanceCounter(&animEnd);
-        g_lastAnimMs = (animEnd.QuadPart - animStart.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart;
+        animEnd = tbd::platform::Ticks();
+        g_lastAnimMs = (animEnd - animStart) * 1000.0 / g_engine.tickFreq;
     }
     traceMark(kTraceAnim);
     FrameMark("animation");
@@ -4300,7 +4300,7 @@ void RenderFrame() {
         for (uint8_t f : g_engine.entityVisible) profSample.entitiesDrawn += (f & kVisibleCamera) ? 1 : 0;
         profSample.entities = (uint32_t)entityCount;
         profSample.sceneDraws = (uint32_t)g_engine.sceneDraws.size();
-        profSample.cullMs = (cullEnd.QuadPart - cullStart.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart;
+        profSample.cullMs = (cullEnd - cullStart) * 1000.0 / g_engine.tickFreq;
         profSample.draws = r.Counts().draws;
         profSample.triangles = r.Counts().triangles;
         SimProfile(profSample);
@@ -4318,7 +4318,7 @@ void RenderFrame() {
         uint32_t sunEntities = 0;
         for (uint8_t f : g_engine.entityVisible) sunEntities += (f & kVisibleSun) ? 1 : 0;
         tbd::Log("Cull: %.2f ms; entities %zu (sun %u), parts %u, scene draws %zu; instances %u of %u in %u ranges, casters %u; drawn %u draws, %llu triangles",
-                 (cullEnd.QuadPart - cullStart.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart, entityCount, sunEntities, partTotal, g_engine.sceneDraws.size(),
+                 (cullEnd - cullStart) * 1000.0 / g_engine.tickFreq, entityCount, sunEntities, partTotal, g_engine.sceneDraws.size(),
                  drawnInstances, instanceTotal, instancedDraws, castInstances, counts.draws, (unsigned long long)counts.triangles);
     }
     traceMark(kTraceScene);
@@ -4446,12 +4446,12 @@ void RenderFrame() {
         static wchar_t path[MAX_PATH] = {};
         static const bool wanted = GetEnvironmentVariableW(L"TBD_BENCH", path, MAX_PATH) > 0;
         static std::vector<std::pair<double, int>> times;
-        static LARGE_INTEGER last = {};
+        static int64_t last = {};
         static int frame = 0;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
+        int64_t now;
+        now = tbd::platform::Ticks();
         ++frame;
-        if (wanted && last.QuadPart && playtestShot.empty()) times.push_back({(now.QuadPart - last.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart, frame});
+        if (wanted && last && playtestShot.empty()) times.push_back({(now - last) * 1000.0 / g_engine.tickFreq, frame});
         last = now;
         if (wanted && g_playtest.Finished() && !times.empty()) {
             std::sort(times.begin(), times.end());
@@ -4479,26 +4479,26 @@ void RenderFrame() {
     static const bool bench = GetEnvironmentVariableW(L"TBD_BENCH", benchPath, MAX_PATH) > 0;
     if (bench && captureFrames > 0) {
         static std::vector<double> times;
-        static LARGE_INTEGER last = {};
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
+        static int64_t last = {};
+        int64_t now;
+        now = tbd::platform::Ticks();
         // The last frame reads the picture back, which no real frame does: it is not measured.
-        const bool measured = last.QuadPart && captureFrames <= benchFrames + 1 && captureFrames > 1;
-        const double frameMs = (now.QuadPart - last.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart;
+        const bool measured = last && captureFrames <= benchFrames + 1 && captureFrames > 1;
+        const double frameMs = (now - last) * 1000.0 / g_engine.tickFreq;
         if (measured) times.push_back(frameMs);
         last = now;
         static wchar_t logPath[MAX_PATH] = {};
         static FILE* frameLog = GetEnvironmentVariableW(L"TBD_FRAMELOG", logPath, MAX_PATH) > 0 ? _wfopen(logPath, L"w") : nullptr;
-        static LARGE_INTEGER lastEnd = {};
+        static int64_t lastEnd = {};
         if (frameLog && measured) {
-            const auto ms = [&](LARGE_INTEGER a, LARGE_INTEGER b) { return (b.QuadPart - a.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart; };
+            const auto ms = [&](int64_t a, int64_t b) { return (b - a) * 1000.0 / g_engine.tickFreq; };
             const double* gpu = r.GpuPasses();
             double gpuTotal = 0;
             for (int k = 0; k < 8; ++k) gpuTotal += gpu[k];
             static bool header = (fputs("frame,total,outside,pre,begin,fence,anim,shadow,scene,overlay,end,present,gpu,gpu_shadow,gpu_scene\n", frameLog), true);
             (void)header;
             fprintf(frameLog, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", benchFrames - captureFrames, frameMs,
-                    lastEnd.QuadPart ? ms(lastEnd, traceTick[kTraceStart]) : 0.0, ms(traceTick[kTraceStart], traceTick[kTracePre]),
+                    lastEnd ? ms(lastEnd, traceTick[kTraceStart]) : 0.0, ms(traceTick[kTraceStart], traceTick[kTracePre]),
                     ms(traceTick[kTracePre], traceTick[kTraceBegin]), r.FenceWaitMs(), ms(traceTick[kTraceBegin], traceTick[kTraceAnim]),
                     ms(traceTick[kTraceAnim], traceTick[kTraceShadow]), ms(traceTick[kTraceShadow], traceTick[kTraceScene]),
                     ms(traceTick[kTraceScene], traceTick[kTraceEnd]), ms(traceTick[kTraceEnd], now), r.PresentMs(), gpuTotal, gpu[0], gpu[1]);
@@ -4565,9 +4565,9 @@ void RenderFrame() {
             double gpuAll = 0;
             for (int k = 0; k < 8; ++k) gpuAll += gpu[k];
             const tbd::FrameStats& fs = g_engine.stats.Shown();
-            LARGE_INTEGER nowCpu;
-            QueryPerformanceCounter(&nowCpu);
-            const double wallMs = (double)(nowCpu.QuadPart - frameCpuStart.QuadPart) * 1000.0 / (double)g_engine.tickFreq.QuadPart;
+            int64_t nowCpu;
+            nowCpu = tbd::platform::Ticks();
+            const double wallMs = (double)(nowCpu - frameCpuStart) * 1000.0 / (double)g_engine.tickFreq;
             const double cpuMs = wallMs - r.FenceWaitMs() - r.PresentMs();
             tbd::Log("Draws by kind: total %u draws %.2f M tris (shadow %u); frame %.2f ms, cpu %.2f ms (fence %.2f, present %.2f), gpu %.2f ms (scene %.2f, shadow %.2f); "
                      "cam %.0f %.0f %.0f dist %.0f; %s",
@@ -5524,7 +5524,7 @@ const TbdGameHost& GameHost() {
 bool Engine_Init(HINSTANCE instance, int show, const std::wstring& title) {
     g_engine.instance = instance;
     g_engine.titleBase = title;
-    QueryPerformanceFrequency(&g_engine.tickFreq);
+    g_engine.tickFreq = tbd::platform::TickFrequency();
     g_engine.jobs = std::make_unique<tbd::JobSystem>(); // every hardware thread but one (the main thread)
     g_engine.uiFont = CreateFontW(-Sx(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                   CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
@@ -5627,18 +5627,18 @@ void Engine_Run() {
         static const bool throttle = !GetEnvironmentVariableA("TBD_NOTHROTTLE", nullptr, 0) && !GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) &&
                                      !GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) && !GetEnvironmentVariableA("TBD_PLAYTEST", nullptr, 0);
         static HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }(), last = {};
+        static int64_t freq = [] { int64_t f; f = tbd::platform::TickFrequency(); return f; }(), last = {};
         DWORD foreground = 0;
         GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
         static const LONGLONG editorFps = (LONGLONG)EnvFloat("TBD_EDITORFPS", 60.0f, 0.0f, 1000.0f);
         const LONGLONG cap = foreground != GetCurrentProcessId() ? 30 : (g_play.active ? 0 : editorFps);
         if (throttle && timer && cap > 0) {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
+            int64_t now;
+            now = tbd::platform::Ticks();
             // Ticks first, and only a positive remainder is scaled: at first `last` is 0, so the difference is minus the whole uptime
             // in ticks, and times 1e7 that overflowed 64 bits after ~10 h of uptime, wrapped positive, and slept the loop forever.
-            const LONGLONG leftTicks = last.QuadPart + freq.QuadPart / cap - now.QuadPart;
-            const LONGLONG left100ns = leftTicks > 0 ? leftTicks * 10000000 / freq.QuadPart : 0;
+            const LONGLONG leftTicks = last + freq / cap - now;
+            const LONGLONG left100ns = leftTicks > 0 ? leftTicks * 10000000 / freq : 0;
             if (left100ns > 10000) { // over 1 ms to go
                 LARGE_INTEGER due;
                 due.QuadPart = -left100ns;
@@ -5650,7 +5650,7 @@ void Engine_Run() {
                 continue;
             }
         }
-        QueryPerformanceCounter(&last);
+        last = tbd::platform::Ticks();
         RenderFrame(); // presents with vsync, which also paces the loop
     }
 }

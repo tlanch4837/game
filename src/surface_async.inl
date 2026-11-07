@@ -164,9 +164,9 @@ inline void Pump() { // once per frame
         Queue().waiting.pop_front();
         start();
     }
-    LARGE_INTEGER t0, now, freq;
-    QueryPerformanceCounter(&t0);
-    QueryPerformanceFrequency(&freq);
+    int64_t t0, now, freq;
+    t0 = tbd::platform::Ticks();
+    freq = tbd::platform::TickFrequency();
     for (;;) {
         Done d;
         {
@@ -177,8 +177,8 @@ inline void Pump() { // once per frame
         }
         UploadOne(d);
         --Queue().held;
-        QueryPerformanceCounter(&now);
-        if ((now.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart >= kPumpMs) return;
+        now = tbd::platform::Ticks();
+        if ((now - t0) * 1000.0 / freq >= kPumpMs) return;
     }
 }
 

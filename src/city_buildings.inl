@@ -329,8 +329,8 @@ inline MergeJob mergeJob;
 inline uint32_t MergedTarget() { static const uint32_t t = (uint32_t)std::max(200, EnvI("TBD_CHUNK_MERGED_TRIS", 4000)); return t; }
 inline void StartMerge(int ci) {
     Cell& c = cells[(size_t)ci];
-    LARGE_INTEGER t0, t1;
-    QueryPerformanceCounter(&t0);
+    int64_t t0, t1;
+    t0 = tbd::platform::Ticks();
     std::vector<tbd::Vertex> flat;
     for (uint64_t id : c.lots) {
         const Rec& r = recs[id];
@@ -364,10 +364,10 @@ inline void StartMerge(int ci) {
             }
         }
     }
-    QueryPerformanceCounter(&t1);
+    t1 = tbd::platform::Ticks();
     mergeJob.cell = ci;
     mergeJob.content = c.content;
-    mergeJob.gatherMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart;
+    mergeJob.gatherMs = (t1 - t0) * 1000.0 / g_engine.tickFreq;
     mergeJob.sourceTris = (uint32_t)(flat.size() / 3);
     const float radius = 0.5f * std::sqrt(tbd::Dot(c.hi - c.lo, c.hi - c.lo));
     const uint32_t target = MergedTarget();
@@ -529,11 +529,11 @@ void CityBuildingsSync(tbd::Renderer& r, const tbd::Mat4& viewProj, const tbd::V
             else if (!c.saved && saveBest < 0) saveBest = (int)ci;
         }
         std::sort(want.begin(), want.end(), [](int a, int b) { return cells[(size_t)a].px > cells[(size_t)b].px; });
-        LARGE_INTEGER t0, t1;
-        QueryPerformanceCounter(&t0);
+        int64_t t0, t1;
+        t0 = tbd::platform::Ticks();
         for (int ci : want) {
-            QueryPerformanceCounter(&t1);
-            if ((t1.QuadPart - t0.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart > 2.0) break;
+            t1 = tbd::platform::Ticks();
+            if ((t1 - t0) * 1000.0 / g_engine.tickFreq > 2.0) break;
             Cell& c = cells[(size_t)ci];
             if (c.slot < 0) { const uint32_t s = AllocSlot(ci); if (s == UINT32_MAX) break; c.slot = (int)s; c.faces = 0; c.bakedFor = 0; }
             if (!CacheLoad(r, c)) missing[c.content] = true;
@@ -600,10 +600,10 @@ void CityBuildingsSync(tbd::Renderer& r, const tbd::Mat4& viewProj, const tbd::V
         }
     }
     // ---- this frame's buckets and the volume meshes; a cell whose representation changed shows both for a moment, dithered (R6)
-    static LARGE_INTEGER lastTick = {};
-    LARGE_INTEGER tick;
-    QueryPerformanceCounter(&tick);
-    const float dt = lastTick.QuadPart ? std::min(0.1f, (float)((tick.QuadPart - lastTick.QuadPart) / (double)g_engine.tickFreq.QuadPart)) : 0.0f;
+    static int64_t lastTick = {};
+    int64_t tick;
+    tick = tbd::platform::Ticks();
+    const float dt = lastTick ? std::min(0.1f, (float)((tick - lastTick) / (double)g_engine.tickFreq)) : 0.0f;
     lastTick = tick;
     static const float fadeSeconds = (float)EnvI("TBD_CHUNK_FADE_MS", 350) / 1000.0f;
     camRows.resize(models.size());
@@ -750,9 +750,9 @@ void CityBuildingsBake(tbd::Renderer& r, const tbd::Vec3& eye) {
     if (g_zoneEntities || !atlasOk) return;
     if (cameraFast && !bakeAll) return;
     static const int perFrame = std::max(1, EnvI("TBD_CHUNK_FACES", 2));
-    LARGE_INTEGER t0, now;
-    QueryPerformanceCounter(&t0);
-    const auto ms = [&] { QueryPerformanceCounter(&now); return (now.QuadPart - t0.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart; };
+    int64_t t0, now;
+    t0 = tbd::platform::Ticks();
+    const auto ms = [&] { now = tbd::platform::Ticks(); return (now - t0) * 1000.0 / g_engine.tickFreq; };
     bool open = false;
     int done = 0;
     for (int round = 0; round < 64 && (bakeAll || (done < perFrame && ms() < 1.0)); ++round) {
