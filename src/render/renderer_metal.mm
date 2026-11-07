@@ -768,13 +768,15 @@ public:
         }
         if (drawable_) cmd_->presentDrawable(drawable_);
         const uint64_t serial = frameSerial_;
-        cmd_->addCompletedHandler([this, serial](MTL::CommandBuffer* cb) {
+        // An explicit std::function: a bare lambda is ambiguous between metal-cpp's block and std::function overloads.
+        const MTL::HandlerFunction onDone = [this, serial](MTL::CommandBuffer* cb) {
             const double ms = (cb->GPUEndTime() - cb->GPUStartTime()) * 1000.0;
             if (ms > 0.0 && ms < 1000.0) { gpuMicros_ += (uint64_t)(ms * 1000.0); ++gpuSamples_; }
             uint64_t done = completedSerial_.load();
             while (done < serial && !completedSerial_.compare_exchange_weak(done, serial)) {}
             dispatch_semaphore_signal(inflight_);
-        });
+        };
+        cmd_->addCompletedHandler(onDone);
         const double presentStart = TraceNowMs();
         cmd_->commit();
         presentMs_ = TraceNowMs() - presentStart; // presenting is scheduled by the command buffer: this is the commit
@@ -1493,7 +1495,10 @@ private:
         MTL::BlitCommandEncoder* b = cb->blitCommandEncoder();
         record(b);
         b->endEncoding();
-        if (staging) cb->addCompletedHandler([staging](MTL::CommandBuffer*) { staging->release(); });
+        if (staging) {
+            const MTL::HandlerFunction release = [staging](MTL::CommandBuffer*) { staging->release(); };
+            cb->addCompletedHandler(release);
+        }
         cb->commit();
         if (!wait) return true;
         cb->waitUntilCompleted();
