@@ -26,13 +26,13 @@
 | `msl.bat`, `tools/msl.ps1` | HLSL → SPIR-V (`spirv.bat`, dxc) → MSL 2.3 for iOS (`spirv-cross --msl --msl-ios --msl-version 20300`). |
 | `src/shaders/msl/*.metal` | The converted shaders. They are committed, so a Mac build needs no Vulkan SDK. Run `msl.bat` again after changing any `.hlsl`/`.hlsli`. |
 | `CMakeLists.txt` | Generates an Xcode iOS project. It compiles the `.metal` files into `default.metallib` and also copies them into the bundle as a fallback. |
-| `src/platform/ios/main_ios.mm`, `Info.plist.in` | **Stub** app shell: a full-screen `CAMetalLayer`, a `CADisplayLink`, and an empty frame. |
+| `src/platform/ios/main_ios.mm`, `Info.plist.in` | Smoke-test app: a UIKit scene with a full-screen `CAMetalLayer` and a procedural triangle. |
 | `src/platform/apple/log_apple.cpp` | Apple versions of `Log`, `ExeDirectory`, `LogCounts` and `UploadSteps::Done`. The log goes to stderr and to `Documents/engine.log`. |
 
 Build on a Mac:
 
 ```
-cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
+cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
 cmake --build build-ios --config Release -- -sdk iphoneos CODE_SIGNING_ALLOWED=NO
 ```
 
@@ -127,10 +127,10 @@ Everything in the `Renderer` interface. Each part follows the Vulkan backend, wi
 * **`ReloadShaders`**: not supported (returns false), the same as Vulkan.
 * **Compute threadgroup sizes**: hard-coded from the HLSL `[numthreads]` (CSPlace 16×16, the water kernels 8×8, the rest
   64), because MSL keeps no record of them. Keep them in step with `vegetation.hlsl` and `water.hlsl`.
-* **App shell**: `main_ios.mm` is a stub. Still to do:
+* **App shell**: `main_ios.mm` renders a procedural triangle and pauses when the scene becomes inactive. Still to do:
   * touch input, game loop and world;
   * GUI, audio and asset loading;
-  * lifecycle (pause in the background, memory warnings).
+  * memory warnings.
 
   The rest of the engine (city, ai, physics, script, gui) isn't in `CMakeLists.txt` yet. It joins as each part builds
   without Win32 (`src/main.cpp` is the Win32 shell it replaces).
@@ -147,9 +147,8 @@ In order:
    * the argument-buffer structs;
    * the fragment shaders that `discard` in a function returning outputs (`mesh_*_ps`, `water_ps`, `post_probeblend_ps`).
 2. **Compile the backend** in Objective-C++ (`.mm`, `-fno-objc-arc`). The syntax check above ran as plain C++ with blocks.
-3. **Configure CMake with the Xcode generator.** Check the custom commands that build `default.metallib`. `xcrun` should
-   follow `SDKROOT` for device and simulator builds. Check that `msl/` and `default.metallib` land in the bundle's
-   Resources.
+3. **Configure CMake with the Xcode generator.** Check that the explicit shader SDK matches the Xcode destination,
+   and that `msl/` and `default.metallib` land in the app bundle. See [iOS build](ios_build.md).
 4. **Run with API validation on (`MTL_DEBUG_LAYER=1`) and the shader validation layer.** Check:
    * vertex descriptors against each function's attributes (the backend filters by `vertexAttributes()`);
    * pipelines without a fragment function that still declare colour attachments (pre-pass, vegetation depth);

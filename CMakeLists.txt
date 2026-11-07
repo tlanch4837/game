@@ -1,7 +1,7 @@
 # iOS build of the engine with the Metal backend (Windows keeps build.bat: MSVC, Direct3D 12 and Vulkan).
 #
 # On a Mac with Xcode (UNVERIFIED: written on Windows, not yet configured on a Mac):
-#   cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
+#   cmake -S . -B build-ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
 #   cmake --build build-ios --config Release -- -sdk iphoneos CODE_SIGNING_ALLOWED=NO     # unsigned, for Sideloadly
 # or open build-ios/cityengine.xcodeproj. Set TBD_TEAM_ID (-DTBD_TEAM_ID=XXXXXXXXXX) to sign in Xcode.
 #
@@ -13,7 +13,25 @@ if(NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     message(FATAL_ERROR "CMakeLists.txt builds the iOS (Metal) app; on Windows use build.bat")
 endif()
 
+set(CMAKE_OSX_SYSROOT iphoneos CACHE STRING "iOS SDK")
+set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0 CACHE STRING "Minimum iOS version")
 project(cityengine VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR NOT CMAKE_GENERATOR STREQUAL "Xcode")
+    message(FATAL_ERROR "Configure with -G Xcode -DCMAKE_SYSTEM_NAME=iOS")
+endif()
+set(CMAKE_XCODE_GENERATE_SCHEME ON)
+
+# Keep the custom shader commands on the same SDK as the generated project.
+string(TOLOWER "${CMAKE_OSX_SYSROOT}" TBD_SYSROOT)
+if(TBD_SYSROOT MATCHES "iphonesimulator")
+    set(TBD_METAL_SDK iphonesimulator)
+    set(TBD_METAL_TARGET "air64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}-simulator")
+elseif(TBD_SYSROOT MATCHES "iphoneos")
+    set(TBD_METAL_SDK iphoneos)
+    set(TBD_METAL_TARGET "air64-apple-ios${CMAKE_OSX_DEPLOYMENT_TARGET}")
+else()
+    message(FATAL_ERROR "Select an iOS SDK with -DCMAKE_OSX_SYSROOT=iphoneos or iphonesimulator")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,28 +48,30 @@ set(TBD_SOURCES
 # (src/main.cpp) and the D3D12 / Vulkan backends stay Windows-only.
 
 # ---- Metal shaders: one .air per .metal, linked into default.metallib.
-file(GLOB TBD_MSL CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/shaders/msl/*.metal)
+file(GLOB TBD_MSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/msl/*.metal")
+if(NOT TBD_MSL)
+    message(FATAL_ERROR "No shaders found in src/shaders/msl")
+endif()
+set(TBD_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders/${TBD_METAL_SDK}-${CMAKE_OSX_DEPLOYMENT_TARGET}")
 set(TBD_AIR)
-foreach(msl ${TBD_MSL})
-    get_filename_component(stem ${msl} NAME_WE)
-    set(air ${CMAKE_BINARY_DIR}/air/${stem}.air)
-    # No -sdk: inside an Xcode build xcrun follows SDKROOT, so device and simulator builds each get their own.
-    add_custom_command(OUTPUT ${air}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/air
-        COMMAND xcrun metal -std=metal3.0 -gline-tables-only -frecord-sources -c ${msl} -o ${air}
-        DEPENDS ${msl} VERBATIM)
-    list(APPEND TBD_AIR ${air})
+foreach(msl IN LISTS TBD_MSL)
+    get_filename_component(stem "${msl}" NAME_WE)
+    set(air "${TBD_SHADER_DIR}/${stem}.air")
+    add_custom_command(OUTPUT "${air}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${TBD_SHADER_DIR}"
+        COMMAND xcrun --sdk "${TBD_METAL_SDK}" metal -std=metal3.0 -target "${TBD_METAL_TARGET}" -c "${msl}" -o "${air}"
+        DEPENDS "${msl}" VERBATIM)
+    list(APPEND TBD_AIR "${air}")
 endforeach()
-set(TBD_METALLIB ${CMAKE_BINARY_DIR}/default.metallib)
-add_custom_command(OUTPUT ${TBD_METALLIB}
-    COMMAND xcrun metallib ${TBD_AIR} -o ${TBD_METALLIB}
+set(TBD_METALLIB "${TBD_SHADER_DIR}/default.metallib")
+add_custom_command(OUTPUT "${TBD_METALLIB}"
+    COMMAND xcrun --sdk "${TBD_METAL_SDK}" metallib ${TBD_AIR} -o "${TBD_METALLIB}"
     DEPENDS ${TBD_AIR} VERBATIM)
-add_custom_target(tbd_shaders DEPENDS ${TBD_METALLIB})
-set_source_files_properties(${TBD_METALLIB} PROPERTIES GENERATED TRUE MACOSX_PACKAGE_LOCATION Resources)
-set_source_files_properties(${TBD_MSL} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/msl HEADER_FILE_ONLY TRUE)
+set_source_files_properties("${TBD_METALLIB}" PROPERTIES GENERATED TRUE MACOSX_PACKAGE_LOCATION Resources)
+# These are fallback copies. Xcode must not infer a Metal source compile step from their extension.
+set_source_files_properties(${TBD_MSL} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/msl XCODE_EXPLICIT_FILE_TYPE text)
 
-add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_METALLIB} ${TBD_MSL})
-add_dependencies(cityengine tbd_shaders)
+add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} "${TBD_METALLIB}" ${TBD_MSL})
 target_include_directories(cityengine PRIVATE src third_party/metal-cpp)
 target_compile_definitions(cityengine PRIVATE TBD_HAVE_METAL=1)
 # metal-cpp manages its own references: no ARC in the Metal backend; the UIKit shell uses ARC.
@@ -64,9 +84,9 @@ set_target_properties(cityengine PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER ${TBD_BUNDLE_ID}
     MACOSX_BUNDLE_BUNDLE_NAME "CityEngine"
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+    MACOSX_BUNDLE_BUNDLE_VERSION "1"
     XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${TBD_BUNDLE_ID}
-    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET 16.0
+    XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "c++20"
     XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${TBD_TEAM_ID}"

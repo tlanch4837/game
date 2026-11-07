@@ -1,4 +1,5 @@
 # build output
+build-ios/
 bin/
 obj/
 *.pdb

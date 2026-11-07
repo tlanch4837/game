@@ -1,0 +1,40 @@
+workflows:
+  ios-sideload-ipa:
+    name: CityEngine unsigned iPhone IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 40
+    environment:
+      xcode: latest
+    scripts:
+      - name: Build and package the unsigned app
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          mkdir -p build-ios/artifacts
+          bash tools/ci/build_ios.sh 2>&1 | tee build-ios/artifacts/xcodebuild.log
+    artifacts:
+      - build-ios/artifacts/cityengine.ipa
+      - build-ios/artifacts/default.metallib
+      - build-ios/artifacts/xcodebuild.log
+    # Enable this block with your sole verified recipient.
+    # publishing:
+    #   email:
+    #     recipients:
+    #       - you@example.com
+
+  ios-shader-check:
+    name: CityEngine Metal shader check
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    environment:
+      xcode: latest
+    scripts:
+      - name: Compile every device shader
+        script: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          mkdir -p build-ios/artifacts
+          { bash tools/ci/prepare_metal.sh && bash tools/ci/check_metal.sh; } \
+            2>&1 | tee build-ios/artifacts/metal-check.log
+    artifacts:
+      - build-ios/artifacts/metal-check.log
