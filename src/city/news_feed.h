@@ -60,4 +60,40 @@ private:
     std::mt19937 rng_{12345u};
 };
 
+// Reads news_lines.json (an array of flat {"trigger","tone","text"} objects) into the feed. Returns the lines added.
+// Minimal on purpose: string values with \" and \ escapes, nothing nested.
+inline int LoadNewsLines(NewsFeed& feed, const std::string& json) {
+    int added = 0;
+    size_t i = 0;
+    auto str = [&](size_t& k, std::string& out) { // k at the opening quote
+        out.clear();
+        for (++k; k < json.size() && json[k] != '"'; ++k) {
+            if (json[k] == '\\' && k + 1 < json.size()) ++k;
+            out.push_back(json[k]);
+        }
+        ++k;
+    };
+    while ((i = json.find('{', i)) != std::string::npos) {
+        const size_t end = json.find('}', i);
+        if (end == std::string::npos) break;
+        NewsLine line;
+        size_t k = i + 1;
+        while (k < end) {
+            k = json.find('"', k);
+            if (k == std::string::npos || k >= end) break;
+            std::string key, val;
+            str(k, key);
+            k = json.find('"', k);
+            if (k == std::string::npos) break;
+            str(k, val);
+            if (key == "trigger") line.trigger = val;
+            else if (key == "tone") line.tone = val;
+            else if (key == "text") line.text = val;
+        }
+        if (!line.trigger.empty() && !line.text.empty()) feed.Add(line), ++added;
+        i = std::max(end, k) + 1;
+    }
+    return added;
+}
+
 } // namespace city

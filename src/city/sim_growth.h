@@ -202,6 +202,10 @@ public:
         }
     }
 
+    // Game minutes this lot has spent in bad conditions in a row, and how long it may (before its patience jitter).
+    float BadMinutes(uint64_t id) const { const auto it = state_.find(id); return it == state_.end() ? 0.0f : it->second.bad; }
+    static float DownMinutes(const SimTuning& t) { return (float)(t.levelDownDays * kDayMinutes); }
+
 private:
     struct St {
         float good = 0, bad = 0; // game minutes in a row

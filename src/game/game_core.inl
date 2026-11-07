@@ -1882,6 +1882,8 @@ void RoadsWorldLabels() {
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_herds.inl"    // neighbourhoods, herds over the day and the visible cars made from them (src/city/sim_hoods.h ...)
+#include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
 
@@ -2007,9 +2009,11 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
                    : g_indTool.active ? (g_indTool.waste ? (int)tbd::gui::HudTool::Garbage : (int)tbd::gui::HudTool::Industry) : -1;
     hud.terrainOpen = terrainPanelOpen;
     SimHudFill(hud);
+    if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
     g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
     const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
     SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim
+    OverlaysHud(); // the info view toggles and legend, right column under the side icons
     g_gameSlot = hud.slot;
     if (hud.gameAction) g_gameAction = hud.gameAction, hud.gameAction = 0; // bottom centre, tight to the edge; the tools sit above it
     if (hud.request == (int)tbd::gui::HudTool::Terrain) {
@@ -2108,6 +2112,8 @@ void RenderFrame() {
     FrameMark("industry-sync");
     GarbageSync(dt);  // garbage produced, collected and processed
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
+    HerdsSync(dt);    // the cars near the camera made from the herds (city_herds.inl)
+    OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
     FrameMark("sim-sync");
     CityStressSync(); // TBD_CITY_STRESS only
     CityChunkCheckSync(); // TBD_CHUNK_CHECK only
@@ -2989,6 +2995,7 @@ void RenderFrame() {
     }
     const tbd::FrameCounts cityMark = r.Counts();
     ZonesDraw(r, sceneViewProj); // zone cells, construction sites, the zoning cursor
+    OverlaysDraw(r, sceneViewProj); // the info overlay (one draw)
     TransportDraw(r, sceneViewProj); // transport buildings, the hologram being placed, lot markers
     UtilDraw(r, sceneViewProj); // poles, pylons, wires, the underground view, the utilities cursor
     IndustryDraw(r, sceneViewProj); // industry hubs, work areas, the resource heat map
@@ -2996,6 +3003,7 @@ void RenderFrame() {
     const tbd::FrameCounts agentsMark = r.Counts();
     g_drawCats.Add(kCatCity, cityMark, agentsMark);
     SimAgentsDraw(r, sceneViewProj); // cosmetic traffic from the flow solve: one instanced draw per car model
+    HerdsDraw(r, sceneViewProj);     // the herd children (replace the cosmetic cars when the herd system is running)
     g_drawCats.Add(kCatAgents, agentsMark, r.Counts());
     const tbd::FrameCounts waterMark = r.Counts();
     g_water.SubmitDraw(r, sceneViewProj, waterJitter);

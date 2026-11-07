@@ -49,6 +49,7 @@
 #include "gui/gui.h"             // in-game GUI (portable, no Win32); see docs/gui.md
 #include "gui/terrain_toolbar.h" // its first user: the terrain sandbox toolbar
 #include "gui/city_hud.h"      // the CS2-style bottom toolbar, status bar and side icons
+#include "gui/city_overlays.h"     // the info overlays' toggles and legend
 #include "gui/zone_toolbar.h"     // zoning (src/city/zoning.h): zone painting, growth, the game clock
 #include "gui/transport_toolbar.h" // transport buildings (src/city/transport.h): depots, stations, harbours, airports
 #include "gui/utility_toolbar.h"   // utilities: electricity, water, sewage (city_utilities.inl hosts them)
@@ -56,10 +57,15 @@
 #include "city/industry.h"         // specialized industry (city_industry.inl hosts it)
 #include "city/utilities.h"        // utilities (city_utilities.inl hosts them)
 #include "city/sim.h"              // the city sim's fixed-step scheduler (city_sim.inl hosts it)
+#include "city/sim_children.h"     // neighbourhoods, herds, routes, visible children (city_herds.inl hosts them)
+#include "city/sim_routes.h"
 #include "city/sim_cells.h"        // the city sim's per-cell counters: homes, jobs, residents, employment
 #include "city/sim_growth.h"       // the city sim's demand, demand-gated growth, level up / down, abandonment
 #include "city/sim_coverage.h"     // the city sim's utilities per cell and service coverage
 #include "city/sim_economy.h"      // the city sim's treasury, taxes and upkeep
+#include "city/sim_budget.h"       // the city sim's ledger: itemised expenses, loans, bankruptcy
+#include "city/sim_milestones.h"   // population milestones and the tools they unlock
+#include "city/news_feed.h"        // news headlines for sim events (the radio reads its queue)
 #include "city/sim_flow.h"         // the city sim's flow traffic: vehicles per hour per road segment
 #include "city/sim_agents.h"       // cosmetic cars driven by the flow (not simulated)
 #include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters
@@ -1123,6 +1129,7 @@ static std::string RemoteEntityLine(int i) {
     return s;
 }
 static bool RemoteVec(const std::string& text, tbd::Vec3& v) { float x, y, z; if (sscanf(text.c_str(), "%f %f %f", &x, &y, &z) != 3) return false; v = {x, y, z}; return true; }
+bool SimRemote(const std::vector<std::string>& a, std::string& out); // city_overlays.inl: the "sim" command
 // The command's reply, or false with the reason. A screenshot answers later, from RemoteShotAfterFrame.
 static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
     const std::vector<std::string>& a = q->args;
@@ -1278,6 +1285,7 @@ static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
         return IndustryDemo(x, z, out);
     }
     if (cmd == "industry_dump") return IndustryDump(a.size() > 1 ? a[1] : std::string("industry_models_data.js"), out); // industry_dump|path.js
+    if (cmd == "sim") return SimRemote(a, out); // sim|stats / overlay / budget / plant / boost (city_overlays.inl)
     if (cmd == "screenshot") { // screenshot|path.bmp|frames to wait: answered once that frame is drawn
         if (g_remoteShot.request) { out = "a screenshot is already pending"; return false; }
         g_remoteShot.request = q;

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "city_budget_panel.h" // the Budget panel (taxes, ledger, trend, loans)
 #include "zone_toolbar.h"
 
 namespace tbd {
@@ -78,8 +79,13 @@ struct CityHud {
     std::vector<std::string> citizens;
     std::string citizensClosedFor; // the title the player closed: the panel stays shut until another building is picked
     int milestone = 1;
+    BudgetView bv;                           // the Budget panel's ledger and loans (city_budget_panel.h)
+    long long lockPop[(int)HudTool::Count] = {}; // in: the population a locked tool needs (milestones), 0 = open
+    bool notDoneLocked = false;              // the "not completed" panel is showing a locked tool instead
+    std::string banner, bannerSub;           // in: a milestone banner (top centre) while bannerAlpha > 0
+    float bannerAlpha = 0;
     bool Pending() const { return notDoneName != nullptr; }
-    void ShowNotDone(const char* name, const char* blurb) { notDoneName = name, notDoneBlurb = blurb, tiles = false; }
+    void ShowNotDone(const char* name, const char* blurb, bool locked = false) { notDoneName = name, notDoneBlurb = blurb, tiles = false, notDoneLocked = locked; }
     void Dismiss() { notDoneName = notDoneBlurb = nullptr, tiles = false, budget = false; }
 };
 
@@ -219,6 +225,11 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
                     h.Dismiss();
                     h.notDone = -1;
                     h.budget = !was;
+                } else if (it.tool >= 0 && h.lockPop[it.tool] > 0) { // locked by a milestone
+                    static char why[96];
+                    std::snprintf(why, sizeof(why), "Unlocks at a population of %lld.", h.lockPop[it.tool]);
+                    h.Dismiss();
+                    h.ShowNotDone(it.name, why, true), h.notDone = i;
                 } else if (it.tool >= 0) h.request = it.tool, h.Dismiss();
                 else if (it.tool == -2) {
                     const bool was = h.tiles;
@@ -230,6 +241,16 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
                     h.Dismiss();
                     if (!was) h.ShowNotDone(it.name, it.blurb), h.notDone = i;
                 }
+            }
+            if (it.tool >= 0 && h.lockPop[it.tool] > 0) { // the lock and the population it needs
+                DrawList& dl = g.Draw();
+                dl.Rect(x, row.y, x + size, row.y + size, Rgba(10, 11, 13, 150), Rgba(10, 11, 13, 150), th.widgetRadius);
+                DrawIcon(dl, Icon::Lock, x + size * 0.5f, row.y + size * 0.42f, size * 0.42f, th.iconStroke, Rgba(250, 210, 120));
+                char pop[16];
+                const long long lp = h.lockPop[it.tool];
+                if (lp >= 1000) std::snprintf(pop, sizeof(pop), lp % 1000 ? "%.1fk" : "%.0fk", lp / 1000.0);
+                else std::snprintf(pop, sizeof(pop), "%lld", lp);
+                g.TextIn({x, row.y + size * 0.68f, size, size * 0.3f}, pop, Rgba(250, 210, 120), 0.5f, th.smallSize, true);
             }
             x += size + gap;
             for (int a : groupAfter) {
@@ -295,24 +316,8 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
     }
 
     // ------------------------------------------------------------ Budget (the city sim's economy)
-    if (h.budget) {
-        g.BeginPanel("Budget", Anchor::TopCenter, 0.0f, 60.0f, 460.0f, 0.0f, 12.0f); // from the top: it is tall
-        long long income = 0;
-        for (long long v : h.incomeDay) income += v;
-        g.Text(TextStyle::Bright, "Income %lld / day   Upkeep %lld / day   Net %+lld", income, h.upkeepDay, income - h.upkeepDay);
-        g.Text(TextStyle::Muted, "Taxes: residential %lld, commercial %lld, office %lld, industrial %lld", h.incomeDay[0], h.incomeDay[1], h.incomeDay[2], h.incomeDay[3]);
-        g.Spacing(4.0f);
-        g.Text(TextStyle::Muted, "Tax rates (higher rates lower demand)");
-        static const char* const kTax[] = {"Residential", "Commercial", "Office", "Industrial"};
-        for (int c = 0; c < 4; ++c) g.SliderFloat(kTax[c], &h.tax[c], 0.0f, 30.0f, "%.0f %%");
-        g.Spacing(4.0f);
-        g.Text(TextStyle::Muted, "Service funding (scales coverage radius and upkeep)");
-        static const char* const kSvc[] = {"Fire & Rescue", "Police", "Healthcare", "Education", "Parks", "Transit"};
-        for (int k = 0; k < 6; ++k) g.SliderFloat(kSvc[k], &h.funding[k], 50.0f, 150.0f, "%.0f %%");
-        g.NextWidth(120.0f);
-        if (g.Button("Close", Icon::Close)) h.budget = false;
-        g.EndPanel();
-    }
+    if (h.budget) DrawBudgetPanel(g, h);
+    if (h.bannerAlpha > 0.0f) DrawMilestoneBanner(g, h.banner.c_str(), h.bannerSub.c_str(), h.bannerAlpha);
 
     // ------------------------------------------------------------ "not completed" panel, above the toolbar
     if (h.notDoneName) {
@@ -323,7 +328,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
         const Rect r = g.Reserve(std::round(30.0f * s), 0.0f);
         const Color c = Rgba(255, 190, 70);
         g.Draw().Rect(r.x, r.y, r.x + r.w, r.y + r.h, Rgba(60, 46, 20, 230), Rgba(60, 46, 20, 230), th.widgetRadius, th.border, Rgba(150, 110, 40));
-        g.TextIn(r, "NOT COMPLETED YET", c, 0.5f, th.fontSize, true);
+        g.TextIn(r, h.notDoneLocked ? "LOCKED: REACH THE MILESTONE" : "NOT COMPLETED YET", c, 0.5f, th.fontSize, true);
         g.NextWidth(120.0f);
         if (g.Button("Close", Icon::Close)) h.Dismiss(), h.notDone = -1;
         g.EndPanel();

@@ -175,7 +175,9 @@ enum class Icon {
     // utilities (utility_toolbar.h)
     Bolt, Drop, Drain, Underground, Pole, Utilities,
     // city HUD (city_hud.h)
-    Health, Fire, Police, Education, Park, Economy, Info, Citizens, Notes, Chat, MapTiles, Chart, Comms, Gear
+    Health, Fire, Police, Education, Park, Economy, Info, Citizens, Notes, Chat, MapTiles, Chart, Comms, Gear,
+    // sim notifications and milestones (sim_flags.h, city_budget_panel.h)
+    Cart, Skull, Lock, Overlay
 };
 
 inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size, float stroke, Color c);
@@ -251,6 +253,12 @@ inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size
         }
     };
     auto Dot = [&](float x, float y) { dl.Circle(cx + x * h, cy + y * h, stroke * 1.3f, c); };
+    auto Ring2 = [&](float x, float y, float r) { // a small ring centred off the origin
+        for (int i = 0; i < 8; ++i) {
+            const float a0 = i * 0.7853982f, a1 = (i + 1) * 0.7853982f;
+            L(x + r * std::cos(a0), y + r * std::sin(a0), x + r * std::cos(a1), y + r * std::sin(a1));
+        }
+    };
     switch (icon) {
     case Icon::Straight: L(-0.8f, 0.8f, 0.8f, -0.8f); Dot(-0.8f, 0.8f); Dot(0.8f, -0.8f); break;
     case Icon::CurveSimple: Q(-0.85f, 0.85f, -0.6f, -0.7f, 0.85f, -0.85f); Dot(-0.85f, 0.85f); Dot(0.85f, -0.85f); break;
@@ -401,6 +409,23 @@ inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size
     case Icon::MapTiles: L(-0.9f, -0.9f, 0.9f, -0.9f); L(0.9f, -0.9f, 0.9f, 0.9f); L(0.9f, 0.9f, -0.9f, 0.9f); L(-0.9f, 0.9f, -0.9f, -0.9f); L(0, -0.9f, 0, 0.9f); L(-0.9f, 0, 0.9f, 0); break;
     case Icon::Chart: L(-0.7f, 0.9f, -0.7f, 0.1f); L(0, 0.9f, 0, -0.5f); L(0.7f, 0.9f, 0.7f, -0.9f); L(-0.95f, 0.95f, 0.95f, 0.95f); break;
     case Icon::Gear: Ring(0.55f, 14); for (int i = 0; i < 8; ++i) { const float a = i * 0.7853982f; L(std::cos(a) * 0.55f, std::sin(a) * 0.55f, std::cos(a) * 0.95f, std::sin(a) * 0.95f); } break;
+    case Icon::Cart: // a shopping cart
+        L(-0.95f, -0.7f, -0.6f, -0.7f); L(-0.6f, -0.7f, -0.35f, 0.35f); L(-0.35f, 0.35f, 0.65f, 0.35f); L(0.65f, 0.35f, 0.85f, -0.4f);
+        L(0.85f, -0.4f, -0.5f, -0.4f); Ring2(-0.25f, 0.72f, 0.14f); Ring2(0.55f, 0.72f, 0.14f);
+        break;
+    case Icon::Skull: // a skull: dome, eyes, jaw
+        Q(-0.7f, 0.15f, -0.75f, -0.95f, 0.0f, -0.9f); Q(0.0f, -0.9f, 0.75f, -0.95f, 0.7f, 0.15f);
+        L(-0.7f, 0.15f, -0.4f, 0.4f); L(0.7f, 0.15f, 0.4f, 0.4f); L(-0.4f, 0.4f, -0.4f, 0.85f); L(0.4f, 0.4f, 0.4f, 0.85f); L(-0.4f, 0.85f, 0.4f, 0.85f);
+        Ring2(-0.3f, -0.2f, 0.18f); Ring2(0.3f, -0.2f, 0.18f); L(-0.12f, 0.6f, -0.12f, 0.85f); L(0.12f, 0.6f, 0.12f, 0.85f);
+        break;
+    case Icon::Lock: // a padlock
+        L(-0.6f, -0.05f, 0.6f, -0.05f); L(0.6f, -0.05f, 0.6f, 0.9f); L(0.6f, 0.9f, -0.6f, 0.9f); L(-0.6f, 0.9f, -0.6f, -0.05f);
+        Q(-0.38f, -0.05f, -0.45f, -0.95f, 0.0f, -0.9f); Q(0.0f, -0.9f, 0.45f, -0.95f, 0.38f, -0.05f); Dot(0.0f, 0.42f);
+        break;
+    case Icon::Overlay: // stacked map layers
+        L(0.0f, -0.85f, 0.9f, -0.4f); L(0.9f, -0.4f, 0.0f, 0.05f); L(0.0f, 0.05f, -0.9f, -0.4f); L(-0.9f, -0.4f, 0.0f, -0.85f);
+        L(-0.9f, 0.05f, 0.0f, 0.5f); L(0.0f, 0.5f, 0.9f, 0.05f); L(-0.9f, 0.5f, 0.0f, 0.95f); L(0.0f, 0.95f, 0.9f, 0.5f);
+        break;
     case Icon::Comms: L(0, -0.2f, 0, 0.9f); Ring(0.18f, 8); Q(-0.55f, -0.75f, 0, -1.0f, 0.55f, -0.75f); Q(-0.9f, -0.2f, 0, -0.65f, 0.9f, -0.2f); break;
     default: break;
     }

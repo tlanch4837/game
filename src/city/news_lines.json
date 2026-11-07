@@ -498,5 +498,11 @@
 {"trigger":"adj:school+industry","tone":"bad","text":"Dust from the factory yard settles on the school's new playground. The pupils are calling it snow, and the caretaker is calling it a bill."},
 {"trigger":"adj:park+industry","tone":"good","text":"The factory has agreed to plant trees along the park border. The first saplings are already taller than the foreman."},
 {"trigger":"park_built","tone":"good","text":"The park's new fountain is switched on for the first time, and a sudden gust sends the mayor's hat straight into it."},
-{"trigger":"school_built","tone":"good","text":"The school's first lunch menu is published, and parents are amazed that the pudding is listed as a food group."}
+{"trigger":"school_built","tone":"good","text":"The school's first lunch menu is published, and parents are amazed that the pudding is listed as a food group."},
+{"trigger":"milestone_reached","tone":"good","text":"The city has officially grown up. The mayor celebrates by unlocking new buildings and immediately pretending this was the plan all along."},
+{"trigger":"milestone_reached","tone":"good","text":"Population milestone reached. Planners say it was careful growth; residents say it was mostly the roads going everywhere at once."},
+{"trigger":"milestone_reached","tone":"good","text":"A new milestone for the city, and a cheque from the regional government. City Hall has already spent it twice, in theory."},
+{"trigger":"bankrupt","tone":"bad","text":"The treasury is officially empty. The mayor has been seen checking down the back of the council chamber sofa."},
+{"trigger":"bankrupt","tone":"bad","text":"City Hall is broke. Advisers recommend raising taxes, cutting spending or, failing that, a very large bake sale."},
+{"trigger":"loan_taken","tone":"bad","text":"The city takes out a loan. The bank manager smiles politely and adds the mayor to the special list."}
 ]
