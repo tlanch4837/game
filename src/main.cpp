@@ -58,6 +58,9 @@
 #include "city/sim_growth.h"       // the city sim's demand, demand-gated growth, level up / down, abandonment
 #include "city/sim_coverage.h"     // the city sim's utilities per cell and service coverage
 #include "city/sim_economy.h"      // the city sim's treasury, taxes and upkeep
+#include "city/sim_budget.h"       // the city sim's ledger: itemised expenses, loans, bankruptcy
+#include "city/sim_milestones.h"   // population milestones and the tools they unlock
+#include "city/news_feed.h"        // news headlines for sim events (the radio reads its queue)
 #include "city/sim_flow.h"         // the city sim's flow traffic: vehicles per hour per road segment
 #include "city/sim_agents.h"       // cosmetic cars driven by the flow (not simulated)
 #include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters

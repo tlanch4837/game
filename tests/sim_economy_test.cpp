@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "city/sim.h"
+#include "city/sim_budget.h"
 #include "city/sim_economy.h"
 
 using namespace tbd::city;
@@ -104,6 +105,69 @@ int main() {
                     (long long)e.treasury);
         CHECK(e.treasury > 0);
         CHECK(e.LastIncome() > 0);
+    }
+
+    // Budget (sim_budget.h): itemised expenses, loans, bankruptcy, the balance history.
+    {
+        CitySim s;
+        SimTuning t;
+        SimEconomy e;
+        e.Reset(t);
+        e.treasury = 100000; // 1,000
+        SimBudget b;
+        DayUpkeep up;
+        up.services = 30000, up.utilities = 20000, up.roads = 10000;
+        b.Day(e, s, t, up);
+        CHECK(b.lastExpense[kExpService] == 30000 && b.lastExpense[kExpUtility] == 20000 && b.lastExpense[kExpRoad] == 10000);
+        CHECK(b.lastExpense[kExpInterest] == 0 && b.LastExpenses() == 60000);
+        CHECK(e.treasury == 40000 && !b.bankrupt);
+        b.Day(e, s, t, up); // into the red: one warning event, the game goes on
+        CHECK(e.treasury == -20000 && b.bankrupt);
+        CHECK(b.events.size() == 1 && b.events[0] == "bankrupt");
+        b.Day(e, s, t, up);
+        CHECK(b.events.size() == 1); // still bankrupt: no second warning
+        // a loan: money at once, interest and instalments each day, one of each tier
+        int nt = 0;
+        const LoanTier* tiers = LoanTiers(nt);
+        CHECK(nt == 3);
+        CHECK(b.TakeLoan(0, e));
+        CHECK(!b.TakeLoan(0, e));
+        CHECK(e.treasury == -80000 + tiers[0].amount);
+        const int64_t before = e.treasury, owed = b.Owed();
+        b.Day(e, s, t, DayUpkeep{});
+        const int64_t interest = owed * tiers[0].ratePermille / (1000LL * kLoanDaysPerYear);
+        CHECK(b.lastExpense[kExpInterest] == interest && interest > 0);
+        CHECK(b.lastRepayment == b.loans[0].instalment);
+        CHECK(e.treasury == before - interest - b.lastRepayment);
+        CHECK(b.Owed() == owed - b.lastRepayment);
+        CHECK(!b.bankrupt && b.events.back() == "solvent"); // the loan pulled the city out: the warning cleared
+        for (int d = 0; d < tiers[0].termDays + 5; ++d) b.Day(e, s, t, DayUpkeep{}); // repaid by the end of its term
+        CHECK(b.loans.empty() && b.Owed() == 0);
+        CHECK(b.TakeLoan(1, e)); // early repayment
+        CHECK(!b.RepayLoan(0, e) || e.treasury >= 0); // only with the money in hand
+        e.treasury += b.Owed();
+        CHECK(b.RepayLoan(0, e));
+        CHECK(b.loans.empty());
+        int64_t h[SimBudget::kHistory];
+        CHECK(b.History(h, SimBudget::kHistory) == SimBudget::kHistory);
+        b.Day(e, s, t, DayUpkeep{});
+        b.History(h, SimBudget::kHistory);
+        CHECK(h[SimBudget::kHistory - 1] == e.treasury);
+        CHECK(RoadUpkeepPerDay(2500.0, 40.0) == 10000); // 2.5 km at 40 a km
+    }
+
+    // Efficiency: a cell without power pays half the tax.
+    {
+        std::vector<Lot> lots = {MakeLot(1, 10, 3, 6, 6)};
+        CitySim s;
+        s.Sync(lots, 1);
+        SimTuning t;
+        SimEconomy e;
+        int64_t on[4], off[4];
+        e.DayIncome(s, t, on);
+        for (CellSim& c : s.sim) c.powerOk = 0;
+        e.DayIncome(s, t, off);
+        CHECK(on[0] > 0 && off[0] * 2 <= on[0] + 1 && off[0] * 2 >= on[0] - 1);
     }
 
     if (failures) {

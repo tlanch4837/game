@@ -22,6 +22,7 @@ struct TransportToolState {
     bool active = false;
     city::TTab tab = city::TTab::Rail;
     int def = -1; // the chosen building (index into city::Defs()); -1: none, the cursor does nothing
+    uint32_t lockedTabs = 0; // one bit per TTab locked by a milestone (the host sets it): shown with a lock, not selectable
     int lastDef[(int)city::TTab::Count] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     float rotation = 0;
     bool marker = true;     // show the lot outline, the water apron, the shoreline
@@ -350,13 +351,22 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
         const float size = std::round(40.0f * s), gap = std::round(4.0f * s);
         const Rect bar = g.Reserve(size, panelW * s);
         static const Icon kIcons[] = {Icon::Transport, Icon::Ship, Icon::Plane, Icon::Roads, Icon::Fire, Icon::Health, Icon::Park, Icon::Police, Icon::Education, Icon::Comms};
+        if ((t.lockedTabs >> (int)t.tab) & 1u) // the open tab is locked: the first open one of its group instead
+            for (int i = 0; i < (int)city::TTab::Count; ++i)
+                if (!((t.lockedTabs >> i) & 1u) && city::TabGroup((city::TTab)i) == city::TabGroup(t.tab)) { t.SelectTab((city::TTab)i); break; }
         int slot = 0; // a service tab (Fire, Healthcare, Police, ...) is its own panel from its HUD button; the others share Transportation
         for (int i = 0; i < (int)city::TTab::Count; ++i) {
             if (i != (int)t.tab && city::TabGroup((city::TTab)i) != city::TabGroup(t.tab)) continue;
             char id[16];
             std::snprintf(id, sizeof(id), "##ttab%d", i);
             const Rect r = {std::round(bar.x + slot++ * (size + gap)), bar.y, size, size};
-            if (IconBox(g, tip, id, r, kIcons[i], (int)t.tab == i, city::TTabName((city::TTab)i))) t.SelectTab((city::TTab)i);
+            const bool locked = (t.lockedTabs >> i) & 1u;
+            if (IconBox(g, tip, id, r, kIcons[i], (int)t.tab == i, locked ? "Locked: reach the next milestone" : city::TTabName((city::TTab)i)) && !locked)
+                t.SelectTab((city::TTab)i);
+            if (locked) {
+                g.Draw().Rect(r.x, r.y, r.x + r.w, r.y + r.h, Rgba(10, 11, 13, 160), Rgba(10, 11, 13, 160), g.Style().widgetRadius);
+                DrawIcon(g.Draw(), Icon::Lock, r.x + r.w * 0.5f, r.y + r.h * 0.5f, r.w * 0.45f, g.Style().iconStroke, Rgba(250, 210, 120));
+            }
         }
         const Rect close = {bar.x + bar.w - size, bar.y, size, size};
         if (IconBox(g, tip, "##tclose", close, Icon::Close, false, "Close (Esc)")) t.active = false, t.def = -1, t.bulldoze = false;
