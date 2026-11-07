@@ -2420,6 +2420,18 @@ bool g_maxGraphics = false;
 // Graphics > Quality: 0 full; 1 fast (modeling: textures and sun shadows only, no ray tracing, probes, clouds, sky, relief, grass);
 // 2 unlit (vertex colours only, no shadows). F6 cycles.
 int g_gfxQuality = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_QUALITY", v, sizeof(v)) > 0 ? std::clamp(atoi(v), 0, 2) : 0; }(); // TBD_QUALITY=0/1/2 starts there
+// The graphics preset for lighting and post (docs/track_r_ios_platform_notes.md): TBD_CHUNK_PRESET, the one knob Track R's governor
+// reads too. 0 low, 1 lowmed, 2 medium, 3 high, 4 ultra and pc (the default). TBD_LOOK=0: the look before the CS2 pass (no city air,
+// no grade, every post pass at every preset), for before/after comparisons.
+bool LookOn() { static const bool on = [] { char v[8] = {}; return !(GetEnvironmentVariableA("TBD_LOOK", v, sizeof(v)) > 0 && v[0] == '0'); }(); return on; }
+int LookTier() {
+    static const int tier = [] {
+        char v[16] = {};
+        const std::string p = GetEnvironmentVariableA("TBD_CHUNK_PRESET", v, sizeof(v)) > 0 ? v : "pc";
+        return !LookOn() ? 4 : p == "low" ? 0 : p == "lowmed" ? 1 : p == "medium" ? 2 : p == "high" ? 3 : 4;
+    }();
+    return tier;
+}
 void SetMaxGraphics(bool on) {
     static float hour = 0, tilt = 0;
     static bool sky = true, shadows = true, animate = false;
@@ -3511,8 +3523,12 @@ void RenderFrame() {
         }
     }
     const int qualityOff = g_gfxQuality > 0 ? (1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 512 | 1024 | (g_gfxQuality > 1 ? 256 : 0)) : 0;
-    light.lightDebug[2] = (float)(featureOff | qualityOff); // the spare slot; mesh shaders only
-    light.lightDebug[3] = g_engine.scene.ambientFill + 1.0f; // +1: an unset 0 reads as the default (lighting.hlsli AmbientFill)
+    const int presetOff = LookTier() == 0 ? 2 : 0; // Low: one hardware-filtered shadow tap instead of PCSS's fifteen
+    light.lightDebug[2] = (float)(featureOff | qualityOff | presetOff); // the spare slot; mesh shaders only
+    // The city map's key light (docs/cs2_look_pass.md): CS2's sunlit and shaded walls differ about 15:1, ours were near 3:1, so the sky
+    // and probe fill drops there. Real meshes and the baked far volumes both light through LitPbr, so they move together.
+    const bool cityLight = LookOn() && !(g_engine.sun.showSky && g_gfxQuality == 0) && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+    light.lightDebug[3] = (cityLight ? g_engine.scene.ambientFill * 0.55f : g_engine.scene.ambientFill) + 1.0f; // +1: an unset 0 reads as the default (lighting.hlsli AmbientFill)
     g_sceneExposure = g_engine.scene.exposure; // both renderers pass it to post.hlsl ExposureValue
     light.lightDebug[0] = lightDebug; // 1 indirect diffuse, 2 sun, 3 reflections, 4 haze only, 8 surface light (vs tbd_reference); see lighting.hlsli and post.hlsl
     const tbd::Vec3 shadowFocus = g_engine.camera.target;
@@ -3569,6 +3585,9 @@ void RenderFrame() {
         static const bool motionOff = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_TAAMV", b, 8) > 0 && b[0] == '0'; }(); // test: the old depth-only reprojection
         frameView.motionVectors = !motionOff;
         r.SetFrameView(frameView);
+        // The city map: no marched sky, its cheap air instead (post.hlsl CityComposite; docs/cs2_look_pass.md).
+        frameView.cityAir = LookOn() && !frameView.sky && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+        frameView.postTier = LookTier();
     }
     light.eye[0] = eye.x; light.eye[1] = eye.y; light.eye[2] = eye.z;
     r.SetLighting(light);

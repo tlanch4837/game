@@ -135,6 +135,8 @@ struct FrameView {
     Vec3 eye;
     float time = 0.0f; // seconds, moves the clouds
     bool sky = true;   // physical sky, clouds and haze
+    bool cityAir = false; // with sky off: the city camera's cheap analytic sky, height fog and grade (post.hlsl CityComposite, CityGrade)
+    int postTier = 4;  // graphics preset for the post passes: 0 Low (no AO, no bloom), 1 Low/Med (no bloom), 2 Medium, 3 High, 4 Ultra / PC
     float dt = 0.0f;   // seconds since last frame, for what animates in a vertex shader
     bool motionVectors = true; // TAA follows moving things by their own motion
 };
@@ -439,7 +441,7 @@ protected:
     uint64_t sunCacheKey_ = 0;
     // The line after each 60-frame GPU timer line: what the last frame drew.
     void LogCounts(const char* api) const; // log.cpp
-    double gpuPasses_[8] = {};
+    double gpuPasses_[10] = {}; // the timer marks less one (kTimerMarks in both renderers); 8 overran into the members below
     double fenceWaitMs_ = 0.0, presentMs_ = 0.0;
     static double TraceNowMs() {
         LARGE_INTEGER now, freq;

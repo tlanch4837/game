@@ -1127,9 +1127,10 @@ public:
         std::memcpy(p.sunDir, lighting_.sunDir, sizeof(p.sunDir));
         p.eye[3] = scale_ < 1.0f ? 1.0f : 0.0f;
         p.res[0] = (float)rw_; p.res[1] = (float)rh_; p.res[2] = 1.0f / (float)rw_; p.res[3] = 1.0f / (float)rh_;
-        p.misc[0] = view_.time; p.misc[1] = (float)(postFrame_ & 1023); p.misc[2] = view_.sky ? 1.0f : 0.0f;
+        p.misc[0] = view_.time; p.misc[1] = (float)(postFrame_ & 1023); p.misc[2] = view_.sky ? 1.0f : view_.cityAir ? 0.5f : 0.0f;
         p.misc[3] = historyValid_ ? 1.0f : 0.0f;
         p.motion[0] = view_.motionVectors ? 1.0f : 0.0f; p.motion[1] = g_brightness; p.motion[2] = g_sceneExposure;
+        p.motion[3] = (float)(view_.postTier + 1); // post.hlsl PostTier; 0 would read as unset
         std::memcpy(frame_->postPtr, &p, sizeof(p));
 
         const bool rayTraced = BuildRayScene();
@@ -1150,7 +1151,8 @@ public:
         }
         Mark(4);
         if (rayTraced) list_->SetGraphicsRootShaderResourceView(2, rayFrames_[frameSlot_].tlas->GetGPUVirtualAddress());
-        PostPass(kAo, rayTraced ? aoRtPso_.Get() : postPso_[0].Get(), std::max(1u, rw_ / 2), std::max(1u, rh_ / 2));
+        if (!(view_.cityAir && view_.postTier == 0)) // Low: the city composite reads no occlusion
+            PostPass(kAo, rayTraced ? aoRtPso_.Get() : postPso_[0].Get(), std::max(1u, rw_ / 2), std::max(1u, rh_ / 2));
         Mark(5);
         if (view_.sky) {
             PostPass(kCloudMarch, postPso_[1].Get(), std::max(1u, rw_ / 4), std::max(1u, rh_ / 4));
@@ -1162,7 +1164,8 @@ public:
         Mark(7);
         PostPass(kHistory0 + cur, postPso_[3].Get(), rw_, rh_);
         PostPass(kExposure, postPso_[7].Get(), 1, 1);
-        PostPass(kBloom, postPso_[8].Get(), std::max(1u, rw_ / 4), std::max(1u, rh_ / 4));
+        if (view_.postTier > 1) // Low and Low/Med: the tone map adds no bloom
+            PostPass(kBloom, postPso_[8].Get(), std::max(1u, rw_ / 4), std::max(1u, rh_ / 4));
         Mark(8);
         resolved_ = true;
 

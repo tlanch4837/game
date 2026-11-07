@@ -27,6 +27,7 @@ float SkinPoreDepth() { return MATERIAL_CONSTANTS.y > 0.0 ? MATERIAL_CONSTANTS.y
 float SkinDetailScale() { return MATERIAL_CONSTANTS.x > 0.0 ? MATERIAL_CONSTANTS.x : 32.0; } // pores ~0.4 mm (48: sub-pixel and averaged away; 20: too big)
 
 #include "lighting.hlsli"
+#include "building_atlas.hlsli"
 static float gPixelShadow = 1.0; // the sun's shadow at this pixel, set once by PSMain before any material runs
 
 // Motion vectors: what a moving thing's vertex shader needs to say where it was last frame.
@@ -629,6 +630,26 @@ void Material(VSOut i, out float4 color, out float3 n) {
         color.rgb *= 1.0 + 0.03 * sin(g.x + g.y) * fade;
     }
     n = normalize(mul(tn, float3x3(T * invMax, B * invMax, n)));
+}
+
+// ------------------------------------------------------------------ the shared building atlas (docs/building_atlas.md)
+// One material for every zoned building on a page (tools/atlas/pack_atlas.py): the bound albedo and normal are a 4096 page of
+// 8 x 8 cells, each one tile wrapped 16 px past its edges. Vertex alpha 3 + (cell + 0.5) / 64 picks the cell, rgb tints it, and the
+// uv runs in tiles, unwrapped, so a wall repeats its brick. Sampled with the unwrapped uv's gradients (scaled into the cell, so a
+// tile seam is not a mip seam) and capped at kAtlasMaxLod, the deepest mip that never mixes two cells. Albedo alpha is roughness,
+// normal alpha height.
+bool IsAtlasBuilding(float a) { return a > 2.99 && a < 4.01; }
+float2 AtlasCellOrigin(float a) {
+    const float c = clamp(floor((a - 3.0) * 64.0), 0.0, kAtlasGrid * kAtlasGrid - 1.0);
+    return float2(fmod(c, kAtlasGrid), floor(c / kAtlasGrid)) / kAtlasGrid + kAtlasPad / kAtlasGrid;
+}
+float2 AtlasUv(float2 uvTiles, float a) { return AtlasCellOrigin(a) + frac(uvTiles) * ((1.0 - 2.0 * kAtlasPad) / kAtlasGrid); }
+void AtlasGrads(float2 uvTiles, out float2 gx, out float2 gy) {
+    const float inner = (1.0 - 2.0 * kAtlasPad) / kAtlasGrid, cap = exp2(kAtlasMaxLod) / kAtlasSize;
+    gx = ddx(uvTiles) * inner;
+    gy = ddy(uvTiles) * inner;
+    gx *= min(1.0, cap / max(length(gx), 1e-9)); // anisotropic filtering follows the longer axis: cap each
+    gy *= min(1.0, cap / max(length(gy), 1e-9));
 }
 
 // ------------------------------------------------------------------ terrain material, per pixel from world position
@@ -1616,11 +1637,45 @@ bool FadeHides(float2 pixel, float keep) {
 }
 
 // The HDR scene: linear color, physically based sun. Vertex alpha below 0.25 marks terrain.
+// The building atlas branch of PSMain (helpers and layout above, by Material()).
+float4 AtlasBuildingPS(VSOut i) {
+    float2 gx, gy;
+    AtlasGrads(i.uv, gx, gy);
+    const float2 at = AtlasUv(i.uv, i.color.a);
+    const float4 alb = gAlbedo.SampleGrad(gTexSampler, at, gx, gy);
+    const float4 nt = gNormalMap.SampleGrad(gTexSampler, at, gx, gy);
+    // Tangent frame from screen-space derivatives of the unwrapped uv, as Material() builds it.
+    const float3 ng = normalize(i.normal);
+    const float2 uv = float2(i.uv.x, 1.0 - i.uv.y);
+    const float3 dp1 = ddx(i.worldPos), dp2 = ddy(i.worldPos);
+    const float2 du1 = ddx(uv), du2 = ddy(uv);
+    const float3 dp2perp = cross(dp2, ng), dp1perp = cross(ng, dp1);
+    const float3 T = dp2perp * du1.x + dp1perp * du2.x, B = dp2perp * du1.y + dp1perp * du2.y;
+    const float invMax = rsqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+    const float3 n = normalize(mul(nt.xyz * 2.0 - 1.0, float3x3(T * invMax, B * invMax, ng)));
+    float3 albedo = pow(saturate(alb.rgb * saturate(i.color.rgb)), 2.2);
+    float roughness = alb.a, metal = 0.0;
+    // As the world-surface path does it (IsWorldSurface in PSMain): crevices hold less light close up, faces tilted up by the
+    // normal map see more sky, and the weathering rules dirty the foot and streak the walls.
+    const float near = 1.0 - smoothstep(kPomNear, kPomFar * 2.0, length(i.worldPos - gLight.eye.xyz));
+    albedo *= lerp(1.0, lerp(0.75, 1.0, nt.a), near) * clamp(1.0 + 1.1 * (n.y - ng.y), 0.55, 1.4);
+    Weather(i, ng, albedo, roughness, metal);
+    gMatAO = 1.0;
+    float share;
+    const float cloudSun = CloudSun(i.worldPos);
+    const float3 lit = LitPbr(albedo, n, i.worldPos, gPixelShadow * cloudSun, roughness, metal, cloudSun, share);
+    const float shareAlpha = 0.76 + 0.23 * share;
+    return float4(lit, roughness < 0.35 ? -shareAlpha : shareAlpha);
+}
+
 float4 PSMain(VSOut i) : SV_Target {
     if (FadeHides(i.pos.xy, MATERIAL_CONSTANTS.w)) discard;
     gShadowPixel = i.pos.xy;
     if (FEATURE_OFF(256)) { // Graphics > Quality: Unlit (and TBD_FEATURECOST): the texture under a fixed half-Lambert key, no shadows or probes
-        float4 tex = gAlbedo.Sample(gTexSampler, i.uv);
+        const bool atlasUnlit = IsAtlasBuilding(i.color.a);
+        float2 agx, agy;
+        AtlasGrads(i.uv, agx, agy);
+        float4 tex = atlasUnlit ? float4(gAlbedo.SampleGrad(gTexSampler, AtlasUv(i.uv, i.color.a), agx, agy).rgb, 1.0) : gAlbedo.Sample(gTexSampler, i.uv);
         clip(tex.a - 0.4);
         if (abs(i.color.a - 0.68) < 0.003) { // hair: its colour channels carry data (hair_vertex.h), and its texture may be a data atlas
             const HairData h = HairDecode(i.color);
@@ -1632,13 +1687,15 @@ float4 PSMain(VSOut i) : SV_Target {
         float key = 0.35 + 0.65 * saturate(dot(n, normalize(float3(0.4, 0.8, 0.3))) * 0.5 + 0.5);
         return float4(base * key * 6.0, 0.9);
     }
-    if (i.color.a > 1.5) { gFoliage = true; i.color.a -= 2.0; } // VSVegetation's mark
+    const bool atlas = IsAtlasBuilding(i.color.a); // before the foliage mark: its band [3, 4) is above foliage's 1.5
+    if (!atlas && i.color.a > 1.5) { gFoliage = true; i.color.a -= 2.0; } // VSVegetation's mark
     if (dot(i.normal, i.normal) < 1e-6) return float4(pow(saturate(i.color.rgb), 2.2), i.color.a);
     // The sun's shadow, once per pixel, for whichever material below lights it: each one used to call ShadowFactor itself, and
     // fxc inlined a copy of the whole PCSS filter into every material path (most of a 4 minute D3D12 compile). The tight map's
     // spread is the material's: hair 2x (many see-through strands), skin 3x (light travelling under it), else 1x.
     gTightSoft = abs(i.color.a - 0.68) < 0.003 ? 2.0 : (abs(i.color.a - 0.5) < 0.1 ? 3.0 : 1.0);
     gPixelShadow = ShadowFactor(i.shadowPos, i.tightPos);
+    if (atlas) return AtlasBuildingPS(i);
     if (i.color.a < 0.15) return TerrainPS(i);
     if (abs(i.color.a - 0.8) < 0.004) return SpomPS(i); // silhouette POM volume (balcony, canopy)
     if (abs(i.color.a - 0.83) < 0.004) return TrackPS(i); // SPOM railway track
@@ -1814,6 +1871,8 @@ ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
         albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, 1.0 - i.uv.y / size.y), 2.0).rgb;
     } else if (abs(a - 0.665) < 0.003 || abs(a - 0.70) < 0.003 || abs(a - 0.645) < 0.003) { // windows: a dark pane
         albedo = float3(0.16, 0.19, 0.23);
+    } else if (IsAtlasBuilding(a)) { // the shared building atlas (AtlasBuildingPS): the cell's tile at the far mip the others use
+        albedo = gAlbedo.SampleLevel(gTexSampler, AtlasUv(i.uv, a), 2.0).rgb * saturate(i.color.rgb);
     } else {
         const float4 tex = gAlbedo.SampleLevel(gTexSampler, i.uv, 2.0);
         clip(tex.a - 0.4);
