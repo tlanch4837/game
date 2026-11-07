@@ -51,9 +51,14 @@ constexpr int kMaxPath = 260;
 // _wfopen: wide path and mode. nullptr on failure.
 FILE* WOpen(const wchar_t* path, const wchar_t* mode);
 
+// Process diagnostics for the streaming logs and RAM ceiling.
+double SecondsSinceProcessStart();
+uint64_t ProcessPrivateBytes(); // Windows: PrivateUsage. Apple: physical footprint. 0 if unknown.
+
 // Keys and mouse buttons the game polls. Values are the Windows virtual-key codes, so the Windows side is a plain cast.
 enum class Key : uint8_t {
     MouseLeft = 0x01, MouseRight = 0x02, MouseMiddle = 0x04,
+    Back = 0x08, Tab = 0x09, Return = 0x0D, Escape = 0x1B, Delete = 0x2E,
     Shift = 0x10, Control = 0x11, Alt = 0x12, Space = 0x20,
     Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
     A = 'A', B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,

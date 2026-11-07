@@ -6,7 +6,11 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
 
+#include <mach/mach.h>
 #include <pthread.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <time.h>
 #include <chrono>
 #include <algorithm>
@@ -129,6 +133,23 @@ uint64_t TickCountMs() { return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 100
 
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) {
     return std::fopen(WideToUtf8(path).c_str(), WideToUtf8(mode).c_str());
+}
+
+double SecondsSinceProcessStart() {
+    kinfo_proc info{};
+    size_t size = sizeof(info);
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, (int)getpid()};
+    if (sysctl(mib, 4, &info, &size, nullptr, 0) != 0) return 0.0;
+    timeval now{};
+    gettimeofday(&now, nullptr);
+    const timeval start = info.kp_proc.p_starttime;
+    return (double)(now.tv_sec - start.tv_sec) + (double)(now.tv_usec - start.tv_usec) / 1e6;
+}
+
+uint64_t ProcessPrivateBytes() {
+    task_vm_info_data_t vm{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count) == KERN_SUCCESS ? vm.phys_footprint : 0;
 }
 
 // Fed by the UIKit shell (touches as MouseLeft, hardware keyboard keys) on the main thread; read on the main thread.

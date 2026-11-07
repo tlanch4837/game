@@ -434,11 +434,7 @@ private:
     double Seconds(const int64_t& a, const int64_t& b) const { return (double)(b - a) / (double)g_engine.tickFreq; }
 
     static void LogSinceProcessStart(const char* what) {
-        FILETIME created, a, b, c, nowFt;
-        GetProcessTimes(GetCurrentProcess(), &created, &a, &b, &c);
-        GetSystemTimeAsFileTime(&nowFt);
-        const auto ticks = [](const FILETIME& f) { return ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime; };
-        tbd::Log("Streaming: %s %.2f s after process start", what, (double)(ticks(nowFt) - ticks(created)) / 1e7);
+        tbd::Log("Streaming: %s %.2f s after process start", what, tbd::platform::SecondsSinceProcessStart());
     }
 
     void ResetFrameStats() { frames_ = 0; worstFrame_ = 0; worstPump_ = 0; hitches33_ = 0; hitches100_ = 0; }
@@ -556,9 +552,7 @@ private:
 
     // The process's private bytes, for the RAM ceiling in Launch.
     static uint64_t PrivateBytes() {
-        PROCESS_MEMORY_COUNTERS_EX pmc = {};
-        pmc.cb = sizeof(pmc);
-        return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)) ? pmc.PrivateUsage : 0;
+        return tbd::platform::ProcessPrivateBytes();
     }
     static void Finish(const std::shared_ptr<LoadJob>& job, const std::shared_ptr<Shared>& shared) {
         if (job->remaining.fetch_sub(1) != 1) return;

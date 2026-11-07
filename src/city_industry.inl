@@ -1372,26 +1372,27 @@ void IndustryRightClick() {
     if (T.mode == IndustryTool::Draw) IndustryFinish();
     else T.mode = IndustryTool::Pick, T.point = 0;
 }
-bool IndustryKey(WPARAM k) {
+bool IndustryKey(uint64_t k) {
+    using PK = tbd::platform::Key;
     auto& T = g_indTool;
-    if (k == VK_ESCAPE) {
+    if (k == (uint64_t)PK::Escape) {
         if (T.mode == IndustryTool::Draw) IndustryFinish();
         else if (T.mode == IndustryTool::Place) T.mode = IndustryTool::Pick, T.point = 0;
         else T.active = false, T.sel = -1;
         return true;
     }
-    if (k == VK_RETURN && T.mode == IndustryTool::Draw) return IndustryFinish(), true;
-    if (k == VK_BACK && T.mode == IndustryTool::Draw) {
+    if (k == (uint64_t)PK::Return && T.mode == IndustryTool::Draw) return IndustryFinish(), true;
+    if (k == (uint64_t)PK::Back && T.mode == IndustryTool::Draw) {
         auto& a = g_ind.sites[T.drawing].area;
         if (!a.empty()) a.pop_back(), g_ind.Refresh(g_ind.sites[T.drawing]);
         return true;
     }
-    if ((k == VK_DELETE || k == VK_BACK) && T.mode == IndustryTool::Pick && T.waste && T.wsel >= 0) {
+    if ((k == (uint64_t)PK::Delete || k == (uint64_t)PK::Back) && T.mode == IndustryTool::Pick && T.waste && T.wsel >= 0) {
         WasteRemove(T.wsel);
         T.wsel = -1;
         return true;
     }
-    if ((k == VK_DELETE || k == VK_BACK) && T.mode == IndustryTool::Pick && T.sel >= 0) {
+    if ((k == (uint64_t)PK::Delete || k == (uint64_t)PK::Back) && T.mode == IndustryTool::Pick && T.sel >= 0) {
         g_indCache.erase(g_ind.sites[T.sel].id);
         g_ind.sites.erase(g_ind.sites.begin() + T.sel);
         T.sel = -1;

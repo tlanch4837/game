@@ -25,12 +25,10 @@ inline std::map<std::pair<tbd::TextureId, tbd::TextureId>, Entry>& Table() { sta
 
 inline std::wstring CacheDir() {
     static const std::wstring cached = [] { // once: it was a module query and a CreateDirectory on every request
-        wchar_t exe[tbd::platform::kMaxPath] = {};
-        GetModuleFileNameW(nullptr, exe, tbd::platform::kMaxPath);
-        std::wstring dir = exe;
-        dir = dir.substr(0, dir.find_last_of(L"\\/")) + L"\\surfacecache";
-        CreateDirectoryW(dir.c_str(), nullptr);
-        return dir;
+        const std::filesystem::path dir = tbd::platform::CacheRoot() / L"surfacecache";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return dir.wstring();
     }();
     return cached;
 }

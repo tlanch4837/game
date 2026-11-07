@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <psapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -92,6 +93,7 @@ bool DecodeImage(const uint8_t* data, size_t size, std::vector<uint8_t>& rgba, i
 
 // Key values are the virtual-key codes: KeyDownAsync / KeyDownSync are the exact calls the game made before.
 static_assert((int)Key::MouseLeft == VK_LBUTTON && (int)Key::MouseRight == VK_RBUTTON && (int)Key::MouseMiddle == VK_MBUTTON);
+static_assert((int)Key::Back == VK_BACK && (int)Key::Tab == VK_TAB && (int)Key::Return == VK_RETURN && (int)Key::Escape == VK_ESCAPE && (int)Key::Delete == VK_DELETE);
 static_assert((int)Key::Shift == VK_SHIFT && (int)Key::Control == VK_CONTROL && (int)Key::Alt == VK_MENU && (int)Key::Space == VK_SPACE);
 static_assert((int)Key::Left == VK_LEFT && (int)Key::Up == VK_UP && (int)Key::Right == VK_RIGHT && (int)Key::Down == VK_DOWN);
 static_assert((int)Key::A == 'A' && (int)Key::Q == 'Q' && (int)Key::W == 'W' && (int)Key::Z == 'Z');
@@ -101,6 +103,20 @@ uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) { return GetE
 uint64_t TickCountMs() { return GetTickCount64(); }
 static_assert(kMaxPath == MAX_PATH);
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) { return _wfopen(path, mode); }
+
+double SecondsSinceProcessStart() {
+    FILETIME created, a, b, c, nowFt;
+    GetProcessTimes(GetCurrentProcess(), &created, &a, &b, &c);
+    GetSystemTimeAsFileTime(&nowFt);
+    const auto ticks = [](const FILETIME& f) { return ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime; };
+    return (double)(ticks(nowFt) - ticks(created)) / 1e7;
+}
+
+uint64_t ProcessPrivateBytes() {
+    PROCESS_MEMORY_COUNTERS_EX pmc = {};
+    pmc.cb = sizeof(pmc);
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)) ? pmc.PrivateUsage : 0;
+}
 
 bool KeyDownAsync(Key k) { return (GetAsyncKeyState((int)k) & 0x8000) != 0; }
 bool KeyDownSync(Key k) { return (GetKeyState((int)k) & 0x8000) != 0; }
