@@ -108,746 +108,756 @@ struct water_ps_in
 fragment water_ps_out water_ps(water_ps_in in [[stage_in]], constant type_PostParams& PostParams [[buffer(0)]], constant type_PushConstant_WaterConstants& wc [[buffer(29)]], constant type_ConstantBuffer_LightingData& gLight [[buffer(1)]], const device type_StructuredBuffer_v4float& gWaves [[buffer(7)]], const device type_StructuredBuffer_RippleCell& gRipple [[buffer(8)]], const device type_StructuredBuffer_v4float& gSky [[buffer(9)]], texture2d<float> gDepth [[texture(2)]], texture2d<float> gRefract [[texture(3)]], texture2d<float> gShadow [[texture(4)]], texture2d<float> gProbes [[texture(10)]], texture2d<float> gCloudShadow [[texture(11)]], sampler gClamp [[sampler(5)]], sampler gCmp [[sampler(6)]], float4 gl_FragCoord [[position]])
 {
     water_ps_out out = {};
-    float2 _258;
-    float4 _2104;
+    float2 _262;
+    float4 _2119;
     do
     {
         if (wc.near.z > 0.0)
         {
-            float2 _243 = abs(in.in_var_TEXCOORD1 - wc.near.xy);
-            if ((precise::max(_243.x, _243.y) < wc.near.z) != (wc.tiles.w > 0.5))
+            float2 _247 = abs(in.in_var_TEXCOORD1 - wc.near.xy);
+            if ((precise::max(_247.x, _247.y) < wc.near.z) != (wc.tiles.w > 0.5))
             {
                 discard_fragment();
             }
         }
-        _258 = gl_FragCoord.xy * PostParams.res.zw;
-        float3 _262 = PostParams.eye.xyz - in.in_var_TEXCOORD0;
-        float _263 = length(_262);
-        float3 _265 = _262 / float3(_263);
-        float _266 = length(in.in_var_TEXCOORD2);
-        float _915;
-        float _916;
-        float2 _917;
-        if (_266 > 0.02999999932944774627685546875)
+        _262 = gl_FragCoord.xy * PostParams.res.zw;
+        float3 _266 = PostParams.eye.xyz - in.in_var_TEXCOORD0;
+        float _267 = length(_266);
+        float3 _269 = _266 / float3(_267);
+        float _270 = length(in.in_var_TEXCOORD2);
+        float _919;
+        float _920;
+        float2 _921;
+        if (_270 > 0.02999999932944774627685546875)
         {
-            float _486 = wc.near.w * 0.60000002384185791015625;
-            float _487 = fract(_486);
-            float _492 = abs((_487 * 2.0) - 1.0);
-            float2 _496 = in.in_var_TEXCOORD1 - ((in.in_var_TEXCOORD2 * (_487 - 0.5)) * float2(1.66666662693023681640625));
-            float _499 = fast::clamp(1.0 - (_263 * 0.014285714365541934967041015625), 0.0, 1.0);
-            float _502 = fast::clamp(1.0 - (_263 * 0.00312500004656612873077392578125), 0.0, 1.0);
-            bool _503 = _499 > 0.0;
-            float _573;
-            float2 _574;
-            if (_503)
+            float _490 = wc.near.w * 0.60000002384185791015625;
+            float _491 = fract(_490);
+            float _496 = abs((_491 * 2.0) - 1.0);
+            float2 _500 = in.in_var_TEXCOORD1 - ((in.in_var_TEXCOORD2 * (_491 - 0.5)) * float2(1.66666662693023681640625));
+            float _503 = fast::clamp(1.0 - (_267 * 0.014285714365541934967041015625), 0.0, 1.0);
+            float _506 = fast::clamp(1.0 - (_267 * 0.00312500004656612873077392578125), 0.0, 1.0);
+            bool _507 = _503 > 0.0;
+            float _577;
+            float2 _578;
+            if (_507)
             {
-                float2 _511 = ((_496 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
-                float2 _512 = floor(_511);
-                int2 _513 = int2(_512);
-                int2 _514 = _513 + int2(1);
-                float2 _519 = _511 - _512;
-                uint _523 = uint(_513.x & 127);
-                uint _526 = uint(_513.y & 127) * 128u;
-                uint _528 = (_526 + _523) * 2u;
-                uint _533 = uint(_514.x & 127);
-                uint _535 = (_526 + _533) * 2u;
-                float4 _539 = float4(_519.x);
-                uint _543 = uint(_514.y & 127) * 128u;
-                uint _545 = (_543 + _523) * 2u;
-                uint _550 = (_543 + _533) * 2u;
-                float4 _555 = float4(_519.y);
-                _573 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_528], gWaves._m0[_535], _539), mix(gWaves._m0[_545], gWaves._m0[_550], _539), _555).w, _499));
-                _574 = mix(mix(gWaves._m0[_528 + 1u], gWaves._m0[_535 + 1u], _539), mix(gWaves._m0[_545 + 1u], gWaves._m0[_550 + 1u], _539), _555).xy * _499;
+                float2 _515 = ((_500 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
+                float2 _516 = floor(_515);
+                int2 _517 = int2(_516);
+                int2 _518 = _517 + int2(1);
+                float2 _523 = _515 - _516;
+                uint _527 = uint(_517.x & 127);
+                uint _530 = uint(_517.y & 127) * 128u;
+                uint _532 = (_530 + _527) * 2u;
+                uint _537 = uint(_518.x & 127);
+                uint _539 = (_530 + _537) * 2u;
+                float4 _543 = float4(_523.x);
+                uint _547 = uint(_518.y & 127) * 128u;
+                uint _549 = (_547 + _527) * 2u;
+                uint _554 = (_547 + _537) * 2u;
+                float4 _559 = float4(_523.y);
+                _577 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_532], gWaves._m0[_539], _543), mix(gWaves._m0[_549], gWaves._m0[_554], _543), _559).w, _503));
+                _578 = mix(mix(gWaves._m0[_532 + 1u], gWaves._m0[_539 + 1u], _543), mix(gWaves._m0[_549 + 1u], gWaves._m0[_554 + 1u], _543), _559).xy * _503;
             }
             else
             {
-                _573 = 1.0;
-                _574 = float2(0.0);
+                _577 = 1.0;
+                _578 = float2(0.0);
             }
-            bool _575 = _502 > 0.0;
-            float _648;
-            float2 _649;
-            if (_575)
+            bool _579 = _506 > 0.0;
+            float _652;
+            float2 _653;
+            if (_579)
             {
-                float2 _583 = ((_496 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
-                float2 _584 = floor(_583);
-                int2 _585 = int2(_584);
-                int2 _586 = _585 + int2(1);
-                float2 _591 = _583 - _584;
-                uint _595 = uint(_585.x & 127);
-                uint _599 = 16384u + (uint(_585.y & 127) * 128u);
-                uint _601 = (_599 + _595) * 2u;
-                uint _606 = uint(_586.x & 127);
-                uint _608 = (_599 + _606) * 2u;
-                float4 _612 = float4(_591.x);
-                uint _617 = 16384u + (uint(_586.y & 127) * 128u);
-                uint _619 = (_617 + _595) * 2u;
-                uint _624 = (_617 + _606) * 2u;
-                float4 _629 = float4(_591.y);
-                _648 = precise::min(_573, mix(1.0, mix(mix(gWaves._m0[_601], gWaves._m0[_608], _612), mix(gWaves._m0[_619], gWaves._m0[_624], _612), _629).w, _502));
-                _649 = _574 + (mix(mix(gWaves._m0[_601 + 1u], gWaves._m0[_608 + 1u], _612), mix(gWaves._m0[_619 + 1u], gWaves._m0[_624 + 1u], _612), _629).xy * _502);
+                float2 _587 = ((_500 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
+                float2 _588 = floor(_587);
+                int2 _589 = int2(_588);
+                int2 _590 = _589 + int2(1);
+                float2 _595 = _587 - _588;
+                uint _599 = uint(_589.x & 127);
+                uint _603 = 16384u + (uint(_589.y & 127) * 128u);
+                uint _605 = (_603 + _599) * 2u;
+                uint _610 = uint(_590.x & 127);
+                uint _612 = (_603 + _610) * 2u;
+                float4 _616 = float4(_595.x);
+                uint _621 = 16384u + (uint(_590.y & 127) * 128u);
+                uint _623 = (_621 + _599) * 2u;
+                uint _628 = (_621 + _610) * 2u;
+                float4 _633 = float4(_595.y);
+                _652 = precise::min(_577, mix(1.0, mix(mix(gWaves._m0[_605], gWaves._m0[_612], _616), mix(gWaves._m0[_623], gWaves._m0[_628], _616), _633).w, _506));
+                _653 = _578 + (mix(mix(gWaves._m0[_605 + 1u], gWaves._m0[_612 + 1u], _616), mix(gWaves._m0[_623 + 1u], gWaves._m0[_628 + 1u], _616), _633).xy * _506);
             }
             else
             {
-                _648 = _573;
-                _649 = _574;
+                _652 = _577;
+                _653 = _578;
             }
-            float2 _652 = float2(wc.tiles.z);
-            float2 _655 = ((_496 / _652) * 128.0) - float2(0.5);
-            float2 _656 = floor(_655);
-            int2 _657 = int2(_656);
-            int2 _658 = _657 + int2(1);
-            float2 _663 = _655 - _656;
-            uint _667 = uint(_657.x & 127);
-            uint _671 = 32768u + (uint(_657.y & 127) * 128u);
-            uint _678 = uint(_658.x & 127);
-            float4 _684 = float4(_663.x);
-            uint _689 = 32768u + (uint(_658.y & 127) * 128u);
-            float2 _709 = (in.in_var_TEXCOORD1 - ((in.in_var_TEXCOORD2 * (fract(_486 + 0.5) - 0.5)) * float2(1.66666662693023681640625))) + float2(3.7000000476837158203125, 1.2999999523162841796875);
-            float _779;
-            float2 _780;
-            if (_503)
+            float2 _656 = float2(wc.tiles.z);
+            float2 _659 = ((_500 / _656) * 128.0) - float2(0.5);
+            float2 _660 = floor(_659);
+            int2 _661 = int2(_660);
+            int2 _662 = _661 + int2(1);
+            float2 _667 = _659 - _660;
+            uint _671 = uint(_661.x & 127);
+            uint _675 = 32768u + (uint(_661.y & 127) * 128u);
+            uint _682 = uint(_662.x & 127);
+            float4 _688 = float4(_667.x);
+            uint _693 = 32768u + (uint(_662.y & 127) * 128u);
+            float2 _713 = (in.in_var_TEXCOORD1 - ((in.in_var_TEXCOORD2 * (fract(_490 + 0.5) - 0.5)) * float2(1.66666662693023681640625))) + float2(3.7000000476837158203125, 1.2999999523162841796875);
+            float _783;
+            float2 _784;
+            if (_507)
             {
-                float2 _717 = ((_709 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
-                float2 _718 = floor(_717);
-                int2 _719 = int2(_718);
-                int2 _720 = _719 + int2(1);
-                float2 _725 = _717 - _718;
-                uint _729 = uint(_719.x & 127);
-                uint _732 = uint(_719.y & 127) * 128u;
-                uint _734 = (_732 + _729) * 2u;
-                uint _739 = uint(_720.x & 127);
-                uint _741 = (_732 + _739) * 2u;
-                float4 _745 = float4(_725.x);
-                uint _749 = uint(_720.y & 127) * 128u;
-                uint _751 = (_749 + _729) * 2u;
-                uint _756 = (_749 + _739) * 2u;
-                float4 _761 = float4(_725.y);
-                _779 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_734], gWaves._m0[_741], _745), mix(gWaves._m0[_751], gWaves._m0[_756], _745), _761).w, _499));
-                _780 = mix(mix(gWaves._m0[_734 + 1u], gWaves._m0[_741 + 1u], _745), mix(gWaves._m0[_751 + 1u], gWaves._m0[_756 + 1u], _745), _761).xy * _499;
+                float2 _721 = ((_713 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
+                float2 _722 = floor(_721);
+                int2 _723 = int2(_722);
+                int2 _724 = _723 + int2(1);
+                float2 _729 = _721 - _722;
+                uint _733 = uint(_723.x & 127);
+                uint _736 = uint(_723.y & 127) * 128u;
+                uint _738 = (_736 + _733) * 2u;
+                uint _743 = uint(_724.x & 127);
+                uint _745 = (_736 + _743) * 2u;
+                float4 _749 = float4(_729.x);
+                uint _753 = uint(_724.y & 127) * 128u;
+                uint _755 = (_753 + _733) * 2u;
+                uint _760 = (_753 + _743) * 2u;
+                float4 _765 = float4(_729.y);
+                _783 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_738], gWaves._m0[_745], _749), mix(gWaves._m0[_755], gWaves._m0[_760], _749), _765).w, _503));
+                _784 = mix(mix(gWaves._m0[_738 + 1u], gWaves._m0[_745 + 1u], _749), mix(gWaves._m0[_755 + 1u], gWaves._m0[_760 + 1u], _749), _765).xy * _503;
             }
             else
             {
-                _779 = 1.0;
-                _780 = float2(0.0);
+                _783 = 1.0;
+                _784 = float2(0.0);
             }
-            float _853;
-            float2 _854;
-            if (_575)
+            float _857;
+            float2 _858;
+            if (_579)
             {
-                float2 _788 = ((_709 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
-                float2 _789 = floor(_788);
-                int2 _790 = int2(_789);
-                int2 _791 = _790 + int2(1);
-                float2 _796 = _788 - _789;
-                uint _800 = uint(_790.x & 127);
-                uint _804 = 16384u + (uint(_790.y & 127) * 128u);
-                uint _806 = (_804 + _800) * 2u;
-                uint _811 = uint(_791.x & 127);
-                uint _813 = (_804 + _811) * 2u;
-                float4 _817 = float4(_796.x);
-                uint _822 = 16384u + (uint(_791.y & 127) * 128u);
-                uint _824 = (_822 + _800) * 2u;
-                uint _829 = (_822 + _811) * 2u;
-                float4 _834 = float4(_796.y);
-                _853 = precise::min(_779, mix(1.0, mix(mix(gWaves._m0[_806], gWaves._m0[_813], _817), mix(gWaves._m0[_824], gWaves._m0[_829], _817), _834).w, _502));
-                _854 = _780 + (mix(mix(gWaves._m0[_806 + 1u], gWaves._m0[_813 + 1u], _817), mix(gWaves._m0[_824 + 1u], gWaves._m0[_829 + 1u], _817), _834).xy * _502);
+                float2 _792 = ((_713 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
+                float2 _793 = floor(_792);
+                int2 _794 = int2(_793);
+                int2 _795 = _794 + int2(1);
+                float2 _800 = _792 - _793;
+                uint _804 = uint(_794.x & 127);
+                uint _808 = 16384u + (uint(_794.y & 127) * 128u);
+                uint _810 = (_808 + _804) * 2u;
+                uint _815 = uint(_795.x & 127);
+                uint _817 = (_808 + _815) * 2u;
+                float4 _821 = float4(_800.x);
+                uint _826 = 16384u + (uint(_795.y & 127) * 128u);
+                uint _828 = (_826 + _804) * 2u;
+                uint _833 = (_826 + _815) * 2u;
+                float4 _838 = float4(_800.y);
+                _857 = precise::min(_783, mix(1.0, mix(mix(gWaves._m0[_810], gWaves._m0[_817], _821), mix(gWaves._m0[_828], gWaves._m0[_833], _821), _838).w, _506));
+                _858 = _784 + (mix(mix(gWaves._m0[_810 + 1u], gWaves._m0[_817 + 1u], _821), mix(gWaves._m0[_828 + 1u], gWaves._m0[_833 + 1u], _821), _838).xy * _506);
             }
             else
             {
-                _853 = _779;
-                _854 = _780;
+                _857 = _783;
+                _858 = _784;
             }
-            float2 _857 = ((_709 / _652) * 128.0) - float2(0.5);
-            float2 _858 = floor(_857);
-            int2 _859 = int2(_858);
-            int2 _860 = _859 + int2(1);
-            float2 _865 = _857 - _858;
-            uint _869 = uint(_859.x & 127);
-            uint _873 = 32768u + (uint(_859.y & 127) * 128u);
-            uint _880 = uint(_860.x & 127);
-            float4 _886 = float4(_865.x);
-            uint _891 = 32768u + (uint(_860.y & 127) * 128u);
-            _915 = mix(_648, _853, _492);
-            _916 = ((1.0 - _499) * 0.01200000010430812835693359375) + ((1.0 - _502) * 0.0199999995529651641845703125);
-            _917 = mix(_649 + mix(mix(gWaves._m0[((_671 + _667) * 2u) + 1u], gWaves._m0[((_671 + _678) * 2u) + 1u], _684), mix(gWaves._m0[((_689 + _667) * 2u) + 1u], gWaves._m0[((_689 + _678) * 2u) + 1u], _684), float4(_663.y)).xy, _854 + mix(mix(gWaves._m0[((_873 + _869) * 2u) + 1u], gWaves._m0[((_873 + _880) * 2u) + 1u], _886), mix(gWaves._m0[((_891 + _869) * 2u) + 1u], gWaves._m0[((_891 + _880) * 2u) + 1u], _886), float4(_865.y)).xy, float2(_492));
+            float2 _861 = ((_713 / _656) * 128.0) - float2(0.5);
+            float2 _862 = floor(_861);
+            int2 _863 = int2(_862);
+            int2 _864 = _863 + int2(1);
+            float2 _869 = _861 - _862;
+            uint _873 = uint(_863.x & 127);
+            uint _877 = 32768u + (uint(_863.y & 127) * 128u);
+            uint _884 = uint(_864.x & 127);
+            float4 _890 = float4(_869.x);
+            uint _895 = 32768u + (uint(_864.y & 127) * 128u);
+            _919 = mix(_652, _857, _496);
+            _920 = ((1.0 - _503) * 0.01200000010430812835693359375) + ((1.0 - _506) * 0.0199999995529651641845703125);
+            _921 = mix(_653 + mix(mix(gWaves._m0[((_675 + _671) * 2u) + 1u], gWaves._m0[((_675 + _682) * 2u) + 1u], _688), mix(gWaves._m0[((_693 + _671) * 2u) + 1u], gWaves._m0[((_693 + _682) * 2u) + 1u], _688), float4(_667.y)).xy, _858 + mix(mix(gWaves._m0[((_877 + _873) * 2u) + 1u], gWaves._m0[((_877 + _884) * 2u) + 1u], _890), mix(gWaves._m0[((_895 + _873) * 2u) + 1u], gWaves._m0[((_895 + _884) * 2u) + 1u], _890), float4(_869.y)).xy, float2(_496));
         }
         else
         {
-            float _273 = fast::clamp(1.0 - (_263 * 0.014285714365541934967041015625), 0.0, 1.0);
-            float _276 = fast::clamp(1.0 - (_263 * 0.00312500004656612873077392578125), 0.0, 1.0);
-            float _347;
-            float2 _348;
-            if (_273 > 0.0)
+            float _277 = fast::clamp(1.0 - (_267 * 0.014285714365541934967041015625), 0.0, 1.0);
+            float _280 = fast::clamp(1.0 - (_267 * 0.00312500004656612873077392578125), 0.0, 1.0);
+            float _351;
+            float2 _352;
+            if (_277 > 0.0)
             {
-                float2 _285 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
-                float2 _286 = floor(_285);
-                int2 _287 = int2(_286);
-                int2 _288 = _287 + int2(1);
-                float2 _293 = _285 - _286;
-                uint _297 = uint(_287.x & 127);
-                uint _300 = uint(_287.y & 127) * 128u;
-                uint _302 = (_300 + _297) * 2u;
-                uint _307 = uint(_288.x & 127);
-                uint _309 = (_300 + _307) * 2u;
-                float4 _313 = float4(_293.x);
-                uint _317 = uint(_288.y & 127) * 128u;
-                uint _319 = (_317 + _297) * 2u;
-                uint _324 = (_317 + _307) * 2u;
-                float4 _329 = float4(_293.y);
-                _347 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_302], gWaves._m0[_309], _313), mix(gWaves._m0[_319], gWaves._m0[_324], _313), _329).w, _273));
-                _348 = mix(mix(gWaves._m0[_302 + 1u], gWaves._m0[_309 + 1u], _313), mix(gWaves._m0[_319 + 1u], gWaves._m0[_324 + 1u], _313), _329).xy * _273;
+                float2 _289 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.x)) * 128.0) - float2(0.5);
+                float2 _290 = floor(_289);
+                int2 _291 = int2(_290);
+                int2 _292 = _291 + int2(1);
+                float2 _297 = _289 - _290;
+                uint _301 = uint(_291.x & 127);
+                uint _304 = uint(_291.y & 127) * 128u;
+                uint _306 = (_304 + _301) * 2u;
+                uint _311 = uint(_292.x & 127);
+                uint _313 = (_304 + _311) * 2u;
+                float4 _317 = float4(_297.x);
+                uint _321 = uint(_292.y & 127) * 128u;
+                uint _323 = (_321 + _301) * 2u;
+                uint _328 = (_321 + _311) * 2u;
+                float4 _333 = float4(_297.y);
+                _351 = precise::min(1.0, mix(1.0, mix(mix(gWaves._m0[_306], gWaves._m0[_313], _317), mix(gWaves._m0[_323], gWaves._m0[_328], _317), _333).w, _277));
+                _352 = mix(mix(gWaves._m0[_306 + 1u], gWaves._m0[_313 + 1u], _317), mix(gWaves._m0[_323 + 1u], gWaves._m0[_328 + 1u], _317), _333).xy * _277;
             }
             else
             {
-                _347 = 1.0;
-                _348 = float2(0.0);
+                _351 = 1.0;
+                _352 = float2(0.0);
             }
-            float _422;
-            float2 _423;
-            if (_276 > 0.0)
+            float _426;
+            float2 _427;
+            if (_280 > 0.0)
             {
-                float2 _357 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
-                float2 _358 = floor(_357);
-                int2 _359 = int2(_358);
-                int2 _360 = _359 + int2(1);
-                float2 _365 = _357 - _358;
-                uint _369 = uint(_359.x & 127);
-                uint _373 = 16384u + (uint(_359.y & 127) * 128u);
-                uint _375 = (_373 + _369) * 2u;
-                uint _380 = uint(_360.x & 127);
-                uint _382 = (_373 + _380) * 2u;
-                float4 _386 = float4(_365.x);
-                uint _391 = 16384u + (uint(_360.y & 127) * 128u);
-                uint _393 = (_391 + _369) * 2u;
-                uint _398 = (_391 + _380) * 2u;
-                float4 _403 = float4(_365.y);
-                _422 = precise::min(_347, mix(1.0, mix(mix(gWaves._m0[_375], gWaves._m0[_382], _386), mix(gWaves._m0[_393], gWaves._m0[_398], _386), _403).w, _276));
-                _423 = _348 + (mix(mix(gWaves._m0[_375 + 1u], gWaves._m0[_382 + 1u], _386), mix(gWaves._m0[_393 + 1u], gWaves._m0[_398 + 1u], _386), _403).xy * _276);
+                float2 _361 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.y)) * 128.0) - float2(0.5);
+                float2 _362 = floor(_361);
+                int2 _363 = int2(_362);
+                int2 _364 = _363 + int2(1);
+                float2 _369 = _361 - _362;
+                uint _373 = uint(_363.x & 127);
+                uint _377 = 16384u + (uint(_363.y & 127) * 128u);
+                uint _379 = (_377 + _373) * 2u;
+                uint _384 = uint(_364.x & 127);
+                uint _386 = (_377 + _384) * 2u;
+                float4 _390 = float4(_369.x);
+                uint _395 = 16384u + (uint(_364.y & 127) * 128u);
+                uint _397 = (_395 + _373) * 2u;
+                uint _402 = (_395 + _384) * 2u;
+                float4 _407 = float4(_369.y);
+                _426 = precise::min(_351, mix(1.0, mix(mix(gWaves._m0[_379], gWaves._m0[_386], _390), mix(gWaves._m0[_397], gWaves._m0[_402], _390), _407).w, _280));
+                _427 = _352 + (mix(mix(gWaves._m0[_379 + 1u], gWaves._m0[_386 + 1u], _390), mix(gWaves._m0[_397 + 1u], gWaves._m0[_402 + 1u], _390), _407).xy * _280);
             }
             else
             {
-                _422 = _347;
-                _423 = _348;
+                _426 = _351;
+                _427 = _352;
             }
-            float2 _429 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.z)) * 128.0) - float2(0.5);
-            float2 _430 = floor(_429);
-            int2 _431 = int2(_430);
-            int2 _432 = _431 + int2(1);
-            float2 _437 = _429 - _430;
-            uint _441 = uint(_431.x & 127);
-            uint _445 = 32768u + (uint(_431.y & 127) * 128u);
-            uint _452 = uint(_432.x & 127);
-            float4 _458 = float4(_437.x);
-            uint _463 = 32768u + (uint(_432.y & 127) * 128u);
-            _915 = _422;
-            _916 = ((1.0 - _273) * 0.01200000010430812835693359375) + ((1.0 - _276) * 0.0199999995529651641845703125);
-            _917 = _423 + mix(mix(gWaves._m0[((_445 + _441) * 2u) + 1u], gWaves._m0[((_445 + _452) * 2u) + 1u], _458), mix(gWaves._m0[((_463 + _441) * 2u) + 1u], gWaves._m0[((_463 + _452) * 2u) + 1u], _458), float4(_437.y)).xy;
+            float2 _433 = ((in.in_var_TEXCOORD1 / float2(wc.tiles.z)) * 128.0) - float2(0.5);
+            float2 _434 = floor(_433);
+            int2 _435 = int2(_434);
+            int2 _436 = _435 + int2(1);
+            float2 _441 = _433 - _434;
+            uint _445 = uint(_435.x & 127);
+            uint _449 = 32768u + (uint(_435.y & 127) * 128u);
+            uint _456 = uint(_436.x & 127);
+            float4 _462 = float4(_441.x);
+            uint _467 = 32768u + (uint(_436.y & 127) * 128u);
+            _919 = _426;
+            _920 = ((1.0 - _277) * 0.01200000010430812835693359375) + ((1.0 - _280) * 0.0199999995529651641845703125);
+            _921 = _427 + mix(mix(gWaves._m0[((_449 + _445) * 2u) + 1u], gWaves._m0[((_449 + _456) * 2u) + 1u], _462), mix(gWaves._m0[((_467 + _445) * 2u) + 1u], gWaves._m0[((_467 + _456) * 2u) + 1u], _462), float4(_441.y)).xy;
         }
-        float _1026;
-        float _1027;
-        float _1028;
+        float _1030;
+        float _1031;
+        float _1032;
         do
         {
             if (wc.ripple.w < 0.5)
             {
-                _1026 = 0.0;
-                _1027 = 0.0;
-                _1028 = 0.0;
+                _1030 = 0.0;
+                _1031 = 0.0;
+                _1032 = 0.0;
                 break;
             }
-            float2 _933 = ((in.in_var_TEXCOORD1 - wc.ripple.xy) / float2(wc.ripple.z)) - float2(0.5);
-            float2 _934 = floor(_933);
-            int2 _935 = int2(_934);
-            int2 _936 = _935 + int2(1);
-            int _937 = _935.x;
-            int _938 = _935.y;
-            int _939 = _936.x;
-            int _940 = _936.y;
-            float2 _941 = _933 - _934;
-            float _942 = _941.x;
-            float _943 = _941.y;
-            bool _948;
-            if (_937 >= 0)
+            float2 _937 = ((in.in_var_TEXCOORD1 - wc.ripple.xy) / float2(wc.ripple.z)) - float2(0.5);
+            float2 _938 = floor(_937);
+            int2 _939 = int2(_938);
+            int2 _940 = _939 + int2(1);
+            int _941 = _939.x;
+            int _942 = _939.y;
+            int _943 = _940.x;
+            int _944 = _940.y;
+            float2 _945 = _937 - _938;
+            float _946 = _945.x;
+            float _947 = _945.y;
+            bool _952;
+            if (_941 >= 0)
             {
-                _948 = _938 < 0;
+                _952 = _942 < 0;
             }
             else
             {
-                _948 = true;
+                _952 = true;
             }
-            bool _953;
-            if (!_948)
+            bool _957;
+            if (!_952)
             {
-                _953 = _939 >= 512;
-            }
-            else
-            {
-                _953 = true;
-            }
-            bool _958;
-            if (!_953)
-            {
-                _958 = _940 >= 512;
+                _957 = _943 >= 512;
             }
             else
             {
-                _958 = true;
+                _957 = true;
             }
-            if (_958)
+            bool _962;
+            if (!_957)
             {
-                _1026 = 0.0;
-                _1027 = 0.0;
-                _1028 = 0.0;
+                _962 = _944 >= 512;
+            }
+            else
+            {
+                _962 = true;
+            }
+            if (_962)
+            {
+                _1030 = 0.0;
+                _1031 = 0.0;
+                _1032 = 0.0;
                 break;
             }
-            uint _962 = uint(_938) * 512u;
-            uint _963 = uint(_937);
-            uint _964 = _962 + _963;
-            uint _972 = uint(_939);
-            uint _973 = _962 + _972;
-            uint _982 = uint(_940) * 512u;
-            uint _983 = _982 + _963;
-            uint _991 = _982 + _972;
-            float _999 = 1.0 - _942;
-            float _1000 = 1.0 - _943;
-            float _1001 = _999 * _1000;
-            float _1002 = _942 * _1000;
-            float _1003 = _999 * _943;
-            float _1004 = _942 * _943;
-            _1026 = (((gRipple._m0[_964].foam * _1001) + (gRipple._m0[_973].foam * _1002)) + (gRipple._m0[_983].foam * _1003)) + (gRipple._m0[_991].foam * _1004);
-            _1027 = (((gRipple._m0[_964].gx * _1001) + (gRipple._m0[_973].gx * _1002)) + (gRipple._m0[_983].gx * _1003)) + (gRipple._m0[_991].gx * _1004);
-            _1028 = (((gRipple._m0[_964].gz * _1001) + (gRipple._m0[_973].gz * _1002)) + (gRipple._m0[_983].gz * _1003)) + (gRipple._m0[_991].gz * _1004);
+            uint _966 = uint(_942) * 512u;
+            uint _967 = uint(_941);
+            uint _968 = _966 + _967;
+            uint _976 = uint(_943);
+            uint _977 = _966 + _976;
+            uint _986 = uint(_944) * 512u;
+            uint _987 = _986 + _967;
+            uint _995 = _986 + _976;
+            float _1003 = 1.0 - _946;
+            float _1004 = 1.0 - _947;
+            float _1005 = _1003 * _1004;
+            float _1006 = _946 * _1004;
+            float _1007 = _1003 * _947;
+            float _1008 = _946 * _947;
+            _1030 = (((gRipple._m0[_968].foam * _1005) + (gRipple._m0[_977].foam * _1006)) + (gRipple._m0[_987].foam * _1007)) + (gRipple._m0[_995].foam * _1008);
+            _1031 = (((gRipple._m0[_968].gx * _1005) + (gRipple._m0[_977].gx * _1006)) + (gRipple._m0[_987].gx * _1007)) + (gRipple._m0[_995].gx * _1008);
+            _1032 = (((gRipple._m0[_968].gz * _1005) + (gRipple._m0[_977].gz * _1006)) + (gRipple._m0[_987].gz * _1007)) + (gRipple._m0[_995].gz * _1008);
             break;
         } while(false);
-        float2 _1030 = float2(_1027, _1028) * 2.2000000476837158203125;
-        float2 _1036 = _917 + (_1030 * precise::min(1.0, 0.699999988079071044921875 / precise::max(length(_1030), 0.001000000047497451305389404296875)));
+        float2 _1034 = float2(_1031, _1032) * 2.2000000476837158203125;
+        float2 _1040 = _921 + (_1034 * precise::min(1.0, 0.699999988079071044921875 / precise::max(length(_1034), 0.001000000047497451305389404296875)));
         if (wc.wind.w > 0.5)
         {
-            _2104 = float4(fast::clamp((_1036.x * 4.0) + 0.5, 0.0, 1.0), fast::clamp((_1036.y * 4.0) + 0.5, 0.0, 1.0), fract(in.in_var_TEXCOORD0.y * 4.0), 1.0);
+            _2119 = float4(fast::clamp((_1040.x * 4.0) + 0.5, 0.0, 1.0), fast::clamp((_1040.y * 4.0) + 0.5, 0.0, 1.0), fract(in.in_var_TEXCOORD0.y * 4.0), 1.0);
             break;
         }
-        float3 _1059 = fast::normalize(float3(-_1036.x, 1.0, -_1036.y));
-        float4 _1063 = gDepth.sample(gClamp, _258, level(0.0));
-        float _1064 = _1063.x;
-        float3 _1085;
-        if (_1064 > 0.0)
+        float3 _1063 = fast::normalize(float3(-_1040.x, 1.0, -_1040.y));
+        float4 _1067 = gDepth.sample(gClamp, _262, level(0.0));
+        float _1068 = _1067.x;
+        float3 _1089;
+        if (_1068 > 0.0)
         {
-            float4 _1080 = PostParams.invViewProj * float4((_258.x * 2.0) - 1.0, 1.0 - (_258.y * 2.0), _1064, 1.0);
-            _1085 = _1080.xyz / float3(_1080.w);
+            float4 _1084 = PostParams.invViewProj * float4((_262.x * 2.0) - 1.0, 1.0 - (_262.y * 2.0), _1068, 1.0);
+            _1089 = _1084.xyz / float3(_1084.w);
         }
         else
         {
-            _1085 = in.in_var_TEXCOORD0 - (_265 * 200.0);
+            _1089 = in.in_var_TEXCOORD0 - (_269 * 200.0);
         }
-        float _1089 = precise::max(in.in_var_TEXCOORD0.y - _1085.y, 0.0);
-        float2 _1090 = _1059.xz;
-        float2 _1099 = _258 + (((_1090 * float2(0.04500000178813934326171875)) * fast::clamp(_1089 * 0.5, 0.0, 1.0)) / float2(precise::max(_263 * 0.07999999821186065673828125, 1.0)));
-        float4 _1103 = gDepth.sample(gClamp, _1099, level(0.0));
-        float _1104 = _1103.x;
-        float3 _1125;
-        if (_1104 > 0.0)
+        float _1093 = precise::max(in.in_var_TEXCOORD0.y - _1089.y, 0.0);
+        float2 _1094 = _1063.xz;
+        float2 _1103 = _262 + (((_1094 * float2(0.04500000178813934326171875)) * fast::clamp(_1093 * 0.5, 0.0, 1.0)) / float2(precise::max(_267 * 0.07999999821186065673828125, 1.0)));
+        float4 _1107 = gDepth.sample(gClamp, _1103, level(0.0));
+        float _1108 = _1107.x;
+        float3 _1129;
+        if (_1108 > 0.0)
         {
-            float4 _1120 = PostParams.invViewProj * float4((_1099.x * 2.0) - 1.0, 1.0 - (_1099.y * 2.0), _1104, 1.0);
-            _1125 = _1120.xyz / float3(_1120.w);
+            float4 _1124 = PostParams.invViewProj * float4((_1103.x * 2.0) - 1.0, 1.0 - (_1103.y * 2.0), _1108, 1.0);
+            _1129 = _1124.xyz / float3(_1124.w);
         }
         else
         {
-            _1125 = in.in_var_TEXCOORD0 - (_265 * 200.0);
+            _1129 = in.in_var_TEXCOORD0 - (_269 * 200.0);
         }
-        bool _1127 = _1125.y > in.in_var_TEXCOORD0.y;
-        float3 _1143 = gLight.sunColor.xyz * 3.2000000476837158203125;
-        float _1185;
+        bool _1131 = _1129.y > in.in_var_TEXCOORD0.y;
+        bool _1150;
+        if (PostParams.misc.z > 0.25)
+        {
+            _1150 = PostParams.misc.z < 0.75;
+        }
+        else
+        {
+            _1150 = false;
+        }
+        bool3 _1151 = bool3(_1150);
+        float3 _1157 = gLight.sunColor.xyz * 3.2000000476837158203125;
+        float _1199;
         do
         {
             if (gLight.shadowParams.w < 0.5)
             {
-                _1185 = 1.0;
+                _1199 = 1.0;
                 break;
             }
-            float4 _1156 = gLight.shadowVP * float4(in.in_var_TEXCOORD0, 1.0);
-            float _1158 = _1156.x * 0.5;
-            float _1159 = _1158 + 0.5;
-            float _1161 = _1156.y * 0.5;
-            float _1162 = 0.5 - _1161;
-            float _1170 = fast::clamp(precise::min(precise::min(_1159, 0.5 - _1158), precise::min(_1162, _1161 + 0.5)) * 20.0, 0.0, 1.0);
-            bool _1176;
-            if ((isunordered(_1170, 0.0) || _1170 > 0.0))
+            float4 _1170 = gLight.shadowVP * float4(in.in_var_TEXCOORD0, 1.0);
+            float _1172 = _1170.x * 0.5;
+            float _1173 = _1172 + 0.5;
+            float _1175 = _1170.y * 0.5;
+            float _1176 = 0.5 - _1175;
+            float _1184 = fast::clamp(precise::min(precise::min(_1173, 0.5 - _1172), precise::min(_1176, _1175 + 0.5)) * 20.0, 0.0, 1.0);
+            bool _1190;
+            if ((isunordered(_1184, 0.0) || _1184 > 0.0))
             {
-                _1176 = _1156.z >= 1.0;
+                _1190 = _1170.z >= 1.0;
             }
             else
             {
-                _1176 = true;
+                _1190 = true;
             }
-            if (_1176)
+            if (_1190)
             {
-                _1185 = 1.0;
+                _1199 = 1.0;
                 break;
             }
-            _1185 = mix(1.0, spvDepthCast(gShadow).sample_compare(gCmp, float2(_1159, _1162), _1156.z, level(0.0)), _1170);
+            _1199 = mix(1.0, spvDepthCast(gShadow).sample_compare(gCmp, float2(_1173, _1176), _1170.z, level(0.0)), _1184);
             break;
         } while(false);
-        float _1259;
+        float _1273;
         do
         {
             if (gLight.cloudMap.w < 0.5)
             {
-                _1259 = 1.0;
+                _1273 = 1.0;
                 break;
             }
-            float2 _1203 = ((in.in_var_TEXCOORD0.xz - gLight.cloudMap.xy) / float2(2.0 * gLight.cloudMap.z)) + float2(0.5);
-            uint2 _1205 = uint2(gCloudShadow.get_width(), gCloudShadow.get_height());
-            float2 _1210 = float2(float(_1205.x), float(_1205.y));
-            float2 _1212 = (_1203 * _1210) - float2(0.5);
-            float2 _1213 = floor(_1212);
-            float2 _1214 = _1212 - _1213;
-            int3 _1221 = int3(clamp(int2(_1213), int2(0), int2(_1210) - int2(2)), 0);
-            int3 _1226 = _1221 + int3(1, 0, 0);
-            float _1232 = _1214.x;
-            int3 _1234 = _1221 + int3(0, 1, 0);
-            int3 _1240 = _1221 + int3(1, 1, 0);
-            float _1249 = _1203.x;
-            float _1252 = _1203.y;
-            _1259 = mix(1.0, mix(mix(gCloudShadow.read(uint2(_1221.xy), 0).x, gCloudShadow.read(uint2(_1226.xy), _1226.z).x, _1232), mix(gCloudShadow.read(uint2(_1234.xy), _1234.z).x, gCloudShadow.read(uint2(_1240.xy), _1240.z).x, _1232), _1214.y), fast::clamp(precise::min(precise::min(_1249, 1.0 - _1249), precise::min(_1252, 1.0 - _1252)) * 20.0, 0.0, 1.0));
+            float2 _1217 = ((in.in_var_TEXCOORD0.xz - gLight.cloudMap.xy) / float2(2.0 * gLight.cloudMap.z)) + float2(0.5);
+            uint2 _1219 = uint2(gCloudShadow.get_width(), gCloudShadow.get_height());
+            float2 _1224 = float2(float(_1219.x), float(_1219.y));
+            float2 _1226 = (_1217 * _1224) - float2(0.5);
+            float2 _1227 = floor(_1226);
+            float2 _1228 = _1226 - _1227;
+            int3 _1235 = int3(clamp(int2(_1227), int2(0), int2(_1224) - int2(2)), 0);
+            int3 _1240 = _1235 + int3(1, 0, 0);
+            float _1246 = _1228.x;
+            int3 _1248 = _1235 + int3(0, 1, 0);
+            int3 _1254 = _1235 + int3(1, 1, 0);
+            float _1263 = _1217.x;
+            float _1266 = _1217.y;
+            _1273 = mix(1.0, mix(mix(gCloudShadow.read(uint2(_1235.xy), 0).x, gCloudShadow.read(uint2(_1240.xy), _1240.z).x, _1246), mix(gCloudShadow.read(uint2(_1248.xy), _1248.z).x, gCloudShadow.read(uint2(_1254.xy), _1254.z).x, _1246), _1228.y), fast::clamp(precise::min(precise::min(_1263, 1.0 - _1263), precise::min(_1266, 1.0 - _1266)) * 20.0, 0.0, 1.0));
             break;
         } while(false);
-        float3 _1270 = precise::max(gLight.skySh[0].xyz + ((gLight.skySh[2].xyz * 1.0) * 0.666666686534881591796875), gLight.skySh[0].xyz * 0.100000001490116119384765625);
-        float _1571;
-        float3 _1572;
+        float3 _1284 = precise::max(gLight.skySh[0].xyz + ((gLight.skySh[2].xyz * 1.0) * 0.666666686534881591796875), gLight.skySh[0].xyz * 0.100000001490116119384765625);
+        float _1585;
+        float3 _1586;
         if (gLight.probeUpdate.w > 0.5)
         {
-            float _1331;
-            float3 _1276 = in.in_var_TEXCOORD0 + float3(0.0, 0.5, 0.0);
-            float _1566;
-            float3 _1567;
+            float _1345;
+            float3 _1290 = in.in_var_TEXCOORD0 + float3(0.0, 0.5, 0.0);
+            float _1580;
+            float3 _1581;
             do
             {
-                float3 _1285 = float3(gLight.probeOrigin.w, gLight.probeGrid.w, gLight.probeOrigin.w);
-                float3 _1291 = ((_1276 + (float3(0.0, 0.449999988079071044921875, 0.0) * gLight.probeOrigin.w)) / _1285) - gLight.probeOrigin.xyz;
-                float3 _1294 = gLight.probeGrid.xyz - float3(1.0);
-                float3 _1296 = precise::min(_1291, _1294 - _1291);
-                float _1303 = smoothstep(0.0, 3.0, precise::min(_1296.x, _1296.z)) * fast::clamp(_1296.y, 0.0, 1.0);
-                float3 _1306 = _1285 * 4.0;
-                float3 _1316 = float3(floor(gLight.probeGrid.x * 0.5), 3.0, floor(gLight.probeGrid.z * 0.5));
-                float3 _1321 = ((_1276 + (float3(0.0, 1.7999999523162841796875, 0.0) * gLight.probeOrigin.w)) / _1306) - (floor((gLight.probeOrigin.xyz + _1316) * 0.25) - _1316);
-                float3 _1323 = precise::min(_1321, _1294 - _1321);
-                _1331 = precise::max(_1303, smoothstep(0.0, 3.0, precise::min(_1323.x, _1323.z)) * fast::clamp(_1323.y, 0.0, 1.0));
-                if (_1331 <= 0.0)
+                float3 _1299 = float3(gLight.probeOrigin.w, gLight.probeGrid.w, gLight.probeOrigin.w);
+                float3 _1305 = ((_1290 + (float3(0.0, 0.449999988079071044921875, 0.0) * gLight.probeOrigin.w)) / _1299) - gLight.probeOrigin.xyz;
+                float3 _1308 = gLight.probeGrid.xyz - float3(1.0);
+                float3 _1310 = precise::min(_1305, _1308 - _1305);
+                float _1317 = smoothstep(0.0, 3.0, precise::min(_1310.x, _1310.z)) * fast::clamp(_1310.y, 0.0, 1.0);
+                float3 _1320 = _1299 * 4.0;
+                float3 _1330 = float3(floor(gLight.probeGrid.x * 0.5), 3.0, floor(gLight.probeGrid.z * 0.5));
+                float3 _1335 = ((_1290 + (float3(0.0, 1.7999999523162841796875, 0.0) * gLight.probeOrigin.w)) / _1320) - (floor((gLight.probeOrigin.xyz + _1330) * 0.25) - _1330);
+                float3 _1337 = precise::min(_1335, _1308 - _1335);
+                _1345 = precise::max(_1317, smoothstep(0.0, 3.0, precise::min(_1337.x, _1337.z)) * fast::clamp(_1337.y, 0.0, 1.0));
+                if (_1345 <= 0.0)
                 {
-                    _1566 = 1.0;
-                    _1567 = float3(0.0);
+                    _1580 = 1.0;
+                    _1581 = float3(0.0);
                     break;
                 }
-                float3 _1465;
-                float _1466;
-                if (_1303 > 0.0)
+                float3 _1479;
+                float _1480;
+                if (_1317 > 0.0)
                 {
-                    float3 _1338 = _1285 * 1.0;
-                    float3 _1342 = (_1276 + (float3(0.0, 0.449999988079071044921875, 0.0) * _1338.x)) / _1338;
-                    float3 _1343 = floor(_1342);
-                    float3 _1345 = _1342 - _1343;
-                    int3 _1346 = int3(gLight.probeGrid.xyz);
-                    float3 _1347 = float3(int3(_1343));
-                    int3 _1352 = int3(_1347 - (gLight.probeGrid.xyz * floor(_1347 / gLight.probeGrid.xyz)));
-                    int3 _1353 = _1352 + int3(1);
-                    int _1354 = _1353.x;
-                    int _1357 = (_1354 == _1346.x) ? 0 : _1354;
-                    int _1358 = _1353.y;
-                    int _1361 = (_1358 == _1346.y) ? 0 : _1358;
-                    int _1362 = _1353.z;
-                    int _1363 = _1346.z;
-                    int _1365 = (_1362 == _1363) ? 0 : _1362;
-                    float _1367;
-                    float3 _1370;
-                    float3 _1372;
-                    float _1374;
-                    _1367 = 0.0;
-                    _1370 = float3(0.0);
-                    _1372 = float3(0.0);
-                    _1374 = 0.0;
-                    float _1375;
-                    float _1368;
-                    float3 _1371;
-                    float3 _1373;
-                    for (int _1376 = 0; _1376 < 8; _1367 = _1368, _1370 = _1371, _1372 = _1373, _1374 = _1375, _1376++)
+                    float3 _1352 = _1299 * 1.0;
+                    float3 _1356 = (_1290 + (float3(0.0, 0.449999988079071044921875, 0.0) * _1352.x)) / _1352;
+                    float3 _1357 = floor(_1356);
+                    float3 _1359 = _1356 - _1357;
+                    int3 _1360 = int3(gLight.probeGrid.xyz);
+                    float3 _1361 = float3(int3(_1357));
+                    int3 _1366 = int3(_1361 - (gLight.probeGrid.xyz * floor(_1361 / gLight.probeGrid.xyz)));
+                    int3 _1367 = _1366 + int3(1);
+                    int _1368 = _1367.x;
+                    int _1371 = (_1368 == _1360.x) ? 0 : _1368;
+                    int _1372 = _1367.y;
+                    int _1375 = (_1372 == _1360.y) ? 0 : _1372;
+                    int _1376 = _1367.z;
+                    int _1377 = _1360.z;
+                    int _1379 = (_1376 == _1377) ? 0 : _1376;
+                    float _1381;
+                    float3 _1384;
+                    float3 _1386;
+                    float _1388;
+                    _1381 = 0.0;
+                    _1384 = float3(0.0);
+                    _1386 = float3(0.0);
+                    _1388 = 0.0;
+                    float _1389;
+                    float _1382;
+                    float3 _1385;
+                    float3 _1387;
+                    for (int _1390 = 0; _1390 < 8; _1381 = _1382, _1384 = _1385, _1386 = _1387, _1388 = _1389, _1390++)
                     {
-                        int _1381 = _1376 & 1;
-                        int _1383 = (_1376 >> 1) & 1;
-                        int _1385 = (_1376 >> 2) & 1;
-                        float3 _1388 = float3(int3(_1381, _1383, _1385));
-                        float3 _1389 = mix(float3(1.0) - _1345, _1345, _1388);
-                        float _1400 = ((_1389.x * _1389.y) * _1389.z) * (fast::clamp((_1388 - _1345).y + 0.5, 0.0, 1.0) + 0.100000001490116119384765625);
-                        _1375 = _1374 + _1400;
-                        if (_1400 < 0.0040000001899898052215576171875)
+                        int _1395 = _1390 & 1;
+                        int _1397 = (_1390 >> 1) & 1;
+                        int _1399 = (_1390 >> 2) & 1;
+                        float3 _1402 = float3(int3(_1395, _1397, _1399));
+                        float3 _1403 = mix(float3(1.0) - _1359, _1359, _1402);
+                        float _1414 = ((_1403.x * _1403.y) * _1403.z) * (fast::clamp((_1402 - _1359).y + 0.5, 0.0, 1.0) + 0.100000001490116119384765625);
+                        _1389 = _1388 + _1414;
+                        if (_1414 < 0.0040000001899898052215576171875)
                         {
-                            _1368 = _1367;
-                            _1371 = _1370;
-                            _1373 = _1372;
+                            _1382 = _1381;
+                            _1385 = _1384;
+                            _1387 = _1386;
                             continue;
                         }
-                        int _1409;
-                        if (_1381 != 0)
+                        int _1423;
+                        if (_1395 != 0)
                         {
-                            _1409 = _1357;
+                            _1423 = _1371;
                         }
                         else
                         {
-                            _1409 = _1352.x;
+                            _1423 = _1366.x;
                         }
-                        int _1415;
-                        if (_1383 != 0)
+                        int _1429;
+                        if (_1397 != 0)
                         {
-                            _1415 = _1361;
+                            _1429 = _1375;
                         }
                         else
                         {
-                            _1415 = _1352.y;
+                            _1429 = _1366.y;
                         }
-                        int _1421;
-                        if (_1385 != 0)
+                        int _1435;
+                        if (_1399 != 0)
                         {
-                            _1421 = _1365;
+                            _1435 = _1379;
                         }
                         else
                         {
-                            _1421 = _1352.z;
+                            _1435 = _1366.z;
                         }
-                        int _1422 = _1409 * 3;
-                        int _1424 = _1421 + (_1415 * _1363);
-                        int2 _1425 = int2(_1422, _1424);
-                        _1368 = _1367 + (_1400 * gProbes.read(uint2(int3(_1425 + int2(2, 0), 0).xy), 0).y);
-                        _1371 = _1370 + (gProbes.read(uint2(int3(_1425 + int2(1, 0), 0).xy), 0).xyz * _1400);
-                        _1373 = _1372 + (gProbes.read(uint2(int3(_1422, _1424, 0).xy), 0).xyz * _1400);
+                        int _1436 = _1423 * 3;
+                        int _1438 = _1435 + (_1429 * _1377);
+                        int2 _1439 = int2(_1436, _1438);
+                        _1382 = _1381 + (_1414 * gProbes.read(uint2(int3(_1439 + int2(2, 0), 0).xy), 0).y);
+                        _1385 = _1384 + (gProbes.read(uint2(int3(_1439 + int2(1, 0), 0).xy), 0).xyz * _1414);
+                        _1387 = _1386 + (gProbes.read(uint2(int3(_1436, _1438, 0).xy), 0).xyz * _1414);
                     }
-                    float3 _1453 = float3(_1374);
-                    float3 _1454 = _1372 / _1453;
-                    _1465 = _1454 * precise::max(1.0 + (((_1370 / _1453).y * 0.666666686534881591796875) / precise::max(dot(_1454, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)), 0.100000001490116119384765625);
-                    _1466 = _1367 / _1374;
+                    float3 _1467 = float3(_1388);
+                    float3 _1468 = _1386 / _1467;
+                    _1479 = _1468 * precise::max(1.0 + (((_1384 / _1467).y * 0.666666686534881591796875) / precise::max(dot(_1468, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)), 0.100000001490116119384765625);
+                    _1480 = _1381 / _1388;
                 }
                 else
                 {
-                    _1465 = float3(0.0);
-                    _1466 = 1.0;
+                    _1479 = float3(0.0);
+                    _1480 = 1.0;
                 }
-                float3 _1561;
-                float _1562;
-                if (_1303 < 1.0)
+                float3 _1575;
+                float _1576;
+                if (_1317 < 1.0)
                 {
-                    float3 _1473 = (_1276 + (float3(0.0, 0.449999988079071044921875, 0.0) * _1306.x)) / _1306;
-                    float3 _1474 = floor(_1473);
-                    int3 _1475 = int3(_1474);
-                    float3 _1476 = _1473 - _1474;
-                    int _1479 = int(gLight.probeGrid.y);
-                    int _1480 = int(gLight.probeGrid.z);
-                    float _1482 = rint(_1473.y);
-                    float3 _1484;
-                    _1484 = float3(0.0);
-                    for (int _1487 = 0; _1487 < 4; )
+                    float3 _1487 = (_1290 + (float3(0.0, 0.449999988079071044921875, 0.0) * _1320.x)) / _1320;
+                    float3 _1488 = floor(_1487);
+                    int3 _1489 = int3(_1488);
+                    float3 _1490 = _1487 - _1488;
+                    int _1493 = int(gLight.probeGrid.y);
+                    int _1494 = int(gLight.probeGrid.z);
+                    float _1496 = rint(_1487.y);
+                    float3 _1498;
+                    _1498 = float3(0.0);
+                    for (int _1501 = 0; _1501 < 4; )
                     {
-                        int _1491 = _1487 & 1;
-                        int _1492 = _1487 >> 1;
-                        float2 _1494 = _1476.xz;
-                        float2 _1497 = mix(float2(1.0) - _1494, _1494, float2(int2(_1491, _1492)));
-                        float3 _1504 = float3(int3(_1475.x + _1491, int(_1482), _1475.z + _1492));
-                        int3 _1509 = int3(_1504 - (gLight.probeGrid.xyz * floor(_1504 / gLight.probeGrid.xyz)));
-                        _1484 += (gProbes.read(uint2(int3(_1509.x * 3, _1509.z + ((_1509.y + _1479) * _1480), 0).xy), 0).xyz * (_1497.x * _1497.y));
-                        _1487++;
+                        int _1505 = _1501 & 1;
+                        int _1506 = _1501 >> 1;
+                        float2 _1508 = _1490.xz;
+                        float2 _1511 = mix(float2(1.0) - _1508, _1508, float2(int2(_1505, _1506)));
+                        float3 _1518 = float3(int3(_1489.x + _1505, int(_1496), _1489.z + _1506));
+                        int3 _1523 = int3(_1518 - (gLight.probeGrid.xyz * floor(_1518 / gLight.probeGrid.xyz)));
+                        _1498 += (gProbes.read(uint2(int3(_1523.x * 3, _1523.z + ((_1523.y + _1493) * _1494), 0).xy), 0).xyz * (_1511.x * _1511.y));
+                        _1501++;
                         continue;
                     }
-                    float3 _1528 = float3(int3(rint(_1473)));
-                    int3 _1533 = int3(_1528 - (gLight.probeGrid.xyz * floor(_1528 / gLight.probeGrid.xyz)));
-                    int3 _1541 = int3(_1533.x * 3, _1533.z + ((_1533.y + _1479) * _1480), 0);
-                    int3 _1542 = _1541 + int3(1, 0, 0);
-                    int3 _1547 = _1541 + int3(2, 0, 0);
-                    _1561 = _1484 * precise::max(1.0 + ((gProbes.read(uint2(_1542.xy), _1542.z).y * 0.666666686534881591796875) / precise::max(dot(_1484, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)), 0.100000001490116119384765625);
-                    _1562 = gProbes.read(uint2(_1547.xy), _1547.z).y;
+                    float3 _1542 = float3(int3(rint(_1487)));
+                    int3 _1547 = int3(_1542 - (gLight.probeGrid.xyz * floor(_1542 / gLight.probeGrid.xyz)));
+                    int3 _1555 = int3(_1547.x * 3, _1547.z + ((_1547.y + _1493) * _1494), 0);
+                    int3 _1556 = _1555 + int3(1, 0, 0);
+                    int3 _1561 = _1555 + int3(2, 0, 0);
+                    _1575 = _1498 * precise::max(1.0 + ((gProbes.read(uint2(_1556.xy), _1556.z).y * 0.666666686534881591796875) / precise::max(dot(_1498, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)), 0.100000001490116119384765625);
+                    _1576 = gProbes.read(uint2(_1561.xy), _1561.z).y;
                 }
                 else
                 {
-                    _1561 = float3(0.0);
-                    _1562 = 1.0;
+                    _1575 = float3(0.0);
+                    _1576 = 1.0;
                 }
-                _1566 = mix(_1562, _1466, _1303);
-                _1567 = mix(_1561, _1465, float3(_1303));
+                _1580 = mix(_1576, _1480, _1317);
+                _1581 = mix(_1575, _1479, float3(_1317));
                 break;
             } while(false);
-            _1571 = mix(1.0, _1566, _1331);
-            _1572 = mix(_1270, _1567, float3(_1331));
+            _1585 = mix(1.0, _1580, _1345);
+            _1586 = mix(_1284, _1581, float3(_1345));
         }
         else
         {
-            _1571 = 1.0;
-            _1572 = _1270;
+            _1585 = 1.0;
+            _1586 = _1284;
         }
-        float3 _1574 = exp(float3(-0.550000011920928955078125, -0.2199999988079071044921875, -0.14000000059604644775390625) * precise::min(length(select(_1125, _1085, bool3(_1127)) - in.in_var_TEXCOORD0), 80.0));
-        float3 _1583 = _1572 * 1.10000002384185791015625;
-        float _1599 = fast::clamp(dot(_1059, _265), 0.0, 1.0);
-        float _1603 = 0.0199999995529651641845703125 + (0.980000019073486328125 * powr(1.0 - _1599, 5.0));
-        float3 _1605 = reflect(-_265, _1059);
-        float _1607 = abs(_1605.y);
-        float3 _1608 = _1605;
-        _1608.y = _1607;
-        float2 _1619 = (float2((precise::atan2(_1605.z, _1605.x) * 0.15915493667125701904296875) + 1.0, fast::clamp((_1607 * 0.5) + 0.5, 0.0, 1.0)) * float2(32.0, 16.0)) - float2(0.5);
-        float2 _1620 = floor(_1619);
-        float2 _1621 = _1619 - _1620;
-        int _1625 = (int(_1620.x) + 32) - 32 * ((int(_1620.x) + 32) / 32);
-        int _1630 = clamp(int(_1620.y), 0, 15);
-        uint _1634 = uint(_1630) * 32u;
-        uint _1635 = uint(_1625);
-        uint _1640 = uint((_1625 + 1) - 32 * ((_1625 + 1) / 32));
-        float3 _1646 = float3(_1621.x);
-        uint _1649 = uint(min((_1630 + 1), 15)) * 32u;
-        float3 _1663 = mix(_1572, mix(mix(gSky._m0[_1634 + _1635].xyz, gSky._m0[_1634 + _1640].xyz, _1646), mix(gSky._m0[_1649 + _1635].xyz, gSky._m0[_1649 + _1640].xyz, _1646), float3(_1621.y)), float3(_1571));
-        bool _1668;
-        if (_1603 > 0.039999999105930328369140625)
+        float3 _1589 = exp((-select(float3(0.550000011920928955078125, 0.2199999988079071044921875, 0.14000000059604644775390625), float3(0.449999988079071044921875, 0.07500000298023223876953125, 0.04500000178813934326171875), _1151)) * precise::min(length(select(_1129, _1089, bool3(_1131)) - in.in_var_TEXCOORD0), 80.0));
+        float3 _1598 = _1586 * 1.10000002384185791015625;
+        float _1614 = fast::clamp(dot(_1063, _269), 0.0, 1.0);
+        float _1618 = 0.0199999995529651641845703125 + (0.980000019073486328125 * powr(1.0 - _1614, 5.0));
+        float3 _1620 = reflect(-_269, _1063);
+        float _1622 = abs(_1620.y);
+        float3 _1623 = _1620;
+        _1623.y = _1622;
+        float2 _1634 = (float2((precise::atan2(_1620.z, _1620.x) * 0.15915493667125701904296875) + 1.0, fast::clamp((_1622 * 0.5) + 0.5, 0.0, 1.0)) * float2(32.0, 16.0)) - float2(0.5);
+        float2 _1635 = floor(_1634);
+        float2 _1636 = _1634 - _1635;
+        int _1640 = (int(_1635.x) + 32) - 32 * ((int(_1635.x) + 32) / 32);
+        int _1645 = clamp(int(_1635.y), 0, 15);
+        uint _1649 = uint(_1645) * 32u;
+        uint _1650 = uint(_1640);
+        uint _1655 = uint((_1640 + 1) - 32 * ((_1640 + 1) / 32));
+        float3 _1661 = float3(_1636.x);
+        uint _1664 = uint(min((_1645 + 1), 15)) * 32u;
+        float3 _1678 = mix(_1586, mix(mix(gSky._m0[_1649 + _1650].xyz, gSky._m0[_1649 + _1655].xyz, _1661), mix(gSky._m0[_1664 + _1650].xyz, gSky._m0[_1664 + _1655].xyz, _1661), float3(_1636.y)), float3(_1585));
+        bool _1683;
+        if (_1618 > 0.039999999105930328369140625)
         {
-            _1668 = _263 < 400.0;
+            _1683 = _267 < 400.0;
         }
         else
         {
-            _1668 = false;
+            _1683 = false;
         }
-        float3 _1785;
-        if (_1668)
+        float3 _1800;
+        if (_1683)
         {
-            float _1672 = fast::clamp(_263 * 0.60000002384185791015625, 6.0, 120.0);
-            float3 _1784;
-            int _1674 = 1;
+            float _1687 = fast::clamp(_267 * 0.60000002384185791015625, 6.0, 120.0);
+            float3 _1799;
+            int _1689 = 1;
             for (;;)
             {
-                if (_1674 <= 8)
+                if (_1689 <= 8)
                 {
-                    float _1680 = float(_1674);
-                    float _1690 = _1680 + (fract(sin(dot(gl_FragCoord.xy + float2(PostParams.misc.y), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875) * 0.800000011920928955078125);
-                    float _1691 = _1690 * 0.125;
-                    float3 _1695 = in.in_var_TEXCOORD0 + (((_1608 * _1691) * _1691) * _1672);
-                    float4 _1702 = PostParams.prevViewProj * float4(_1695, 1.0);
-                    float _1703 = _1702.w;
-                    if (_1703 <= 0.0)
+                    float _1695 = float(_1689);
+                    float _1705 = _1695 + (fract(sin(dot(gl_FragCoord.xy + float2(PostParams.misc.y), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875) * 0.800000011920928955078125);
+                    float _1706 = _1705 * 0.125;
+                    float3 _1710 = in.in_var_TEXCOORD0 + (((_1623 * _1706) * _1706) * _1687);
+                    float4 _1717 = PostParams.prevViewProj * float4(_1710, 1.0);
+                    float _1718 = _1717.w;
+                    if (_1718 <= 0.0)
                     {
-                        _1784 = _1663;
+                        _1799 = _1678;
                         break;
                     }
-                    float _1710 = ((_1702.x / _1703) * 0.5) + 0.5;
-                    float _1714 = 0.5 - ((_1702.y / _1703) * 0.5);
-                    float2 _1715 = float2(_1710, _1714);
-                    bool _1723;
-                    if (!any(_1715 < float2(0.0)))
+                    float _1725 = ((_1717.x / _1718) * 0.5) + 0.5;
+                    float _1729 = 0.5 - ((_1717.y / _1718) * 0.5);
+                    float2 _1730 = float2(_1725, _1729);
+                    bool _1738;
+                    if (!any(_1730 < float2(0.0)))
                     {
-                        _1723 = any(_1715 > float2(1.0));
+                        _1738 = any(_1730 > float2(1.0));
                     }
                     else
                     {
-                        _1723 = true;
+                        _1738 = true;
                     }
-                    if (_1723)
+                    if (_1738)
                     {
-                        _1784 = _1663;
+                        _1799 = _1678;
                         break;
                     }
-                    float4 _1729 = gDepth.sample(gClamp, _1715, level(0.0));
-                    float _1730 = _1729.x;
-                    if (_1730 <= 0.0)
+                    float4 _1744 = gDepth.sample(gClamp, _1730, level(0.0));
+                    float _1745 = _1744.x;
+                    if (_1745 <= 0.0)
                     {
-                        int _1675 = _1674 + 1;
-                        _1674 = _1675;
+                        int _1690 = _1689 + 1;
+                        _1689 = _1690;
                         continue;
                     }
-                    float4 _1743 = PostParams.invViewProj * float4((_1710 * 2.0) - 1.0, 1.0 - (_1714 * 2.0), _1730, 1.0);
-                    float3 _1747 = _1743.xyz / float3(_1743.w);
-                    float _1750 = length(_1695 - PostParams.eye.xyz) - length(_1747 - PostParams.eye.xyz);
-                    bool _1757;
-                    if (_1750 > 0.0)
+                    float4 _1758 = PostParams.invViewProj * float4((_1725 * 2.0) - 1.0, 1.0 - (_1729 * 2.0), _1745, 1.0);
+                    float3 _1762 = _1758.xyz / float3(_1758.w);
+                    float _1765 = length(_1710 - PostParams.eye.xyz) - length(_1762 - PostParams.eye.xyz);
+                    bool _1772;
+                    if (_1765 > 0.0)
                     {
-                        _1757 = _1750 < (0.03125 * (_1672 * _1690));
+                        _1772 = _1765 < (0.03125 * (_1687 * _1705));
                     }
                     else
                     {
-                        _1757 = false;
+                        _1772 = false;
                     }
-                    bool _1763;
-                    if (_1757)
+                    bool _1778;
+                    if (_1772)
                     {
-                        _1763 = _1747.y > (in.in_var_TEXCOORD0.y - 0.20000000298023223876953125);
+                        _1778 = _1762.y > (in.in_var_TEXCOORD0.y - 0.20000000298023223876953125);
                     }
                     else
                     {
-                        _1763 = false;
+                        _1778 = false;
                     }
-                    if (_1763)
+                    if (_1778)
                     {
-                        float2 _1769 = fast::clamp(precise::min(_1715, float2(1.0) - _1715) * 12.0, float2(0.0), float2(1.0));
-                        _1784 = mix(_1663, gRefract.sample(gClamp, _1715, level(0.0)).xyz, float3((_1769.x * _1769.y) * (1.0 - (0.015625 * (_1690 * _1690)))));
+                        float2 _1784 = fast::clamp(precise::min(_1730, float2(1.0) - _1730) * 12.0, float2(0.0), float2(1.0));
+                        _1799 = mix(_1678, gRefract.sample(gClamp, _1730, level(0.0)).xyz, float3((_1784.x * _1784.y) * (1.0 - (0.015625 * (_1705 * _1705)))));
                         break;
                     }
-                    int _1675 = _1674 + 1;
-                    _1674 = _1675;
+                    int _1690 = _1689 + 1;
+                    _1689 = _1690;
                     continue;
                 }
                 else
                 {
-                    _1784 = _1663;
+                    _1799 = _1678;
                     break;
                 }
             }
-            _1785 = _1784;
+            _1800 = _1799;
         }
         else
         {
-            _1785 = _1663;
+            _1800 = _1678;
         }
-        float _1792 = fast::clamp(0.054999999701976776123046875 + (sqrt(_916) * 0.89999997615814208984375), 0.039999999105930328369140625, 0.60000002384185791015625);
-        float _1795 = ((_1792 * _1792) * _1792) * _1792;
-        float _1797 = fast::clamp(dot(_1059, fast::normalize(_265 + gLight.sunDirL.xyz)), 0.0, 1.0);
-        float _1801 = ((_1797 * _1797) * (_1795 - 1.0)) + 1.0;
-        float _1803 = fast::clamp(dot(_1059, gLight.sunDirL.xyz), 0.0, 1.0);
-        float2 _1827 = (in.in_var_TEXCOORD1 * 2.2999999523162841796875) - ((in.in_var_TEXCOORD2 * wc.near.w) * 1.2999999523162841796875);
-        float2 _1828 = _1827 * 0.37000000476837158203125;
-        float2 _1829 = _1828 + float2(5.0);
-        float2 _1830 = floor(_1829);
-        float2 _1831 = _1829 - _1830;
-        float2 _1835 = (_1831 * _1831) * (float2(3.0) - (_1831 * 2.0));
-        float _1845 = _1835.x;
-        float2 _1860 = _1828 + float2(29.0);
-        float2 _1861 = floor(_1860);
-        float2 _1862 = _1860 - _1861;
-        float2 _1866 = (_1862 * _1862) * (float2(3.0) - (_1862 * 2.0));
-        float _1876 = _1866.x;
-        float2 _1894 = _1827 + ((float2(mix(mix(fract(sin(dot(_1830, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1830 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1845), mix(fract(sin(dot(_1830 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1830 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1845), _1835.y), mix(mix(fract(sin(dot(_1861, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1861 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1876), mix(fract(sin(dot(_1861 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1861 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1876), _1866.y)) - float2(0.5)) * 2.599999904632568359375);
-        float _1895 = _1894.x;
-        float _1897 = _1894.y;
-        float2 _1903 = float2((_1895 * 0.800000011920928955078125) - (_1897 * 0.60000002384185791015625), (_1895 * 0.60000002384185791015625) + (_1897 * 0.800000011920928955078125));
-        float2 _1904 = floor(_1894);
-        float2 _1905 = _1894 - _1904;
-        float2 _1909 = (_1905 * _1905) * (float2(3.0) - (_1905 * 2.0));
-        float _1919 = _1909.x;
-        float2 _1936 = (_1903 * 2.7000000476837158203125) + float2(13.0);
-        float2 _1937 = floor(_1936);
-        float2 _1938 = _1936 - _1937;
-        float2 _1942 = (_1938 * _1938) * (float2(3.0) - (_1938 * 2.0));
-        float _1952 = _1942.x;
-        float2 _1971 = (_1903.yx * 6.099999904632568359375) + float2(3.0);
-        float2 _1972 = floor(_1971);
-        float2 _1973 = _1971 - _1972;
-        float2 _1977 = (_1973 * _1973) * (float2(3.0) - (_1973 * 2.0));
-        float _1987 = _1977.x;
-        float _2003 = ((mix(mix(fract(sin(dot(_1904, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1904 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1919), mix(fract(sin(dot(_1904 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1904 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1919), _1909.y) * 0.5) + (mix(mix(fract(sin(dot(_1937, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1937 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1952), mix(fract(sin(dot(_1937 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1937 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1952), _1942.y) * 0.319999992847442626953125)) + (mix(mix(fract(sin(dot(_1972, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1972 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1987), mix(fract(sin(dot(_1972 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1972 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1987), _1977.y) * 0.180000007152557373046875);
-        float2 _2025 = (_1894 * 1.89999997615814208984375) + float2(41.0);
-        float2 _2026 = floor(_2025);
-        float2 _2027 = _2025 - _2026;
-        float2 _2031 = (_2027 * _2027) * (float2(3.0) - (_2027 * 2.0));
-        float _2041 = _2031.x;
-        float _2062 = fast::clamp(precise::max(precise::max(fast::clamp(1.0 - (_1089 * 1.8181817531585693359375), 0.0, 1.0) * (0.550000011920928955078125 + (0.449999988079071044921875 * sin(((wc.near.w * 0.800000011920928955078125) + (_1089 * 16.0)) + (_2003 * 6.0)))), fast::clamp((0.7200000286102294921875 - _915) * 3.0, 0.0, 1.0)), precise::max(fast::clamp((_266 - 1.2000000476837158203125) * 0.800000011920928955078125, 0.0, 1.0), fast::clamp(_1026 * 1.60000002384185791015625, 0.0, 1.0))), 0.0, 1.0);
-        float _2085 = fast::clamp(_1089 * 8.3333339691162109375, 0.0, 1.0);
-        float3 _2096 = mix(gRefract.sample(gClamp, _258, level(0.0)).xyz, mix(mix((gRefract.sample(gClamp, select(_1099, _258, bool2(_1127)), level(0.0)).xyz * _1574) + ((float3(0.054999999701976776123046875, 0.07500000298023223876953125, 0.04500000178813934326171875) * (_1583 + ((((_1143 * fast::clamp(PostParams.sunDir.y, 0.0, 1.0)) * _1185) * _1259) * precise::max(1.0 + (2.2000000476837158203125 * dot(_1090, fast::normalize(gLight.sunDirL.xz + float2(9.9999997473787516355514526367188e-05, 0.0)))), 0.1500000059604644775390625)))) * (float3(1.0) - _1574)), _1785, float3(_1603)) + (((((_1143 * _1185) * _1259) * precise::min((((_1795 / ((3.1415927410125732421875 * _1801) * _1801)) * 0.25) / precise::max((_1599 * _1803) + 0.0500000007450580596923828125, 0.0500000007450580596923828125)) * _1803, 60.0)) * _1603) * 12.0), float3(0.819999992847442626953125, 0.839999973773956298828125, 0.819999992847442626953125) * (_1583 + (((_1143 * _1803) * _1185) * _1259)), float3(((smoothstep(0.980000019073486328125 - _2062, 1.41999995708465576171875 - _2062, (_2003 * 0.699999988079071044921875) + (abs((mix(mix(fract(sin(dot(_2026, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_2026 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2041), mix(fract(sin(dot(_2026 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_2026 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2041), _2031.y) * 2.0) - 1.0) * 0.449999988079071044921875)) * fast::clamp(_2062 * 2.2000000476837158203125, 0.0, 1.0)) * 0.819999992847442626953125) * (1.0 - fast::clamp(_263 * 0.0024999999441206455230712890625, 0.0, 1.0)))), float3((_2085 * _2085) * (3.0 - (2.0 * _2085))));
-        _2104 = float4(precise::min((_2096 * in.in_var_TEXCOORD4) + in.in_var_TEXCOORD3, float3(2000.0)), 0.5);
+        float _1807 = fast::clamp(0.054999999701976776123046875 + (sqrt(_920) * 0.89999997615814208984375), 0.039999999105930328369140625, 0.60000002384185791015625);
+        float _1810 = ((_1807 * _1807) * _1807) * _1807;
+        float _1812 = fast::clamp(dot(_1063, fast::normalize(_269 + gLight.sunDirL.xyz)), 0.0, 1.0);
+        float _1816 = ((_1812 * _1812) * (_1810 - 1.0)) + 1.0;
+        float _1818 = fast::clamp(dot(_1063, gLight.sunDirL.xyz), 0.0, 1.0);
+        float2 _1842 = (in.in_var_TEXCOORD1 * 2.2999999523162841796875) - ((in.in_var_TEXCOORD2 * wc.near.w) * 1.2999999523162841796875);
+        float2 _1843 = _1842 * 0.37000000476837158203125;
+        float2 _1844 = _1843 + float2(5.0);
+        float2 _1845 = floor(_1844);
+        float2 _1846 = _1844 - _1845;
+        float2 _1850 = (_1846 * _1846) * (float2(3.0) - (_1846 * 2.0));
+        float _1860 = _1850.x;
+        float2 _1875 = _1843 + float2(29.0);
+        float2 _1876 = floor(_1875);
+        float2 _1877 = _1875 - _1876;
+        float2 _1881 = (_1877 * _1877) * (float2(3.0) - (_1877 * 2.0));
+        float _1891 = _1881.x;
+        float2 _1909 = _1842 + ((float2(mix(mix(fract(sin(dot(_1845, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1845 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1860), mix(fract(sin(dot(_1845 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1845 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1860), _1850.y), mix(mix(fract(sin(dot(_1876, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1876 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1891), mix(fract(sin(dot(_1876 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1876 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1891), _1881.y)) - float2(0.5)) * 2.599999904632568359375);
+        float _1910 = _1909.x;
+        float _1912 = _1909.y;
+        float2 _1918 = float2((_1910 * 0.800000011920928955078125) - (_1912 * 0.60000002384185791015625), (_1910 * 0.60000002384185791015625) + (_1912 * 0.800000011920928955078125));
+        float2 _1919 = floor(_1909);
+        float2 _1920 = _1909 - _1919;
+        float2 _1924 = (_1920 * _1920) * (float2(3.0) - (_1920 * 2.0));
+        float _1934 = _1924.x;
+        float2 _1951 = (_1918 * 2.7000000476837158203125) + float2(13.0);
+        float2 _1952 = floor(_1951);
+        float2 _1953 = _1951 - _1952;
+        float2 _1957 = (_1953 * _1953) * (float2(3.0) - (_1953 * 2.0));
+        float _1967 = _1957.x;
+        float2 _1986 = (_1918.yx * 6.099999904632568359375) + float2(3.0);
+        float2 _1987 = floor(_1986);
+        float2 _1988 = _1986 - _1987;
+        float2 _1992 = (_1988 * _1988) * (float2(3.0) - (_1988 * 2.0));
+        float _2002 = _1992.x;
+        float _2018 = ((mix(mix(fract(sin(dot(_1919, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1919 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1934), mix(fract(sin(dot(_1919 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1919 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1934), _1924.y) * 0.5) + (mix(mix(fract(sin(dot(_1952, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1952 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1967), mix(fract(sin(dot(_1952 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1952 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _1967), _1957.y) * 0.319999992847442626953125)) + (mix(mix(fract(sin(dot(_1987, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1987 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2002), mix(fract(sin(dot(_1987 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_1987 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2002), _1992.y) * 0.180000007152557373046875);
+        float2 _2040 = (_1909 * 1.89999997615814208984375) + float2(41.0);
+        float2 _2041 = floor(_2040);
+        float2 _2042 = _2040 - _2041;
+        float2 _2046 = (_2042 * _2042) * (float2(3.0) - (_2042 * 2.0));
+        float _2056 = _2046.x;
+        float _2077 = fast::clamp(precise::max(precise::max(fast::clamp(1.0 - (_1093 * 1.8181817531585693359375), 0.0, 1.0) * (0.550000011920928955078125 + (0.449999988079071044921875 * sin(((wc.near.w * 0.800000011920928955078125) + (_1093 * 16.0)) + (_2018 * 6.0)))), fast::clamp((0.7200000286102294921875 - _919) * 3.0, 0.0, 1.0)), precise::max(fast::clamp((_270 - 1.2000000476837158203125) * 0.800000011920928955078125, 0.0, 1.0), fast::clamp(_1030 * 1.60000002384185791015625, 0.0, 1.0))), 0.0, 1.0);
+        float _2100 = fast::clamp(_1093 * 8.3333339691162109375, 0.0, 1.0);
+        float3 _2111 = mix(gRefract.sample(gClamp, _262, level(0.0)).xyz, mix(mix((gRefract.sample(gClamp, select(_1103, _262, bool2(_1131)), level(0.0)).xyz * _1589) + ((select(float3(0.054999999701976776123046875, 0.07500000298023223876953125, 0.04500000178813934326171875), float3(0.006000000052154064178466796875, 0.02999999932944774627685546875, 0.0419999994337558746337890625), _1151) * (_1598 + ((((_1157 * fast::clamp(PostParams.sunDir.y, 0.0, 1.0)) * _1199) * _1273) * precise::max(1.0 + (2.2000000476837158203125 * dot(_1094, fast::normalize(gLight.sunDirL.xz + float2(9.9999997473787516355514526367188e-05, 0.0)))), 0.1500000059604644775390625)))) * (float3(1.0) - _1589)), _1800, float3(_1618)) + (((((_1157 * _1199) * _1273) * precise::min((((_1810 / ((3.1415927410125732421875 * _1816) * _1816)) * 0.25) / precise::max((_1614 * _1818) + 0.0500000007450580596923828125, 0.0500000007450580596923828125)) * _1818, 60.0)) * _1618) * 12.0), float3(0.819999992847442626953125, 0.839999973773956298828125, 0.819999992847442626953125) * (_1598 + (((_1157 * _1818) * _1199) * _1273)), float3(((smoothstep(0.980000019073486328125 - _2077, 1.41999995708465576171875 - _2077, (_2018 * 0.699999988079071044921875) + (abs((mix(mix(fract(sin(dot(_2041, float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_2041 + float2(1.0, 0.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2056), mix(fract(sin(dot(_2041 + float2(0.0, 1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), fract(sin(dot(_2041 + float2(1.0), float2(127.09999847412109375, 311.70001220703125))) * 43758.546875), _2056), _2046.y) * 2.0) - 1.0) * 0.449999988079071044921875)) * fast::clamp(_2077 * 2.2000000476837158203125, 0.0, 1.0)) * 0.819999992847442626953125) * (1.0 - fast::clamp(_267 * 0.0024999999441206455230712890625, 0.0, 1.0)))), float3((_2100 * _2100) * (3.0 - (2.0 * _2100))));
+        _2119 = float4(precise::min((_2111 * in.in_var_TEXCOORD4) + in.in_var_TEXCOORD3, float3(2000.0)), 0.5);
         break;
     } while(false);
-    float4 _2111 = PostParams.prevViewProj * float4(in.in_var_TEXCOORD0, 1.0);
-    float _2113 = _2111.w;
-    out.out_var_SV_Target0 = _2104;
-    out.out_var_SV_Target1 = (_258 - ((float2((_2111.x / _2113) + wc.wind.x, -((_2111.y / _2113) + wc.wind.y)) * 0.5) + float2(0.5))) + float2(9.9999997473787516355514526367188e-06, 0.0);
+    float4 _2126 = PostParams.prevViewProj * float4(in.in_var_TEXCOORD0, 1.0);
+    float _2128 = _2126.w;
+    out.out_var_SV_Target0 = _2119;
+    out.out_var_SV_Target1 = (_262 - ((float2((_2126.x / _2128) + wc.wind.x, -((_2126.y / _2128) + wc.wind.y)) * 0.5) + float2(0.5))) + float2(9.9999997473787516355514526367188e-06, 0.0);
     return out;
 }
 

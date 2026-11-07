@@ -17,7 +17,7 @@ inline std::wstring Utf8ToWide(const std::string& s) { return platform::Utf8ToWi
 inline std::string WideToUtf8(const std::wstring& w) { return platform::WideToUtf8(w); }
 
 inline bool ReadAllText(const std::wstring& path, std::string& out) {
-    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    std::ifstream f(tbd::platform::FsPath(path), std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
@@ -30,7 +30,7 @@ inline bool ReadAllText(const std::wstring& path, std::string& out) {
 }
 
 inline bool WriteAllText(const std::wstring& path, const std::string& text) {
-    std::ofstream f(std::filesystem::path(path), std::ios::binary | std::ios::trunc);
+    std::ofstream f(tbd::platform::FsPath(path), std::ios::binary | std::ios::trunc);
     if (!f) return false;
     if (!text.empty()) f.write(text.data(), (std::streamsize)text.size());
     f.flush();
@@ -58,7 +58,7 @@ inline std::wstring ProjectFilePath(const std::wstring& folder) {
 
 inline bool ProjectExists(const std::wstring& folder) {
     std::error_code ec;
-    return std::filesystem::exists(std::filesystem::path(ProjectFilePath(folder)), ec);
+    return std::filesystem::exists(tbd::platform::FsPath(ProjectFilePath(folder)), ec);
 }
 
 // Reads the "name" field of folder\project.tbdproject.

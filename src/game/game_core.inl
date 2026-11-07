@@ -119,7 +119,7 @@ inline std::vector<tbd::LodLevel> LodLevelsFor(const std::string& path, const st
     const bool pieces = levels.empty(); // a kit of small hard-edged pieces: no edge may collapse, but whole pieces can go
     if (pieces) levels = tbd::BuildPieceLevels(vertices, indices, radius);
     t1 = tbd::platform::Ticks();
-    { std::error_code ec; std::filesystem::create_directory(g_lodCacheDir, ec); } // like CreateDirectoryW: one level
+    { std::error_code ec; std::filesystem::create_directory(tbd::platform::FsPath(g_lodCacheDir), ec); } // like CreateDirectoryW: one level
     tbd::SaveLodLevels(file, levels);
     int64_t freq;
     freq = tbd::platform::TickFrequency();
@@ -371,7 +371,7 @@ std::string ToastName(const std::wstring& path) {
 // ----------------------------------------------------------------- renderer
 
 // GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES: a file or folder is there.
-bool FileExists(const std::wstring& path) { std::error_code ec; return std::filesystem::exists(path, ec); }
+bool FileExists(const std::wstring& path) { std::error_code ec; return std::filesystem::exists(tbd::platform::FsPath(path), ec); }
 
 void UpdateTitle() {
     std::wstring title = g_engine.titleBase;
@@ -1364,7 +1364,7 @@ void UploadUiFont() {
 
 std::wstring ScenesFolder() {
     const std::wstring dir = tbd::Join(g_engine.assetsRoot, L"Scenes");
-    { std::error_code ec; std::filesystem::create_directory(dir, ec); }
+    { std::error_code ec; std::filesystem::create_directory(tbd::platform::FsPath(dir), ec); }
     return dir;
 }
 
@@ -1613,6 +1613,18 @@ bool g_maxGraphics = false;
 // Graphics > Quality: 0 full; 1 fast (modeling: textures and sun shadows only, no ray tracing, probes, clouds, sky, relief, grass);
 // 2 unlit (vertex colours only, no shadows). F6 cycles.
 int g_gfxQuality = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_QUALITY", v, sizeof(v)) > 0 ? std::clamp(atoi(v), 0, 2) : 0; }(); // TBD_QUALITY=0/1/2 starts there
+// The graphics preset for lighting and post (docs/track_r_ios_platform_notes.md): TBD_CHUNK_PRESET, the one knob Track R's governor
+// reads too. 0 low, 1 lowmed, 2 medium, 3 high, 4 ultra and pc (the default). TBD_LOOK=0: the look before the CS2 pass (no city air,
+// no grade, every post pass at every preset), for before/after comparisons.
+bool LookOn() { static const bool on = [] { char v[8] = {}; return !(tbd::platform::GetEnvA("TBD_LOOK", v, sizeof(v)) > 0 && v[0] == '0'); }(); return on; }
+int LookTier() {
+    static const int tier = [] {
+        char v[16] = {};
+        const std::string p = tbd::platform::GetEnvA("TBD_CHUNK_PRESET", v, sizeof(v)) > 0 ? v : "pc";
+        return !LookOn() ? 4 : p == "low" ? 0 : p == "lowmed" ? 1 : p == "medium" ? 2 : p == "high" ? 3 : 4;
+    }();
+    return tier;
+}
 void SetMaxGraphics(bool on) {
     static float hour = 0, tilt = 0;
     static bool sky = true, shadows = true, animate = false;
@@ -1754,6 +1766,9 @@ tbd::TextureId TrackSpomTexture(tbd::Renderer& r) {
     return r.CreateTexture(rgba.data(), w, ht);
 }
 
+void CityRoadsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj, bool rail);
+void CityRoadsRebuild(tbd::Renderer& r, const tbd::city::MeshOut& out); // city_buildings.inl: the network split per CityCell (Track R9)
+bool CityRoadsByCell(); // true: the roads draw per cell (CityRoadsDraw) and the whole-network meshes are not made
 // Textures once per renderer; meshes whenever the network changed. Runs before BeginFrame (it creates resources).
 void RoadsSync(tbd::Renderer& r) {
     RoadsInit();
@@ -1795,10 +1810,11 @@ void RoadsSync(tbd::Renderer& r) {
         if (g_roadGpu.mesh[m] != tbd::kInvalidMesh) r.RetireMesh(g_roadGpu.mesh[m]);
         g_roadGpu.mesh[m] = tbd::kInvalidMesh;
         const std::vector<tbd::Vertex>& v = out.byMat[m];
-        if (!v.empty()) g_roadGpu.mesh[m] = r.CreateMesh(v.data(), (uint32_t)v.size(), tbd::Topology::Triangles);
+        if (!v.empty() && !CityRoadsByCell()) g_roadGpu.mesh[m] = r.CreateMesh(v.data(), (uint32_t)v.size(), tbd::Topology::Triangles);
     }
     if (g_roadGpu.arrows != tbd::kInvalidMesh) r.RetireMesh(g_roadGpu.arrows);
     g_roadGpu.arrows = out.arrows.empty() ? tbd::kInvalidMesh : r.CreateMesh(out.arrows.data(), (uint32_t)out.arrows.size(), tbd::Topology::Triangles);
+    CityRoadsRebuild(r, out);
 }
 
 // Road names: generated per chain of segments (city/road_names.h). F2 over a road renames its whole chain.
@@ -2269,8 +2285,12 @@ void RenderFrame() {
         }
     }
     const int qualityOff = g_gfxQuality > 0 ? (1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 512 | 1024 | (g_gfxQuality > 1 ? 256 : 0)) : 0;
-    light.lightDebug[2] = (float)(featureOff | qualityOff); // the spare slot; mesh shaders only
-    light.lightDebug[3] = g_engine.scene.ambientFill + 1.0f; // +1: an unset 0 reads as the default (lighting.hlsli AmbientFill)
+    const int presetOff = LookTier() == 0 ? 2 : 0; // Low: one hardware-filtered shadow tap instead of PCSS's fifteen
+    light.lightDebug[2] = (float)(featureOff | qualityOff | presetOff); // the spare slot; mesh shaders only
+    // The city map's key light (docs/cs2_look_pass.md): CS2's sunlit and shaded walls differ about 15:1, ours were near 3:1, so the sky
+    // and probe fill drops there. Real meshes and the baked far volumes both light through LitPbr, so they move together.
+    const bool cityLight = LookOn() && !(g_engine.sun.showSky && g_gfxQuality == 0) && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+    light.lightDebug[3] = (cityLight ? g_engine.scene.ambientFill * 0.55f : g_engine.scene.ambientFill) + 1.0f; // +1: an unset 0 reads as the default (lighting.hlsli AmbientFill)
     g_sceneExposure = g_engine.scene.exposure; // both renderers pass it to post.hlsl ExposureValue
     light.lightDebug[0] = lightDebug; // 1 indirect diffuse, 2 sun, 3 reflections, 4 haze only, 8 surface light (vs tbd_reference); see lighting.hlsli and post.hlsl
     const tbd::Vec3 shadowFocus = g_engine.camera.target;
@@ -2323,6 +2343,9 @@ void RenderFrame() {
         frameView.eye = eye;
         frameView.time = cloudTime;
         frameView.sky = g_engine.sun.showSky && g_gfxQuality == 0;
+        // The city map: no marched sky, its cheap air instead (post.hlsl CityComposite; docs/cs2_look_pass.md).
+        frameView.cityAir = LookOn() && !frameView.sky && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+        frameView.postTier = LookTier();
         frameView.dt = dt;
         static const bool motionOff = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_TAAMV", b, 8) > 0 && b[0] == '0'; }(); // test: the old depth-only reprojection
         frameView.motionVectors = !motionOff;
@@ -2865,6 +2888,7 @@ void RenderFrame() {
         for (size_t i = 0; i < entityCount; ++i)
             if (g_engine.sunMoving[i] && (g_engine.entityVisible[i] & kVisibleSun)) DrawEntityCaster(r, i, kVisibleSun);
         g_vegetation.DrawShadows(r, vegetationTime); // it sways, so it is never kept
+        SimAgentsCasters(r);                         // near cosmetic cars: they move, so never kept either
         r.EndShadowPass();
     }
     if (takeCapture) {
@@ -3004,12 +3028,20 @@ void RenderFrame() {
     { // city roads: one draw per material
         bool any = false;
         for (int m = 0; m < tbd::city::kMatCount; ++m) {
-            if (g_roadGpu.mesh[m] == tbd::kInvalidMesh) continue;
+            if (g_roadGpu.mesh[m] == tbd::kInvalidMesh || CityRoadsByCell()) continue; // per cell: CityRoadsDraw below
             const tbd::FrameCounts roadMark = r.Counts();
             r.SetMaterial(g_roadGpu.albedo[m], g_roadGpu.normal[m]);
             r.Draw(g_roadGpu.mesh[m], sceneViewProj, tbd::Mat4::Identity(), true, true);
             g_drawCats.Add(m == (int)tbd::city::Mat::Track ? kCatRail : kCatRoads, roadMark, r.Counts());
             any = true;
+        }
+        if (CityRoadsByCell()) { // per CityCell: meshes only for Near cells, the rest is in their bakes (R9)
+            const tbd::FrameCounts roadMark = r.Counts();
+            CityRoadsDraw(r, sceneViewProj, false);
+            g_drawCats.Add(kCatRoads, roadMark, r.Counts());
+            const tbd::FrameCounts railMark = r.Counts();
+            CityRoadsDraw(r, sceneViewProj, true);
+            g_drawCats.Add(kCatRail, railMark, r.Counts());
         }
         if (g_roads.active && g_roadGpu.arrows != tbd::kInvalidMesh) { // lane direction arrows: road editor only
             r.SetMaterial(g_roadGpu.albedo[(int)tbd::city::Mat::Paint], g_roadGpu.normal[(int)tbd::city::Mat::Paint]);
@@ -3386,6 +3418,10 @@ bool LeftClickAt(int x, int y, int button) {
         }
     }
     g_engine.scene.selected = g_engine.scene.Pick(ray);
+    uint64_t lot = 0;
+    float lotT = 0.0f;
+    if (g_engine.scene.selected < 0 && CityPickLot(ray, lot, lotT)) ++g_pickedLotSerial, g_pickedLot = lot; // zoned buildings are not entities
+    else if (g_pickedLot) ++g_pickedLotSerial, g_pickedLot = 0;
     return false;
 }
 

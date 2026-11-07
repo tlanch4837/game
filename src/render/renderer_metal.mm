@@ -894,12 +894,23 @@ private:
     MTL::Function* Fn(const char* name) {
         const auto found = functions_.find(name);
         if (found != functions_.end()) return found->second;
-        MTL::Function* fn = defaultLibrary_ ? defaultLibrary_->newFunction(Str(name)) : nullptr;
+        // Documents/shaders/<name>.metal (loaded onto the device: docs/ipad_loader.md) wins over the built-in library, so a
+        // shader change is tested by copying a file instead of a new build.
+        std::string override;
+        if (const char* home = std::getenv("HOME")) {
+            override = std::string(home) + "/Documents/shaders/" + name + ".metal";
+            if (FILE* f = std::fopen(override.c_str(), "rb")) std::fclose(f);
+            else override.clear();
+        }
+        MTL::Function* fn = defaultLibrary_ && override.empty() ? defaultLibrary_->newFunction(Str(name)) : nullptr;
         if (!fn) {
-            std::string path = NS::Bundle::mainBundle()->resourcePath()->utf8String();
-            path += "/msl/";
-            path += name;
-            path += ".metal";
+            std::string path = override;
+            if (path.empty()) {
+                path = NS::Bundle::mainBundle()->resourcePath()->utf8String();
+                path += "/msl/";
+                path += name;
+                path += ".metal";
+            } else Log("Metal: %s from Documents/shaders", name);
             std::string source;
             if (FILE* f = std::fopen(path.c_str(), "rb")) {
                 char buf[65536];

@@ -375,9 +375,29 @@ void SimFlowOverlay(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     if (!v.empty()) r.DrawTransient(v.data(), (uint32_t)v.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
 }
 
+// Near cars cast shadows (Track R9): the ones within kSimCarShadowRange of the eye, drawn into the sun's map by SimAgentsCasters. The
+// shadow pass runs before the scene, so it draws the rows the previous frame gathered here: one frame behind, a quarter metre at
+// city speeds, under the shadow map's own softness.
+constexpr float kSimCarShadowRange = 150.0f;
+std::vector<std::vector<float>> g_simCarShadowRows; // per car model
+void SimAgentsCasters(tbd::Renderer& r) {
+    for (size_t m = 0; m < g_simCarShadowRows.size() && m < g_simCars.size(); ++m) {
+        const std::vector<float>& rows = g_simCarShadowRows[m];
+        if (rows.empty()) continue;
+        const uint32_t n = (uint32_t)(rows.size() / 12);
+        const tbd::MeshId mesh = g_simCars[m].mesh;
+        const auto it = g_engine.matParts.find(mesh);
+        if (it == g_engine.matParts.end()) { r.DrawShadowInstancedTransient(mesh, rows.data(), n); continue; }
+        for (const MatPart& p : it->second)
+            if (p.lodError == 0.0f && p.caster) r.DrawShadowInstancedTransient(p.mesh, rows.data(), n);
+    }
+}
+
 void SimAgentsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     SimFlowOverlay(r, viewProj);
     g_simCarsDrawn = 0;
+    g_simCarShadowRows.resize(g_simCars.size());
+    for (auto& v : g_simCarShadowRows) v.clear();
     if (g_herdsOwnCars) return;
     if (g_simCars.empty() || g_segFlow.size() != g_roads.net.segs.size() || g_segFlowVersion != g_roads.net.version) return;
     if (g_engine.camera.distance > 1200.0f) return; // past this the cars are specks: none drawn
@@ -393,6 +413,8 @@ void SimAgentsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
             float row[12];
             tbd::city::CarRow(c, row);
             rows.insert(rows.end(), row, row + 12);
+            const tbd::Vec3 eye = g_engine.camera.Eye(), at{row[3], row[7], row[11]};
+            if (tbd::Dot(at - eye, at - eye) < kSimCarShadowRange * kSimCarShadowRange) g_simCarShadowRows[(size_t)m].insert(g_simCarShadowRows[(size_t)m].end(), row, row + 12);
         }
         if (rows.empty()) continue;
         const uint32_t n = (uint32_t)(rows.size() / 12);
@@ -418,15 +440,30 @@ tbd::city::SimPeople g_simPeople;
 std::vector<std::string> g_simCitizenLines;
 std::string g_simCitizenTitle;
 
+// The zoned building the player clicked (city_buildings.inl CityPickLot: buildings are not scene entities since Track R); 0 = none.
+// The serial changes with every pick, so clicking the same building again opens a panel the player closed.
+uint64_t g_pickedLot = 0;
+uint32_t g_pickedLotSerial = 0;
+void SimShowLot(uint64_t lot);
+
 void SimPeopleSelect() {
     static int lastSel = -2;
+    static uint32_t lastPick = 0;
+    if (g_pickedLotSerial != lastPick) {
+        lastPick = g_pickedLotSerial;
+        if (g_pickedLot) SimShowLot(g_pickedLot);
+        return;
+    }
     const int sel = g_engine.scene.selected;
     if (sel == lastSel) return;
     lastSel = sel;
     if (sel < 0 || sel >= (int)g_engine.scene.entities.size()) return;
     const std::string& name = g_engine.scene.entities[(size_t)sel].name;
-    if (name.compare(0, 15, "Zoned building ") != 0) return;
-    const uint64_t lot = std::strtoull(name.c_str() + 15, nullptr, 10);
+    if (name.compare(0, 15, "Zoned building ") != 0) return; // TBD_ZONE_ENTITIES=1: the old entities
+    SimShowLot(std::strtoull(name.c_str() + 15, nullptr, 10));
+}
+
+void SimShowLot(uint64_t lot) {
     int cell = -1;
     uint32_t first = 0, count = 0;
     g_simCitizenLines.clear();

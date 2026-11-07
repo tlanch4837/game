@@ -310,7 +310,7 @@ constexpr uint32_t kLodFileMagicOld = 0x31444F4C; // "LOD1": edge collapse only;
 constexpr uint32_t kLodFileMagicDraft = 0x32444F4C; // "LOD2": piece levels of a first draft (four levels, 85% steps): made again
 
 inline bool LoadLodLevels(const std::wstring& path, std::vector<LodLevel>& levels) {
-    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    std::ifstream f(tbd::platform::FsPath(path), std::ios::binary);
     uint32_t magic = 0, count = 0;
     if (!f.read((char*)&magic, 4) || (magic != kLodFileMagic && magic != kLodFileMagicOld) || !f.read((char*)&count, 4) || count > 8) return false; // LOD2 too
     if (magic == kLodFileMagicOld && count == 0) return false; // made before piece levels existed
@@ -328,7 +328,7 @@ inline bool LoadLodLevels(const std::wstring& path, std::vector<LodLevel>& level
 inline bool SaveLodLevels(const std::wstring& path, const std::vector<LodLevel>& levels) {
     const std::wstring temp = path + L".tmp"; // a half-written file must never look complete
     {
-        std::ofstream f(std::filesystem::path(temp), std::ios::binary | std::ios::trunc);
+        std::ofstream f(tbd::platform::FsPath(temp), std::ios::binary | std::ios::trunc);
         const uint32_t count = (uint32_t)levels.size();
         f.write((const char*)&kLodFileMagic, 4).write((const char*)&count, 4);
         for (const LodLevel& level : levels) {
@@ -339,7 +339,7 @@ inline bool SaveLodLevels(const std::wstring& path, const std::vector<LodLevel>&
         if (!f) return false;
     }
     std::error_code ec; // like MoveFileExW(MOVEFILE_REPLACE_EXISTING): replaces an existing file
-    std::filesystem::rename(temp, path, ec);
+    std::filesystem::rename(tbd::platform::FsPath(temp), tbd::platform::FsPath(path), ec);
     return !ec;
 }
 

@@ -36,7 +36,7 @@ int g_gameAction = 0, g_gameSlot = 0;
 
 std::wstring GameSavePath(int slot, const wchar_t* ext) {
     const std::wstring dir = tbd::Join(g_engine.projectFolder.empty() ? tbd::ExeDirectory() : g_engine.projectFolder, L"saves");
-    { std::error_code ec; std::filesystem::create_directory(dir, ec); }
+    { std::error_code ec; std::filesystem::create_directory(tbd::platform::FsPath(dir), ec); }
     return tbd::Join(dir, std::wstring(L"city_slot") + std::to_wstring(slot + 1) + ext);
 }
 
@@ -161,6 +161,9 @@ void NewCityGame(int seed) {
     g_engine.terrain.params.seed = seed;
     g_engine.terrain.field.Clear();
     g_engine.sun.showSky = false;
+    // An afternoon sun, low and leaning south (docs/cs2_look_pass.md): near noon the houses' shadows hid under them and every wall read
+    // the same; at 15:36 with a 30 degree lean they fall across the street, as in CS2's screenshots. The editor keeps its own sun.
+    if (LookOn()) { g_engine.sun.hour = 15.6f; g_engine.sun.tiltDeg = 30.0f; } // TBD_LOOK=0: the sun as it was
     ClearCityWorld();
     g_clock.minutes = 8 * 60;
     DefaultInfrastructure();
@@ -245,7 +248,7 @@ bool SaveCityGame(int slot) {
 bool LoadCityGame(int slot) {
     using namespace tbd::city;
     using namespace tbd::scene_io_detail;
-    std::ifstream in(std::filesystem::path(GameSavePath(slot, L".tbdgame")), std::ios::binary);
+    std::ifstream in(tbd::platform::FsPath(GameSavePath(slot, L".tbdgame")), std::ios::binary);
     if (!in) {
         Toast("NO SAVED GAME IN SLOT " + std::to_string(slot + 1));
         return false;

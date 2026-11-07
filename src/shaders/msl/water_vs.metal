@@ -83,208 +83,240 @@ struct water_vs_in
 vertex water_vs_out water_vs(water_vs_in in [[stage_in]], constant type_PostParams& PostParams [[buffer(0)]], constant type_PushConstant_WaterConstants& wc [[buffer(29)]], constant type_ConstantBuffer_LightingData& gLight [[buffer(1)]], const device type_StructuredBuffer_v4float& gWaves [[buffer(7)]], const device type_StructuredBuffer_RippleCell& gRipple [[buffer(8)]])
 {
     water_vs_out out = {};
-    float3 _396;
+    float3 _413;
     if (wc.tiles.w > 0.5)
     {
-        float2 _135 = abs(in.in_var_POSITION.xz - wc.near.xy);
-        float _143 = fast::clamp((wc.near.z - precise::max(_135.x, _135.y)) * 0.03125, 0.0, 1.0);
-        float2 _157 = ((in.in_var_POSITION.xz / float2(wc.tiles.x)) * 128.0) - float2(0.5);
-        float2 _158 = floor(_157);
-        int2 _159 = int2(_158);
-        int2 _160 = _159 + int2(1);
-        float2 _165 = _157 - _158;
-        uint _169 = uint(_159.x & 127);
-        uint _172 = uint(_159.y & 127) * 128u;
-        uint _178 = uint(_160.x & 127);
-        float4 _183 = float4(_165.x);
-        uint _187 = uint(_160.y & 127) * 128u;
-        float2 _205 = ((in.in_var_POSITION.xz / float2(wc.tiles.y)) * 128.0) - float2(0.5);
-        float2 _206 = floor(_205);
-        int2 _207 = int2(_206);
-        int2 _208 = _207 + int2(1);
-        float2 _213 = _205 - _206;
-        uint _217 = uint(_207.x & 127);
-        uint _221 = 16384u + (uint(_207.y & 127) * 128u);
-        uint _227 = uint(_208.x & 127);
-        float4 _232 = float4(_213.x);
-        uint _237 = 16384u + (uint(_208.y & 127) * 128u);
-        float2 _256 = ((in.in_var_POSITION.xz / float2(wc.tiles.z)) * 128.0) - float2(0.5);
-        float2 _257 = floor(_256);
-        int2 _258 = int2(_257);
-        int2 _259 = _258 + int2(1);
-        float2 _264 = _256 - _257;
-        uint _268 = uint(_258.x & 127);
-        uint _272 = 32768u + (uint(_258.y & 127) * 128u);
-        uint _278 = uint(_259.x & 127);
-        float4 _283 = float4(_264.x);
-        uint _288 = 32768u + (uint(_259.y & 127) * 128u);
-        float3 _308 = ((mix(mix(gWaves._m0[(_172 + _169) * 2u], gWaves._m0[(_172 + _178) * 2u], _183), mix(gWaves._m0[(_187 + _169) * 2u], gWaves._m0[(_187 + _178) * 2u], _183), float4(_165.y)).xyz + mix(mix(gWaves._m0[(_221 + _217) * 2u], gWaves._m0[(_221 + _227) * 2u], _232), mix(gWaves._m0[(_237 + _217) * 2u], gWaves._m0[(_237 + _227) * 2u], _232), float4(_213.y)).xyz) + mix(mix(gWaves._m0[(_272 + _268) * 2u], gWaves._m0[(_272 + _278) * 2u], _283), mix(gWaves._m0[(_288 + _268) * 2u], gWaves._m0[(_288 + _278) * 2u], _283), float4(_264.y)).xyz) * ((wc.wind.z * _143) * fast::clamp(fast::clamp(1.0 - (length(in.in_var_POSITION - PostParams.eye.xyz) * 0.0062500000931322574615478515625), 0.0, 1.0) * 2.5, 0.0, 1.0));
-        float2 _314 = _308.xz * (1.0 - fast::clamp(length(in.in_var_TEXCOORD1) * 2.0, 0.0, 1.0));
-        float3 _316 = in.in_var_POSITION + float3(_314.x, _308.y, _314.y);
-        float _391;
+        float2 _152 = abs(in.in_var_POSITION.xz - wc.near.xy);
+        float _160 = fast::clamp((wc.near.z - precise::max(_152.x, _152.y)) * 0.03125, 0.0, 1.0);
+        float2 _174 = ((in.in_var_POSITION.xz / float2(wc.tiles.x)) * 128.0) - float2(0.5);
+        float2 _175 = floor(_174);
+        int2 _176 = int2(_175);
+        int2 _177 = _176 + int2(1);
+        float2 _182 = _174 - _175;
+        uint _186 = uint(_176.x & 127);
+        uint _189 = uint(_176.y & 127) * 128u;
+        uint _195 = uint(_177.x & 127);
+        float4 _200 = float4(_182.x);
+        uint _204 = uint(_177.y & 127) * 128u;
+        float2 _222 = ((in.in_var_POSITION.xz / float2(wc.tiles.y)) * 128.0) - float2(0.5);
+        float2 _223 = floor(_222);
+        int2 _224 = int2(_223);
+        int2 _225 = _224 + int2(1);
+        float2 _230 = _222 - _223;
+        uint _234 = uint(_224.x & 127);
+        uint _238 = 16384u + (uint(_224.y & 127) * 128u);
+        uint _244 = uint(_225.x & 127);
+        float4 _249 = float4(_230.x);
+        uint _254 = 16384u + (uint(_225.y & 127) * 128u);
+        float2 _273 = ((in.in_var_POSITION.xz / float2(wc.tiles.z)) * 128.0) - float2(0.5);
+        float2 _274 = floor(_273);
+        int2 _275 = int2(_274);
+        int2 _276 = _275 + int2(1);
+        float2 _281 = _273 - _274;
+        uint _285 = uint(_275.x & 127);
+        uint _289 = 32768u + (uint(_275.y & 127) * 128u);
+        uint _295 = uint(_276.x & 127);
+        float4 _300 = float4(_281.x);
+        uint _305 = 32768u + (uint(_276.y & 127) * 128u);
+        float3 _325 = ((mix(mix(gWaves._m0[(_189 + _186) * 2u], gWaves._m0[(_189 + _195) * 2u], _200), mix(gWaves._m0[(_204 + _186) * 2u], gWaves._m0[(_204 + _195) * 2u], _200), float4(_182.y)).xyz + mix(mix(gWaves._m0[(_238 + _234) * 2u], gWaves._m0[(_238 + _244) * 2u], _249), mix(gWaves._m0[(_254 + _234) * 2u], gWaves._m0[(_254 + _244) * 2u], _249), float4(_230.y)).xyz) + mix(mix(gWaves._m0[(_289 + _285) * 2u], gWaves._m0[(_289 + _295) * 2u], _300), mix(gWaves._m0[(_305 + _285) * 2u], gWaves._m0[(_305 + _295) * 2u], _300), float4(_281.y)).xyz) * ((wc.wind.z * _160) * fast::clamp(fast::clamp(1.0 - (length(in.in_var_POSITION - PostParams.eye.xyz) * 0.0062500000931322574615478515625), 0.0, 1.0) * 2.5, 0.0, 1.0));
+        float2 _331 = _325.xz * (1.0 - fast::clamp(length(in.in_var_TEXCOORD1) * 2.0, 0.0, 1.0));
+        float3 _333 = in.in_var_POSITION + float3(_331.x, _325.y, _331.y);
+        float _408;
         do
         {
             if (wc.ripple.w < 0.5)
             {
-                _391 = 0.0;
+                _408 = 0.0;
                 break;
             }
-            float2 _332 = ((in.in_var_POSITION.xz - wc.ripple.xy) / float2(wc.ripple.z)) - float2(0.5);
-            float2 _333 = floor(_332);
-            int2 _334 = int2(_333);
-            int2 _335 = _334 + int2(1);
-            int _336 = _334.x;
-            int _337 = _334.y;
-            int _338 = _335.x;
-            int _339 = _335.y;
-            float2 _340 = _332 - _333;
-            float _341 = _340.x;
-            float _342 = _340.y;
-            bool _347;
-            if (_336 >= 0)
+            float2 _349 = ((in.in_var_POSITION.xz - wc.ripple.xy) / float2(wc.ripple.z)) - float2(0.5);
+            float2 _350 = floor(_349);
+            int2 _351 = int2(_350);
+            int2 _352 = _351 + int2(1);
+            int _353 = _351.x;
+            int _354 = _351.y;
+            int _355 = _352.x;
+            int _356 = _352.y;
+            float2 _357 = _349 - _350;
+            float _358 = _357.x;
+            float _359 = _357.y;
+            bool _364;
+            if (_353 >= 0)
             {
-                _347 = _337 < 0;
+                _364 = _354 < 0;
             }
             else
             {
-                _347 = true;
+                _364 = true;
             }
-            bool _352;
-            if (!_347)
+            bool _369;
+            if (!_364)
             {
-                _352 = _338 >= 512;
-            }
-            else
-            {
-                _352 = true;
-            }
-            bool _357;
-            if (!_352)
-            {
-                _357 = _339 >= 512;
+                _369 = _355 >= 512;
             }
             else
             {
-                _357 = true;
+                _369 = true;
             }
-            if (_357)
+            bool _374;
+            if (!_369)
             {
-                _391 = 0.0;
+                _374 = _356 >= 512;
+            }
+            else
+            {
+                _374 = true;
+            }
+            if (_374)
+            {
+                _408 = 0.0;
                 break;
             }
-            uint _361 = uint(_337) * 512u;
-            uint _362 = uint(_336);
-            uint _366 = uint(_338);
-            uint _371 = uint(_339) * 512u;
-            float _378 = 1.0 - _341;
-            float _379 = 1.0 - _342;
-            _391 = (((gRipple._m0[_361 + _362].h * (_378 * _379)) + (gRipple._m0[_361 + _366].h * (_341 * _379))) + (gRipple._m0[_371 + _362].h * (_378 * _342))) + (gRipple._m0[_371 + _366].h * (_341 * _342));
+            uint _378 = uint(_354) * 512u;
+            uint _379 = uint(_353);
+            uint _383 = uint(_355);
+            uint _388 = uint(_356) * 512u;
+            float _395 = 1.0 - _358;
+            float _396 = 1.0 - _359;
+            _408 = (((gRipple._m0[_378 + _379].h * (_395 * _396)) + (gRipple._m0[_378 + _383].h * (_358 * _396))) + (gRipple._m0[_388 + _379].h * (_395 * _359))) + (gRipple._m0[_388 + _383].h * (_358 * _359));
             break;
         } while(false);
-        _316.y = _316.y + (_391 * _143);
-        _396 = _316;
+        _333.y = _333.y + (_408 * _160);
+        _413 = _333;
     }
     else
     {
-        _396 = in.in_var_POSITION;
+        _413 = in.in_var_POSITION;
     }
-    float3 _591;
-    float3 _592;
+    float3 _676;
+    float3 _677;
     do
     {
-        if (PostParams.misc.z < 0.5)
+        bool _430;
+        if (PostParams.misc.z > 0.25)
         {
-            _591 = float3(0.0);
-            _592 = float3(1.0);
-            break;
-        }
-        float3 _415 = _396 - PostParams.eye.xyz;
-        float _416 = length(_415);
-        float3 _419 = _415 / float3(precise::max(_416, 0.001000000047497451305389404296875));
-        float3 _428 = float3(PostParams.eye.x, precise::max(PostParams.eye.y, 1.0) + 6360000.0, PostParams.eye.z);
-        float _432 = dot(_419, PostParams.sunDir.xyz);
-        float _434 = 1.0 + (_432 * _432);
-        float _443 = precise::min(_416 * 2.5, 150000.0) * 0.25;
-        float3 _445;
-        float3 _448;
-        float2 _450;
-        _445 = float3(0.0);
-        _448 = float3(0.0);
-        _450 = float2(0.0);
-        float3 _446;
-        float3 _449;
-        float2 _451;
-        for (int _452 = 0; _452 < 4; _445 = _446, _448 = _449, _450 = _451, _452++)
-        {
-            float3 _461 = _428 + ((_419 * (float(_452) + 0.5)) * _443);
-            float2 _469 = exp(float2(-precise::max(length(_461) - 6360000.0, 0.0)) * float2(0.00012500000593718141317367553710938, 0.000833333353511989116668701171875)) * _443;
-            _451 = _450 + _469;
-            float2 _516;
-            do
-            {
-                float _472 = dot(_461, PostParams.sunDir.xyz);
-                bool _480;
-                if (_472 < 0.0)
-                {
-                    _480 = (dot(_461, _461) - (_472 * _472)) < 40449599340544.0;
-                }
-                else
-                {
-                    _480 = false;
-                }
-                if (_480)
-                {
-                    _516 = float2(1000000000.0);
-                    break;
-                }
-                float _486 = (_472 * _472) - (dot(_461, _461) - 41216401997824.0);
-                float _493;
-                if (_486 < 0.0)
-                {
-                    _493 = -1.0;
-                }
-                else
-                {
-                    _493 = sqrt(_486) - _472;
-                }
-                float _494 = _493 * 0.25;
-                float2 _496;
-                _496 = float2(0.0);
-                for (int _499 = 0; _499 < 4; )
-                {
-                    _496 += (exp(float2(-precise::max(length(_461 + ((PostParams.sunDir.xyz * (float(_499) + 0.5)) * _494)) - 6360000.0, 0.0)) * float2(0.00012500000593718141317367553710938, 0.000833333353511989116668701171875)) * _494);
-                    _499++;
-                    continue;
-                }
-                _516 = _496;
-                break;
-            } while(false);
-            float2 _517 = _451 + _516;
-            float3 _525 = exp(-((float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05) * _517.x) + float3(2.3099999452824704349040985107422e-05 * _517.y)));
-            _449 = _448 + (_525 * _469.x);
-            _446 = _445 + (_525 * _469.y);
-        }
-        float _555 = (_419.y * 0.02222222276031970977783203125) * _416;
-        float _569;
-        if (abs(_555) > 0.001000000047497451305389404296875)
-        {
-            _569 = (1.0 - exp(-_555)) / _555;
+            _430 = PostParams.misc.z < 0.75;
         }
         else
         {
-            _569 = 1.0;
+            _430 = false;
         }
-        float _571 = exp((((-0.0005000000237487256526947021484375) * exp(precise::max(PostParams.eye.y - ((gLight.probeGrid.w * (gLight.probeOrigin.y + 3.0)) - 3.0), 0.0) * (-0.02222222276031970977783203125))) * _416) * _569);
-        _591 = (((((_448 * float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05)) * (0.0596831031143665313720703125 * _434)) + ((_445 * 2.0999999833293259143829345703125e-05) * (0.01956094242632389068603515625 * (_434 / powr(1.577600002288818359375 - (1.519999980926513671875 * _432), 1.5))))) * 12.0) * _571) + ((gLight.skySh[0].xyz + (((gLight.sunColor.xyz * 3.2000000476837158203125) * 3.1415927410125732421875) * (0.0509295798838138580322265625 / powr(1.36000001430511474609375 - (1.2000000476837158203125 * _432), 1.5)))) * (1.0 - _571));
-        _592 = exp(-((float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05) * _450.x) + float3(2.3099999452824704349040985107422e-05 * _450.y))) * _571;
+        if (_430)
+        {
+            float3 _436 = _413 - PostParams.eye.xyz;
+            float _439 = precise::max(PostParams.eye.y, 0.0);
+            float _440 = precise::max(_413.y, 0.0);
+            float _441 = _440 - _439;
+            float _443 = exp(_439 * (-0.0040000001899898052215576171875));
+            float _457;
+            if (abs(_441) > 1.0)
+            {
+                _457 = (_443 - exp(_440 * (-0.0040000001899898052215576171875))) / (_441 * 0.0040000001899898052215576171875);
+            }
+            else
+            {
+                _457 = _443;
+            }
+            float _460 = exp(-((0.0004799999878741800785064697265625 * precise::max(length(_436) - 250.0, 0.0)) * _457));
+            float _474 = fast::clamp(PostParams.sunDir.y * 4.0, 0.0, 1.0);
+            float _482 = fast::clamp(dot(fast::normalize(_436), PostParams.sunDir.xyz), 0.0, 1.0);
+            _676 = ((mix(float3(dot(gLight.skyGrad[1].xyz, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875))), gLight.skyGrad[1].xyz, float3(mix(0.85000002384185791015625, 0.5, _474))) * mix(0.89999997615814208984375, 1.9500000476837158203125, _474)) + (gLight.sunColor.xyz * ((((0.0500000007450580596923828125 * _482) * _482) * _482) + (0.3499999940395355224609375 * powr(_482, 24.0))))) * (1.0 - _460);
+            _677 = float3(_460);
+            break;
+        }
+        if (PostParams.misc.z < 0.5)
+        {
+            _676 = float3(0.0);
+            _677 = float3(1.0);
+            break;
+        }
+        float3 _500 = _413 - PostParams.eye.xyz;
+        float _501 = length(_500);
+        float3 _504 = _500 / float3(precise::max(_501, 0.001000000047497451305389404296875));
+        float3 _513 = float3(PostParams.eye.x, precise::max(PostParams.eye.y, 1.0) + 6360000.0, PostParams.eye.z);
+        float _517 = dot(_504, PostParams.sunDir.xyz);
+        float _519 = 1.0 + (_517 * _517);
+        float _528 = precise::min(_501 * 2.5, 150000.0) * 0.25;
+        float3 _530;
+        float3 _533;
+        float2 _535;
+        _530 = float3(0.0);
+        _533 = float3(0.0);
+        _535 = float2(0.0);
+        float3 _531;
+        float3 _534;
+        float2 _536;
+        for (int _537 = 0; _537 < 4; _530 = _531, _533 = _534, _535 = _536, _537++)
+        {
+            float3 _546 = _513 + ((_504 * (float(_537) + 0.5)) * _528);
+            float2 _554 = exp(float2(-precise::max(length(_546) - 6360000.0, 0.0)) * float2(0.00012500000593718141317367553710938, 0.000833333353511989116668701171875)) * _528;
+            _536 = _535 + _554;
+            float2 _601;
+            do
+            {
+                float _557 = dot(_546, PostParams.sunDir.xyz);
+                bool _565;
+                if (_557 < 0.0)
+                {
+                    _565 = (dot(_546, _546) - (_557 * _557)) < 40449599340544.0;
+                }
+                else
+                {
+                    _565 = false;
+                }
+                if (_565)
+                {
+                    _601 = float2(1000000000.0);
+                    break;
+                }
+                float _571 = (_557 * _557) - (dot(_546, _546) - 41216401997824.0);
+                float _578;
+                if (_571 < 0.0)
+                {
+                    _578 = -1.0;
+                }
+                else
+                {
+                    _578 = sqrt(_571) - _557;
+                }
+                float _579 = _578 * 0.25;
+                float2 _581;
+                _581 = float2(0.0);
+                for (int _584 = 0; _584 < 4; )
+                {
+                    _581 += (exp(float2(-precise::max(length(_546 + ((PostParams.sunDir.xyz * (float(_584) + 0.5)) * _579)) - 6360000.0, 0.0)) * float2(0.00012500000593718141317367553710938, 0.000833333353511989116668701171875)) * _579);
+                    _584++;
+                    continue;
+                }
+                _601 = _581;
+                break;
+            } while(false);
+            float2 _602 = _536 + _601;
+            float3 _610 = exp(-((float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05) * _602.x) + float3(2.3099999452824704349040985107422e-05 * _602.y)));
+            _534 = _533 + (_610 * _554.x);
+            _531 = _530 + (_610 * _554.y);
+        }
+        float _640 = (_504.y * 0.02222222276031970977783203125) * _501;
+        float _654;
+        if (abs(_640) > 0.001000000047497451305389404296875)
+        {
+            _654 = (1.0 - exp(-_640)) / _640;
+        }
+        else
+        {
+            _654 = 1.0;
+        }
+        float _656 = exp((((-0.0005000000237487256526947021484375) * exp(precise::max(PostParams.eye.y - ((gLight.probeGrid.w * (gLight.probeOrigin.y + 3.0)) - 3.0), 0.0) * (-0.02222222276031970977783203125))) * _501) * _654);
+        _676 = (((((_533 * float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05)) * (0.0596831031143665313720703125 * _519)) + ((_530 * 2.0999999833293259143829345703125e-05) * (0.01956094242632389068603515625 * (_519 / powr(1.577600002288818359375 - (1.519999980926513671875 * _517), 1.5))))) * 12.0) * _656) + ((gLight.skySh[0].xyz + (((gLight.sunColor.xyz * 3.2000000476837158203125) * 3.1415927410125732421875) * (0.0509295798838138580322265625 / powr(1.36000001430511474609375 - (1.2000000476837158203125 * _517), 1.5)))) * (1.0 - _656));
+        _677 = exp(-((float3(5.8000000535685103386640548706055e-06, 1.3500000022759195417165756225586e-05, 3.3100001019192859530448913574219e-05) * _535.x) + float3(2.3099999452824704349040985107422e-05 * _535.y))) * _656;
         break;
     } while(false);
-    out.gl_Position = wc.viewProj * float4(_396, 1.0);
-    out.out_var_TEXCOORD0 = _396;
+    out.gl_Position = wc.viewProj * float4(_413, 1.0);
+    out.out_var_TEXCOORD0 = _413;
     out.out_var_TEXCOORD1 = in.in_var_POSITION.xz;
     out.out_var_TEXCOORD2 = in.in_var_TEXCOORD1;
-    out.out_var_TEXCOORD3 = _591;
-    out.out_var_TEXCOORD4 = _592;
+    out.out_var_TEXCOORD3 = _676;
+    out.out_var_TEXCOORD4 = _677;
     return out;
 }
 

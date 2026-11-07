@@ -212,6 +212,7 @@ GX(11) Texture2D<float4> gCloudShadow : register(t4);
 #define PROBE_ORIGIN gLight.probeOrigin
 #define PROBE_GRID gLight.probeGrid
 #include "probe.hlsli"
+#include "city_air.hlsli"
 
 // Bilinear reads of the tiles and of the ripples: these are buffers, not textures.
 float3 Bilinear(float2 p, uint size, out int4 cells) {
@@ -268,6 +269,12 @@ struct VsOut {
 void AirTo(float3 world, out float3 light, out float3 keep) {
     light = 0;
     keep = 1;
+    if (CityAirOn(misc.z)) { // the city map: the land's own closed-form haze (city_air.hlsli), not the marched air below
+        const float k = CityAirKeep(eye.xyz, world);
+        light = CityHazeOf(normalize(world - eye.xyz), gLight.skyGrad[1].rgb, gLight.sunColor.rgb, sunDir.xyz) * (1.0 - k);
+        keep = k;
+        return;
+    }
     if (misc.z < 0.5) return;
     const float3 away = world - eye.xyz;
     const float dist = length(away);
@@ -441,8 +448,11 @@ float4 WaterColor(VsOut i) {
     const float path = min(length(refractPos - i.world), 80.0);
 
     // ---- river water: suspended silt, red gone first, then green; the silt scatters what light reaches it
-    static const float3 kAbsorb = float3(0.55, 0.22, 0.14);
-    static const float3 kSilt = float3(0.055, 0.075, 0.045);
+    // The city map's sea is clear and deep (CS2: deep blue-teal, 15 54 69 to 43 76 110 of 255): red goes fast, blue slowest,
+    // and what it scatters back is blue-green. The river keeps its silt.
+    const bool sea = CityAirOn(misc.z);
+    const float3 kAbsorb = sea ? float3(0.45, 0.075, 0.045) : float3(0.55, 0.22, 0.14);
+    const float3 kSilt = sea ? float3(0.006, 0.030, 0.042) : float3(0.055, 0.075, 0.045);
     const float3 sunRgb = gLight.sunColor.rgb * 3.2;
     const float shadow = SunShadow(i.world);
     const float cloudSun = CloudSun(i.world);

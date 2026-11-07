@@ -232,7 +232,7 @@ private:
 inline std::wstring Utf8ToWide(const std::string& s) { return platform::Utf8ToWide(s); }
 
 inline bool ReadFile(const std::string& path, std::vector<uint8_t>& out) {
-    std::ifstream f(std::filesystem::path(Utf8ToWide(path)), std::ios::binary);
+    std::ifstream f(tbd::platform::FsPath(Utf8ToWide(path)), std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
@@ -281,7 +281,7 @@ inline void NormalizeToUnitBox(std::vector<Vertex>& v) {
 
 // ---------------------------------------------------------------- OBJ
 inline bool LoadObj(const std::string& path, std::vector<Vertex>& out, bool genNormals, std::string& error) {
-    std::ifstream f(std::filesystem::path(Utf8ToWide(path)));
+    std::ifstream f(tbd::platform::FsPath(Utf8ToWide(path)));
     if (!f) { error = "cannot open " + path; return false; }
 
     struct V3 { float x, y, z; };
@@ -1675,6 +1675,7 @@ private:
             bool glass = false;
             bool interior = false; // vehicle window with a ray-cast saloon behind it: material name contains "interior"; alpha 0.70, see InteriorPS in mesh.hlsl
             bool roomglass = false; // a building window: a room behind scratched glass; material name contains "roomglass"; alpha 0.665, see RoomGlassPS
+            bool atlas = false; // a building on the shared building atlas: material name contains "atlas"; COLOR_0 alpha = (cell + 0.5) / 64, moved to 3 + that (mesh.hlsl AtlasBuildingPS, docs/building_atlas.md)
             bool spom = false; // a silhouette-POM volume (balcony, canopy): material name contains "spom"; alpha 0.8, see SpomPS in mesh.hlsl
             float roughness = 0.72f, metallic = 0.0f; // glTF's defaults are 1 and 1; a file without factors keeps the engine's older look
             ImportedPart part;
@@ -1712,6 +1713,7 @@ private:
                     for (char& ch : low) ch = (char)std::tolower((unsigned char)ch);
                     const auto has = [&](const char* w) { return low.find(w) != std::string::npos; };
                     spom = has("spom");
+                    atlas = has("atlas");
                     roomglass = has("roomglass");
                     interior = has("interior");
                     if (spom) fabricKind = 0;
@@ -1782,7 +1784,9 @@ private:
             if (part.unnamed && hasCol && path_.find("Terrain") != std::string::npos) part.groundSplat = true; // the export's unnamed terrain pieces, such as the plaza
             if (part.groundSplat) // sentinel alpha identifies this textured splat path in the shared shader
                 for (size_t k = part.first; k < out_.size(); ++k) out_[k].a = 0.2f;
-            if (interior && !part.skin && !part.eye && !part.ground && !part.groundSplat) {
+            if (atlas && !part.skin && !part.eye && !part.ground && !part.groundSplat) {
+                for (size_t k = part.first; k < out_.size(); ++k) out_[k].a = 3.0f + std::clamp(out_[k].a, 0.0f, 0.999f); // the cell rides in the band [3, 4)
+            } else if (interior && !part.skin && !part.eye && !part.ground && !part.groundSplat) {
                 for (size_t k = part.first; k < out_.size(); ++k) out_[k].a = 0.70f; // rgb = seat fabric, uv = style/pane/variant
             } else if (roomglass && !part.skin && !part.eye && !part.ground && !part.groundSplat) {
                 for (size_t k = part.first; k < out_.size(); ++k) out_[k].a = 0.665f; // rgb = room width, height, seed; uv = metres on the plane

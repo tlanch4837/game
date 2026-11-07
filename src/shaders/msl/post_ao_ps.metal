@@ -37,160 +37,169 @@ struct post_ao_ps_out
 fragment post_ao_ps_out post_ao_ps(constant type_PostParams& PostParams [[buffer(0)]], texture2d<float> gDepth [[texture(2)]], sampler gClamp [[sampler(9)]], float4 gl_FragCoord [[position]])
 {
     post_ao_ps_out out = {};
-    float _452;
+    float _463;
     do
     {
-        int2 _88 = int2(gl_FragCoord.xy) * int2(2);
-        int2 _93 = int2(PostParams.res.xy) - int2(1);
-        float4 _99 = gDepth.read(uint2(int3(_88, 0).xy), 0);
-        float _100 = _99.x;
-        if (_100 <= 0.0)
+        int2 _91 = int2(gl_FragCoord.xy) * int2(2);
+        int2 _96 = int2(PostParams.res.xy) - int2(1);
+        float4 _102 = gDepth.read(uint2(int3(_91, 0).xy), 0);
+        float _103 = _102.x;
+        if (_103 <= 0.0)
         {
-            _452 = 1.0;
+            _463 = 1.0;
             break;
         }
-        float2 _107 = (float2(_88) + float2(0.5)) * PostParams.res.zw;
-        float4 _117 = PostParams.invViewProj * float4((_107.x * 2.0) - 1.0, 1.0 - (_107.y * 2.0), _100, 1.0);
-        float3 _121 = _117.xyz / float3(_117.w);
-        int2 _123 = clamp(_88 - int2(2, 0), int2(0), _93);
-        float4 _129 = gDepth.read(uint2(int3(_123, 0).xy), 0);
-        float _130 = _129.x;
-        float2 _133 = (float2(_123) + float2(0.5)) * PostParams.res.zw;
-        float4 _142 = PostParams.invViewProj * float4((_133.x * 2.0) - 1.0, 1.0 - (_133.y * 2.0), precise::max(_130, 9.9999999747524270787835121154785e-07), 1.0);
-        int2 _148 = clamp(_88 + int2(2, 0), int2(0), _93);
-        float4 _154 = gDepth.read(uint2(int3(_148, 0).xy), 0);
-        float _155 = _154.x;
-        float2 _158 = (float2(_148) + float2(0.5)) * PostParams.res.zw;
-        float4 _167 = PostParams.invViewProj * float4((_158.x * 2.0) - 1.0, 1.0 - (_158.y * 2.0), precise::max(_155, 9.9999999747524270787835121154785e-07), 1.0);
-        int2 _173 = clamp(_88 - int2(0, 2), int2(0), _93);
-        float4 _179 = gDepth.read(uint2(int3(_173, 0).xy), 0);
-        float _180 = _179.x;
-        float2 _183 = (float2(_173) + float2(0.5)) * PostParams.res.zw;
-        float4 _192 = PostParams.invViewProj * float4((_183.x * 2.0) - 1.0, 1.0 - (_183.y * 2.0), precise::max(_180, 9.9999999747524270787835121154785e-07), 1.0);
-        int2 _198 = clamp(_88 + int2(0, 2), int2(0), _93);
-        float4 _204 = gDepth.read(uint2(int3(_198, 0).xy), 0);
-        float _205 = _204.x;
-        float2 _208 = (float2(_198) + float2(0.5)) * PostParams.res.zw;
-        float4 _217 = PostParams.invViewProj * float4((_208.x * 2.0) - 1.0, 1.0 - (_208.y * 2.0), precise::max(_205, 9.9999999747524270787835121154785e-07), 1.0);
-        float3 _232;
-        if (abs(_130 - _100) < abs(_155 - _100))
+        float2 _110 = (float2(_91) + float2(0.5)) * PostParams.res.zw;
+        float4 _120 = PostParams.invViewProj * float4((_110.x * 2.0) - 1.0, 1.0 - (_110.y * 2.0), _103, 1.0);
+        float3 _124 = _120.xyz / float3(_120.w);
+        int2 _126 = clamp(_91 - int2(2, 0), int2(0), _96);
+        float4 _132 = gDepth.read(uint2(int3(_126, 0).xy), 0);
+        float _133 = _132.x;
+        float2 _136 = (float2(_126) + float2(0.5)) * PostParams.res.zw;
+        float4 _145 = PostParams.invViewProj * float4((_136.x * 2.0) - 1.0, 1.0 - (_136.y * 2.0), precise::max(_133, 9.9999999747524270787835121154785e-07), 1.0);
+        int2 _151 = clamp(_91 + int2(2, 0), int2(0), _96);
+        float4 _157 = gDepth.read(uint2(int3(_151, 0).xy), 0);
+        float _158 = _157.x;
+        float2 _161 = (float2(_151) + float2(0.5)) * PostParams.res.zw;
+        float4 _170 = PostParams.invViewProj * float4((_161.x * 2.0) - 1.0, 1.0 - (_161.y * 2.0), precise::max(_158, 9.9999999747524270787835121154785e-07), 1.0);
+        int2 _176 = clamp(_91 - int2(0, 2), int2(0), _96);
+        float4 _182 = gDepth.read(uint2(int3(_176, 0).xy), 0);
+        float _183 = _182.x;
+        float2 _186 = (float2(_176) + float2(0.5)) * PostParams.res.zw;
+        float4 _195 = PostParams.invViewProj * float4((_186.x * 2.0) - 1.0, 1.0 - (_186.y * 2.0), precise::max(_183, 9.9999999747524270787835121154785e-07), 1.0);
+        int2 _201 = clamp(_91 + int2(0, 2), int2(0), _96);
+        float4 _207 = gDepth.read(uint2(int3(_201, 0).xy), 0);
+        float _208 = _207.x;
+        float2 _211 = (float2(_201) + float2(0.5)) * PostParams.res.zw;
+        float4 _220 = PostParams.invViewProj * float4((_211.x * 2.0) - 1.0, 1.0 - (_211.y * 2.0), precise::max(_208, 9.9999999747524270787835121154785e-07), 1.0);
+        float3 _235;
+        if (abs(_133 - _103) < abs(_158 - _103))
         {
-            _232 = _121 - (_142.xyz / float3(_142.w));
+            _235 = _124 - (_145.xyz / float3(_145.w));
         }
         else
         {
-            _232 = (_167.xyz / float3(_167.w)) - _121;
+            _235 = (_170.xyz / float3(_170.w)) - _124;
         }
-        float3 _243;
-        if (abs(_180 - _100) < abs(_205 - _100))
+        float3 _246;
+        if (abs(_183 - _103) < abs(_208 - _103))
         {
-            _243 = _121 - (_192.xyz / float3(_192.w));
-        }
-        else
-        {
-            _243 = (_217.xyz / float3(_217.w)) - _121;
-        }
-        float3 _245 = fast::normalize(cross(_243, _232));
-        float3 _249 = PostParams.eye.xyz - _121;
-        float _250 = length(_249);
-        float3 _252 = _249 / float3(_250);
-        float3 _258;
-        if (dot(_245, _252) < 0.0)
-        {
-            _258 = -_245;
+            _246 = _124 - (_195.xyz / float3(_195.w));
         }
         else
         {
-            _258 = _245;
+            _246 = (_220.xyz / float3(_220.w)) - _124;
         }
-        float _260 = fast::clamp(_250 * 0.0500000007450580596923828125, 0.25, 5.0);
-        float _263 = (_260 / precise::max(_250, 0.100000001490116119384765625)) * 0.800000011920928955078125;
-        float _273 = fract(52.98291778564453125 * fract(dot(gl_FragCoord.xy + float2(fmod(PostParams.misc.y, 64.0) * 5.588237762451171875), float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
-        float _276 = fract((_273 * 7.0) + 0.37000000476837158203125);
-        float _278;
-        float _281;
-        _278 = 0.0;
-        _281 = 0.0;
-        float _279;
-        float _282;
-        for (int _283 = 0; _283 < 2; _278 = _279, _281 = _282, _283++)
+        float3 _248 = fast::normalize(cross(_246, _235));
+        float3 _252 = PostParams.eye.xyz - _124;
+        float _253 = length(_252);
+        float3 _255 = _252 / float3(_253);
+        float3 _261;
+        if (dot(_248, _255) < 0.0)
         {
-            float _290 = (float(_283) + _273) * 1.57079637050628662109375;
-            float2 _299 = float2((cos(_290) * PostParams.res.y) * PostParams.res.z, sin(_290));
-            float2 _303 = _107 + (_299 * PostParams.res.w);
-            float4 _311 = PostParams.invViewProj * float4((_303.x * 2.0) - 1.0, 1.0 - (_303.y * 2.0), _100, 1.0);
-            float3 _318 = fast::normalize(cross((_311.xyz / float3(_311.w)) - _121, _252));
-            float3 _322 = _258 - (_318 * dot(_258, _318));
-            float _323 = length(_322);
-            if (_323 < 0.001000000047497451305389404296875)
+            _261 = -_248;
+        }
+        else
+        {
+            _261 = _248;
+        }
+        bool _269;
+        if (PostParams.misc.z > 0.25)
+        {
+            _269 = PostParams.misc.z < 0.75;
+        }
+        else
+        {
+            _269 = false;
+        }
+        float _271 = fast::clamp(_253 * 0.0500000007450580596923828125, 0.25, _269 ? 14.0 : 5.0);
+        float _274 = (_271 / precise::max(_253, 0.100000001490116119384765625)) * 0.800000011920928955078125;
+        float _284 = fract(52.98291778564453125 * fract(dot(gl_FragCoord.xy + float2(fmod(PostParams.misc.y, 64.0) * 5.588237762451171875), float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+        float _287 = fract((_284 * 7.0) + 0.37000000476837158203125);
+        float _289;
+        float _292;
+        _289 = 0.0;
+        _292 = 0.0;
+        float _290;
+        float _293;
+        for (int _294 = 0; _294 < 2; _289 = _290, _292 = _293, _294++)
+        {
+            float _301 = (float(_294) + _284) * 1.57079637050628662109375;
+            float2 _310 = float2((cos(_301) * PostParams.res.y) * PostParams.res.z, sin(_301));
+            float2 _314 = _110 + (_310 * PostParams.res.w);
+            float4 _322 = PostParams.invViewProj * float4((_314.x * 2.0) - 1.0, 1.0 - (_314.y * 2.0), _103, 1.0);
+            float3 _329 = fast::normalize(cross((_322.xyz / float3(_322.w)) - _124, _255));
+            float3 _333 = _261 - (_329 * dot(_261, _329));
+            float _334 = length(_333);
+            if (_334 < 0.001000000047497451305389404296875)
             {
-                _279 = _278;
-                _282 = _281;
+                _290 = _289;
+                _293 = _292;
                 continue;
             }
-            float _330 = fast::clamp(dot(_322 / float3(_323), _252), 0.0, 1.0);
-            float _334 = abs(_330);
-            float _345 = ((dot(_322, cross(_252, _318)) >= 0.0) ? 1.0 : (-1.0)) * (sqrt(precise::max(1.0 - _334, 0.0)) * (1.5707962512969970703125 + (_334 * ((-0.212114393711090087890625) + (_334 * (0.074261002242565155029296875 - (_334 * 0.0187292993068695068359375)))))));
-            float _347;
-            _347 = 0.0;
-            float _348;
-            for (int _350 = 0; _350 < 2; _347 = _348, _350++)
+            float _341 = fast::clamp(dot(_333 / float3(_334), _255), 0.0, 1.0);
+            float _345 = abs(_341);
+            float _356 = ((dot(_333, cross(_255, _329)) >= 0.0) ? 1.0 : (-1.0)) * (sqrt(precise::max(1.0 - _345, 0.0)) * (1.5707962512969970703125 + (_345 * ((-0.212114393711090087890625) + (_345 * (0.074261002242565155029296875 - (_345 * 0.0187292993068695068359375)))))));
+            float _358;
+            _358 = 0.0;
+            float _359;
+            for (int _361 = 0; _361 < 2; _358 = _359, _361++)
             {
-                bool _355 = _350 == 0;
-                float _356 = _355 ? 1.0 : (-1.0);
-                float _357 = 1.5707962512969970703125;
-                float _358 = -1.5707962512969970703125;
-                float _361 = cos(_345 + (_355 ? 1.5707962512969970703125 : (-1.5707962512969970703125)));
-                float _363;
-                _363 = _361;
-                float _364;
-                for (int _366 = 0; _366 < 3; _363 = _364, _366++)
+                bool _366 = _361 == 0;
+                float _367 = _366 ? 1.0 : (-1.0);
+                float _368 = 1.5707962512969970703125;
+                float _369 = -1.5707962512969970703125;
+                float _372 = cos(_356 + (_366 ? 1.5707962512969970703125 : (-1.5707962512969970703125)));
+                float _374;
+                _374 = _372;
+                float _375;
+                for (int _377 = 0; _377 < 3; _374 = _375, _377++)
                 {
-                    float _373 = (float(_366) + _276) * 0.3333333432674407958984375;
-                    float2 _378 = _107 + ((((_299 * _356) * _373) * _373) * _263);
-                    float4 _382 = gDepth.sample(gClamp, _378, level(0.0));
-                    float _383 = _382.x;
-                    if (_383 <= 0.0)
+                    float _384 = (float(_377) + _287) * 0.3333333432674407958984375;
+                    float2 _389 = _110 + ((((_310 * _367) * _384) * _384) * _274);
+                    float4 _393 = gDepth.sample(gClamp, _389, level(0.0));
+                    float _394 = _393.x;
+                    if (_394 <= 0.0)
                     {
-                        _364 = _363;
+                        _375 = _374;
                         continue;
                     }
-                    float4 _394 = PostParams.invViewProj * float4((_378.x * 2.0) - 1.0, 1.0 - (_378.y * 2.0), _383, 1.0);
-                    float3 _399 = (_394.xyz / float3(_394.w)) - _121;
-                    float _400 = dot(_399, _399);
-                    float _409 = fast::clamp(1.0 - (_400 / ((_260 * _260) * 2.0)), 0.0, 1.0);
-                    _364 = precise::max(_363, mix(_361, dot(_399, _252) / sqrt(_400 + 9.9999997473787516355514526367188e-06), _409 * _409));
+                    float4 _405 = PostParams.invViewProj * float4((_389.x * 2.0) - 1.0, 1.0 - (_389.y * 2.0), _394, 1.0);
+                    float3 _410 = (_405.xyz / float3(_405.w)) - _124;
+                    float _411 = dot(_410, _410);
+                    float _420 = fast::clamp(1.0 - (_411 / ((_271 * _271) * 2.0)), 0.0, 1.0);
+                    _375 = precise::max(_374, mix(_372, dot(_410, _255) / sqrt(_411 + 9.9999997473787516355514526367188e-06), _420 * _420));
                 }
-                float _413 = abs(_363);
-                float _423 = sqrt(precise::max(1.0 - _413, 0.0)) * (1.5707962512969970703125 + (_413 * ((-0.212114393711090087890625) + (_413 * (0.074261002242565155029296875 - (_413 * 0.0187292993068695068359375))))));
-                float _429;
-                if (_363 < 0.0)
+                float _424 = abs(_374);
+                float _434 = sqrt(precise::max(1.0 - _424, 0.0)) * (1.5707962512969970703125 + (_424 * ((-0.212114393711090087890625) + (_424 * (0.074261002242565155029296875 - (_424 * 0.0187292993068695068359375))))));
+                float _440;
+                if (_374 < 0.0)
                 {
-                    _429 = 3.1415927410125732421875 - _423;
+                    _440 = 3.1415927410125732421875 - _434;
                 }
                 else
                 {
-                    _429 = _423;
+                    _440 = _434;
                 }
-                float _434 = 2.0 * fast::clamp(_356 * _429, _345 - 1.5707962512969970703125, _345 + 1.5707962512969970703125);
-                _348 = _347 + (0.25 * ((_330 + (_434 * sin(_345))) - cos(_434 - _345)));
+                float _445 = 2.0 * fast::clamp(_367 * _440, _356 - 1.5707962512969970703125, _356 + 1.5707962512969970703125);
+                _359 = _358 + (0.25 * ((_341 + (_445 * sin(_356))) - cos(_445 - _356)));
             }
-            _279 = _278 + (_347 * _323);
-            _282 = _281 + _323;
+            _290 = _289 + (_358 * _334);
+            _293 = _292 + _334;
         }
-        float _451;
-        if (_281 > 0.0)
+        float _462;
+        if (_292 > 0.0)
         {
-            _451 = fast::clamp(_278 / _281, 0.0, 1.0);
+            _462 = fast::clamp(_289 / _292, 0.0, 1.0);
         }
         else
         {
-            _451 = 1.0;
+            _462 = 1.0;
         }
-        _452 = _451;
+        _463 = _462;
         break;
     } while(false);
-    out.out_var_SV_Target = _452;
+    out.out_var_SV_Target = _463;
     return out;
 }
 

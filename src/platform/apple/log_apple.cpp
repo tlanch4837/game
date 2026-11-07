@@ -23,9 +23,11 @@ FILE* LogFile() {
 }
 } // namespace
 
+// Documents/bin, so the game's ExeDirectory() + "\\..\\assets\\..." paths (Windows: bin\ next to assets\) reach Documents/assets,
+// the folder loaded onto the device (docs/ipad_loader.md). main_ios.mm creates it; ".." needs it to exist.
 std::wstring ExeDirectory() {
     const char* home = std::getenv("HOME");
-    const std::string s = home ? home : ".";
+    const std::string s = std::string(home ? home : ".") + "/Documents/bin";
     return std::wstring(s.begin(), s.end());
 }
 

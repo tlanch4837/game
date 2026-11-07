@@ -100,7 +100,7 @@ std::wstring Widen(const std::string& s) { return tbd::platform::Utf8ToWide(s); 
 
 bool FileExists(const std::wstring& path) { // a file, not a folder
     std::error_code ec;
-    return std::filesystem::is_regular_file(std::filesystem::path(path), ec);
+    return std::filesystem::is_regular_file(tbd::platform::FsPath(path), ec);
 }
 
 // ------------------------------------------------------------------------------------------------ audio thread
@@ -346,7 +346,7 @@ private:
     void LoadZones() {
         defaultSound_ = "ambience/wind";
         defaultVolume_ = 0.7f;
-        std::ifstream f(std::filesystem::path(root_ + L"\\zones.txt"), std::ios::binary);
+        std::ifstream f(tbd::platform::FsPath(root_ + L"\\zones.txt"), std::ios::binary);
         if (!f) return;
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         std::istringstream lines(text);
@@ -433,7 +433,7 @@ bool Start(const std::wstring& assetsRoot) {
         return false;
     const std::wstring root = assetsRoot + L"\\audio";
     std::error_code ec;
-    if (!std::filesystem::is_directory(std::filesystem::path(root), ec)) return false; // nothing to play: leave the device alone
+    if (!std::filesystem::is_directory(tbd::platform::FsPath(root), ec)) return false; // nothing to play: leave the device alone
     g_quit = false;
     g_failed = false;
     g_started = true;

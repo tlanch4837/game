@@ -42,98 +42,140 @@ struct post_tonemap_ps_in
 fragment post_tonemap_ps_out post_tonemap_ps(post_tonemap_ps_in in [[stage_in]], constant type_PostParams& PostParams [[buffer(0)]], texture2d<float> gResolved [[texture(8)]], texture2d<float> gExposure [[texture(14)]], texture2d<float> gBloom [[texture(15)]], sampler gClamp [[sampler(9)]])
 {
     post_tonemap_ps_out out = {};
-    float4 _391;
+    float4 _471;
     do
     {
-        float3 _232;
+        float3 _252;
         if (PostParams.eye.w > 0.5)
         {
-            float2 _134 = in.in_var_TEXCOORD0 * PostParams.res.xy;
-            float2 _136 = floor(_134 - float2(0.5));
-            float2 _137 = _136 + float2(0.5);
-            float2 _138 = _134 - _137;
-            float2 _139 = _138 * _138;
-            float2 _140 = _139 * _138;
-            float2 _143 = _138 * 0.5;
-            float2 _144 = ((_140 * (-0.5)) + _139) - _143;
-            float2 _152 = ((_140 * (-1.5)) + (_139 * 2.0)) + _143;
-            float2 _155 = (_140 * 0.5) - (_139 * 0.5);
-            float2 _156 = (((_140 * 1.5) - (_139 * 2.5)) + float2(1.0)) + _152;
-            float2 _159 = (_136 + float2(-0.5)) * PostParams.res.zw;
-            float2 _161 = (_136 + float2(2.5)) * PostParams.res.zw;
-            float2 _164 = (_137 + (_152 / _156)) * PostParams.res.zw;
-            float _167 = _164.x;
-            float _173 = _156.x;
-            float _175 = _173 * _144.y;
-            float _180 = _164.y;
-            float _186 = _156.y;
-            float _187 = _144.x * _186;
-            float _195 = _173 * _186;
-            float _206 = _155.x * _186;
-            float _217 = _173 * _155.y;
-            _232 = precise::max((((((gResolved.sample(gClamp, float2(_167, _159.y), level(0.0)).xyz * _175) + (gResolved.sample(gClamp, float2(_159.x, _180), level(0.0)).xyz * _187)) + (gResolved.sample(gClamp, _164, level(0.0)).xyz * _195)) + (gResolved.sample(gClamp, float2(_161.x, _180), level(0.0)).xyz * _206)) + (gResolved.sample(gClamp, float2(_167, _161.y), level(0.0)).xyz * _217)) / float3((((_175 + _187) + _195) + _206) + _217), float3(0.0));
+            float2 _154 = in.in_var_TEXCOORD0 * PostParams.res.xy;
+            float2 _156 = floor(_154 - float2(0.5));
+            float2 _157 = _156 + float2(0.5);
+            float2 _158 = _154 - _157;
+            float2 _159 = _158 * _158;
+            float2 _160 = _159 * _158;
+            float2 _163 = _158 * 0.5;
+            float2 _164 = ((_160 * (-0.5)) + _159) - _163;
+            float2 _172 = ((_160 * (-1.5)) + (_159 * 2.0)) + _163;
+            float2 _175 = (_160 * 0.5) - (_159 * 0.5);
+            float2 _176 = (((_160 * 1.5) - (_159 * 2.5)) + float2(1.0)) + _172;
+            float2 _179 = (_156 + float2(-0.5)) * PostParams.res.zw;
+            float2 _181 = (_156 + float2(2.5)) * PostParams.res.zw;
+            float2 _184 = (_157 + (_172 / _176)) * PostParams.res.zw;
+            float _187 = _184.x;
+            float _193 = _176.x;
+            float _195 = _193 * _164.y;
+            float _200 = _184.y;
+            float _206 = _176.y;
+            float _207 = _164.x * _206;
+            float _215 = _193 * _206;
+            float _226 = _175.x * _206;
+            float _237 = _193 * _175.y;
+            _252 = precise::max((((((gResolved.sample(gClamp, float2(_187, _179.y), level(0.0)).xyz * _195) + (gResolved.sample(gClamp, float2(_179.x, _200), level(0.0)).xyz * _207)) + (gResolved.sample(gClamp, _184, level(0.0)).xyz * _215)) + (gResolved.sample(gClamp, float2(_181.x, _200), level(0.0)).xyz * _226)) + (gResolved.sample(gClamp, float2(_187, _181.y), level(0.0)).xyz * _237)) / float3((((_195 + _207) + _215) + _226) + _237), float3(0.0));
         }
         else
         {
-            _232 = gResolved.sample(gClamp, in.in_var_TEXCOORD0, level(0.0)).xyz;
+            _252 = gResolved.sample(gClamp, in.in_var_TEXCOORD0, level(0.0)).xyz;
         }
-        float2 _237 = float2(PostParams.res.z, 0.0);
-        float2 _253 = float2(0.0, PostParams.res.w);
-        float3 _274 = precise::max(_232 + fast::clamp((_232 - ((((gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + _237), level(0.0)).xyz + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 - _237), level(0.0)).xyz) + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + _253), level(0.0)).xyz) + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 - _253), level(0.0)).xyz) * 0.25)) * 0.89999997615814208984375, (-_232) * 0.300000011920928955078125, _232 * 0.300000011920928955078125), float3(0.0));
+        float2 _257 = float2(PostParams.res.z, 0.0);
+        float2 _273 = float2(0.0, PostParams.res.w);
+        float3 _294 = precise::max(_252 + fast::clamp((_252 - ((((gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + _257), level(0.0)).xyz + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 - _257), level(0.0)).xyz) + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + _273), level(0.0)).xyz) + gResolved.sample(gClamp, (in.in_var_TEXCOORD0 - _273), level(0.0)).xyz) * 0.25)) * 0.89999997615814208984375, (-_252) * 0.300000011920928955078125, _252 * 0.300000011920928955078125), float3(0.0));
         if (PostParams.lightDebug.x > 0.5)
         {
-            float3 _280 = _274 * 0.5;
-            _391 = float4(powr(fast::clamp(_280 / (float3(1.0) + _280), float3(0.0), float3(1.0)), float3(0.4545454680919647216796875)), 1.0);
+            float3 _300 = _294 * 0.5;
+            _471 = float4(powr(fast::clamp(_300 / (float3(1.0) + _300), float3(0.0), float3(1.0)), float3(0.4545454680919647216796875)), 1.0);
             break;
         }
-        float _336;
+        float _356;
         do
         {
             if (PostParams.motion.z > 0.0)
             {
-                float _303;
+                float _323;
                 if (PostParams.motion.y > 0.0)
                 {
-                    _303 = PostParams.motion.y * PostParams.motion.y;
+                    _323 = PostParams.motion.y * PostParams.motion.y;
                 }
                 else
                 {
-                    _303 = 1.0;
+                    _323 = 1.0;
                 }
-                _336 = PostParams.motion.z * _303;
+                _356 = PostParams.motion.z * _323;
                 break;
             }
-            float4 _306 = gExposure.read(uint2(int2(0)), 0);
-            float _307 = _306.x;
-            float _316 = (log(1.10000002384185791015625 * precise::max(dot(PostParams.skySh[0].xyz, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)) - 0.6930999755859375) - _307;
-            float _323;
-            if (_316 > 0.0)
+            float4 _326 = gExposure.read(uint2(int2(0)), 0);
+            float _327 = _326.x;
+            float _336 = (log(1.10000002384185791015625 * precise::max(dot(PostParams.skySh[0].xyz, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)) - 0.6930999755859375) - _327;
+            float _343;
+            if (_336 > 0.0)
             {
-                _323 = _307 + (_316 * 0.39999997615814208984375);
+                _343 = _327 + (_336 * 0.39999997615814208984375);
             }
             else
             {
-                _323 = _307;
+                _343 = _327;
             }
-            float _334;
+            float _354;
             if (PostParams.motion.y > 0.0)
             {
-                _334 = PostParams.motion.y * PostParams.motion.y;
+                _354 = PostParams.motion.y * PostParams.motion.y;
             }
             else
             {
-                _334 = 1.0;
+                _354 = 1.0;
             }
-            _336 = fast::clamp(0.189999997615814208984375 / exp(_323), 0.300000011920928955078125, 6.0) * _334;
+            _356 = fast::clamp(0.189999997615814208984375 / exp(_343), 0.300000011920928955078125, 6.0) * _354;
             break;
         } while(false);
-        float2 _346 = in.in_var_TEXCOORD0 - float2(0.5);
-        float3 _351 = ((((_274 * _336) + (gBloom.sample(gClamp, in.in_var_TEXCOORD0, level(0.0)).xyz * 0.0599999986588954925537109375)) * float3(1.0, 1.0, 1.019999980926513671875)) * (1.0 - (0.3499999940395355224609375 * dot(_346, _346)))) * float3x3(float3(0.59719002246856689453125, 0.354579985141754150390625, 0.048229999840259552001953125), float3(0.075999997556209564208984375, 0.908339977264404296875, 0.0156599991023540496826171875), float3(0.0284000001847743988037109375, 0.13382999598979949951171875, 0.837769985198974609375));
-        float _365 = precise::max(precise::max(_351.x, precise::max(_351.y, _351.z)), 9.9999997473787516355514526367188e-05);
-        _391 = float4(powr(fast::clamp(mix(((_351 * (_351 + float3(0.02457859925925731658935546875))) - float3(9.0537003416102379560470581054688e-05)) / ((_351 * ((_351 * 0.98372900485992431640625) + float3(0.4329510033130645751953125))) + float3(0.23808099329471588134765625)), _351 * ((((_365 * (_365 + 0.02457859925925731658935546875)) - 9.0537003416102379560470581054688e-05) / ((_365 * ((0.98372900485992431640625 * _365) + 0.4329510033130645751953125)) + 0.23808099329471588134765625)) / _365), float3(0.5)) * float3x3(float3(1.60475003719329833984375, -0.5310800075531005859375, -0.0736699998378753662109375), float3(-0.10208000242710113525390625, 1.108129978179931640625, -0.00604999996721744537353515625), float3(-0.00326999998651444911956787109375, -0.07276000082492828369140625, 1.0760200023651123046875)), float3(0.0), float3(1.0)), float3(0.454545438289642333984375 / sqrt((PostParams.motion.y > 0.0) ? PostParams.motion.y : 1.0))), 1.0);
+        float3 _357 = _294 * _356;
+        int _366;
+        if (PostParams.motion.w > 0.5)
+        {
+            _366 = int(PostParams.motion.w) - 1;
+        }
+        else
+        {
+            _366 = 4;
+        }
+        float3 _377;
+        if (_366 > 1)
+        {
+            _377 = _357 + (gBloom.sample(gClamp, in.in_var_TEXCOORD0, level(0.0)).xyz * 0.0599999986588954925537109375);
+        }
+        else
+        {
+            _377 = _357;
+        }
+        float2 _378 = in.in_var_TEXCOORD0 - float2(0.5);
+        bool _385;
+        if (PostParams.misc.z > 0.25)
+        {
+            _385 = PostParams.misc.z < 0.75;
+        }
+        else
+        {
+            _385 = false;
+        }
+        float3 _426;
+        if (_385)
+        {
+            float _393 = _377.y - precise::max(_377.x, _377.z);
+            float _397 = fast::clamp((_393 / precise::max(_377.y, 9.9999997473787516355514526367188e-05)) * 3.0, 0.0, 1.0);
+            float3 _407 = float3(_377.x + ((_393 * 0.300000011920928955078125) * _397), _377.y - ((_393 * 0.119999997317790985107421875) * _397), _377.z) * (1.0 - (0.100000001490116119384765625 * _397));
+            float _409 = precise::max(dot(_407, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-06);
+            float _414 = _409 * 2.8888885974884033203125;
+            _426 = ((precise::max(mix(float3(_409), _407, float3(1.10000002384185791015625)), float3(0.0)) * 0.519999980926513671875) * powr(_414, 0.2800000011920928955078125)) * mix(float3(0.920000016689300537109375, 0.980000019073486328125, 1.10000002384185791015625), float3(1.03999996185302734375, 1.0, 0.939999997615814208984375), float3(smoothstep(0.1500000059604644775390625, 0.85000002384185791015625, fast::clamp((log2(_414) * 0.2199999988079071044921875) + 0.5, 0.0, 1.0))));
+        }
+        else
+        {
+            _426 = _377 * float3(1.0, 1.0, 1.019999980926513671875);
+        }
+        float3 _431 = (_426 * (1.0 - (0.3499999940395355224609375 * dot(_378, _378)))) * float3x3(float3(0.59719002246856689453125, 0.354579985141754150390625, 0.048229999840259552001953125), float3(0.075999997556209564208984375, 0.908339977264404296875, 0.0156599991023540496826171875), float3(0.0284000001847743988037109375, 0.13382999598979949951171875, 0.837769985198974609375));
+        float _445 = precise::max(precise::max(_431.x, precise::max(_431.y, _431.z)), 9.9999997473787516355514526367188e-05);
+        _471 = float4(powr(fast::clamp(mix(((_431 * (_431 + float3(0.02457859925925731658935546875))) - float3(9.0537003416102379560470581054688e-05)) / ((_431 * ((_431 * 0.98372900485992431640625) + float3(0.4329510033130645751953125))) + float3(0.23808099329471588134765625)), _431 * ((((_445 * (_445 + 0.02457859925925731658935546875)) - 9.0537003416102379560470581054688e-05) / ((_445 * ((0.98372900485992431640625 * _445) + 0.4329510033130645751953125)) + 0.23808099329471588134765625)) / _445), float3(0.5)) * float3x3(float3(1.60475003719329833984375, -0.5310800075531005859375, -0.0736699998378753662109375), float3(-0.10208000242710113525390625, 1.108129978179931640625, -0.00604999996721744537353515625), float3(-0.00326999998651444911956787109375, -0.07276000082492828369140625, 1.0760200023651123046875)), float3(0.0), float3(1.0)), float3(0.454545438289642333984375 / sqrt((PostParams.motion.y > 0.0) ? PostParams.motion.y : 1.0))), 1.0);
         break;
     } while(false);
-    out.out_var_SV_Target = _391;
+    out.out_var_SV_Target = _471;
     return out;
 }
 

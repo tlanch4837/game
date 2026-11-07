@@ -1,0 +1,877 @@
+{
+ "out": "assets/buildings/atlas",
+ "defaults": {
+  "metresPerTile": 4.0,
+  "roughness": 0.8
+ },
+ "note": "Pages of the shared building atlas (docs/building_atlas.md). Order is the cell index: append new cells at the end of a page, or every mesh using that page must be regenerated.",
+ "pages": [
+  {
+   "name": "bld_residential",
+   "cells": [
+    {
+     "name": "LD_L1_detail",
+     "albedo": "assets/buildings/low_density/tex/L1_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_density/tex/L1_detail_normal.png"
+    },
+    {
+     "name": "LD_L1_roof",
+     "albedo": "assets/buildings/low_density/tex/L1_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_density/tex/L1_roof_normal.png"
+    },
+    {
+     "name": "LD_L1_wall",
+     "albedo": "assets/buildings/low_density/tex/L1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_density/tex/L1_wall_normal.png"
+    },
+    {
+     "name": "LD_L2_detail",
+     "albedo": "assets/buildings/low_density/tex/L2_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_density/tex/L2_detail_normal.png"
+    },
+    {
+     "name": "LD_L2_roof",
+     "albedo": "assets/buildings/low_density/tex/L2_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_density/tex/L2_roof_normal.png"
+    },
+    {
+     "name": "LD_L2_wall",
+     "albedo": "assets/buildings/low_density/tex/L2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_density/tex/L2_wall_normal.png"
+    },
+    {
+     "name": "LD_L3_detail",
+     "albedo": "assets/buildings/low_density/tex/L3_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_density/tex/L3_detail_normal.png"
+    },
+    {
+     "name": "LD_L3_roof",
+     "albedo": "assets/buildings/low_density/tex/L3_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_density/tex/L3_roof_normal.png"
+    },
+    {
+     "name": "LD_L3_wall",
+     "albedo": "assets/buildings/low_density/tex/L3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_density/tex/L3_wall_normal.png"
+    },
+    {
+     "name": "LD_L4_detail",
+     "albedo": "assets/buildings/low_density/tex/L4_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_density/tex/L4_detail_normal.png"
+    },
+    {
+     "name": "LD_L4_roof",
+     "albedo": "assets/buildings/low_density/tex/L4_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_density/tex/L4_roof_normal.png"
+    },
+    {
+     "name": "LD_L4_wall",
+     "albedo": "assets/buildings/low_density/tex/L4_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_density/tex/L4_wall_normal.png"
+    },
+    {
+     "name": "LD_L5_detail",
+     "albedo": "assets/buildings/low_density/tex/L5_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_density/tex/L5_detail_normal.png"
+    },
+    {
+     "name": "LD_L5_roof",
+     "albedo": "assets/buildings/low_density/tex/L5_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_density/tex/L5_roof_normal.png"
+    },
+    {
+     "name": "LD_L5_wall",
+     "albedo": "assets/buildings/low_density/tex/L5_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_density/tex/L5_wall_normal.png"
+    },
+    {
+     "name": "RH_L1_detail",
+     "albedo": "assets/buildings/row_housing/tex/RH_L1_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/row_housing/tex/RH_L1_detail_normal.png"
+    },
+    {
+     "name": "RH_L1_roof",
+     "albedo": "assets/buildings/row_housing/tex/RH_L1_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/row_housing/tex/RH_L1_roof_normal.png"
+    },
+    {
+     "name": "RH_L1_wall",
+     "albedo": "assets/buildings/row_housing/tex/RH_L1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/row_housing/tex/RH_L1_wall_normal.png"
+    },
+    {
+     "name": "RH_L2_detail",
+     "albedo": "assets/buildings/row_housing/tex/RH_L2_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/row_housing/tex/RH_L2_detail_normal.png"
+    },
+    {
+     "name": "RH_L2_roof",
+     "albedo": "assets/buildings/row_housing/tex/RH_L2_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/row_housing/tex/RH_L2_roof_normal.png"
+    },
+    {
+     "name": "RH_L2_wall",
+     "albedo": "assets/buildings/row_housing/tex/RH_L2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/row_housing/tex/RH_L2_wall_normal.png"
+    },
+    {
+     "name": "RH_L3_detail",
+     "albedo": "assets/buildings/row_housing/tex/RH_L3_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/row_housing/tex/RH_L3_detail_normal.png"
+    },
+    {
+     "name": "RH_L3_roof",
+     "albedo": "assets/buildings/row_housing/tex/RH_L3_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/row_housing/tex/RH_L3_roof_normal.png"
+    },
+    {
+     "name": "RH_L3_wall",
+     "albedo": "assets/buildings/row_housing/tex/RH_L3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/row_housing/tex/RH_L3_wall_normal.png"
+    },
+    {
+     "name": "RH_L4_detail",
+     "albedo": "assets/buildings/row_housing/tex/RH_L4_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/row_housing/tex/RH_L4_detail_normal.png"
+    },
+    {
+     "name": "RH_L4_roof",
+     "albedo": "assets/buildings/row_housing/tex/RH_L4_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/row_housing/tex/RH_L4_roof_normal.png"
+    },
+    {
+     "name": "RH_L4_wall",
+     "albedo": "assets/buildings/row_housing/tex/RH_L4_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/row_housing/tex/RH_L4_wall_normal.png"
+    },
+    {
+     "name": "RH_L5_detail",
+     "albedo": "assets/buildings/row_housing/tex/RH_L5_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/row_housing/tex/RH_L5_detail_normal.png"
+    },
+    {
+     "name": "RH_L5_roof",
+     "albedo": "assets/buildings/row_housing/tex/RH_L5_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/row_housing/tex/RH_L5_roof_normal.png"
+    },
+    {
+     "name": "RH_L5_wall",
+     "albedo": "assets/buildings/row_housing/tex/RH_L5_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/row_housing/tex/RH_L5_wall_normal.png"
+    }
+   ]
+  },
+  {
+   "name": "bld_commercial",
+   "cells": [
+    {
+     "name": "CL_L1_detail",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L1_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_commercial/tex/CL_L1_detail_normal.png"
+    },
+    {
+     "name": "CL_L1_roof",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L1_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_commercial/tex/CL_L1_roof_normal.png"
+    },
+    {
+     "name": "CL_L1_wall",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_L1_wall_normal.png"
+    },
+    {
+     "name": "CL_L2_detail",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L2_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_commercial/tex/CL_L2_detail_normal.png"
+    },
+    {
+     "name": "CL_L2_roof",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L2_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_commercial/tex/CL_L2_roof_normal.png"
+    },
+    {
+     "name": "CL_L2_wall",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_L2_wall_normal.png"
+    },
+    {
+     "name": "CL_L3_detail",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L3_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_commercial/tex/CL_L3_detail_normal.png"
+    },
+    {
+     "name": "CL_L3_roof",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L3_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_commercial/tex/CL_L3_roof_normal.png"
+    },
+    {
+     "name": "CL_L3_wall",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_L3_wall_normal.png"
+    },
+    {
+     "name": "CL_L4_detail",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L4_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_commercial/tex/CL_L4_detail_normal.png"
+    },
+    {
+     "name": "CL_L4_roof",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L4_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_commercial/tex/CL_L4_roof_normal.png"
+    },
+    {
+     "name": "CL_L4_wall",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L4_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_L4_wall_normal.png"
+    },
+    {
+     "name": "CL_L5_detail",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L5_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_commercial/tex/CL_L5_detail_normal.png"
+    },
+    {
+     "name": "CL_L5_roof",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L5_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_commercial/tex/CL_L5_roof_normal.png"
+    },
+    {
+     "name": "CL_L5_wall",
+     "albedo": "assets/buildings/low_commercial/tex/CL_L5_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_L5_wall_normal.png"
+    },
+    {
+     "name": "CL_asphalt",
+     "albedo": "assets/buildings/low_commercial/tex/CL_asphalt_albedo.jpg",
+     "roughness": 0.9,
+     "normal": "assets/buildings/low_commercial/tex/CL_asphalt_normal.png"
+    },
+    {
+     "name": "CL_brand",
+     "albedo": "assets/buildings/low_commercial/tex/CL_brand_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_commercial/tex/CL_brand_normal.png"
+    },
+    {
+     "name": "CL_pavers",
+     "albedo": "assets/buildings/low_commercial/tex/CL_pavers_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_commercial/tex/CL_pavers_normal.png"
+    },
+    {
+     "name": "OL_L1_detail",
+     "albedo": "assets/buildings/low_office/tex/OL_L1_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_office/tex/OL_L1_detail_normal.png"
+    },
+    {
+     "name": "OL_L1_shingle",
+     "albedo": "assets/buildings/low_office/tex/OL_L1_shingle_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_L1_shingle_normal.png"
+    },
+    {
+     "name": "OL_L1_trim",
+     "albedo": "assets/buildings/low_office/tex/OL_L1_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_L1_trim_normal.png"
+    },
+    {
+     "name": "OL_L1_wall",
+     "albedo": "assets/buildings/low_office/tex/OL_L1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_L1_wall_normal.png"
+    },
+    {
+     "name": "OL_L2_detail",
+     "albedo": "assets/buildings/low_office/tex/OL_L2_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_office/tex/OL_L2_detail_normal.png"
+    },
+    {
+     "name": "OL_L2_shingle",
+     "albedo": "assets/buildings/low_office/tex/OL_L2_shingle_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_L2_shingle_normal.png"
+    },
+    {
+     "name": "OL_L2_trim",
+     "albedo": "assets/buildings/low_office/tex/OL_L2_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_L2_trim_normal.png"
+    },
+    {
+     "name": "OL_L2_wall",
+     "albedo": "assets/buildings/low_office/tex/OL_L2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_L2_wall_normal.png"
+    },
+    {
+     "name": "OL_L3_detail",
+     "albedo": "assets/buildings/low_office/tex/OL_L3_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_office/tex/OL_L3_detail_normal.png"
+    },
+    {
+     "name": "OL_L3_shingle",
+     "albedo": "assets/buildings/low_office/tex/OL_L3_shingle_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_L3_shingle_normal.png"
+    },
+    {
+     "name": "OL_L3_trim",
+     "albedo": "assets/buildings/low_office/tex/OL_L3_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_L3_trim_normal.png"
+    },
+    {
+     "name": "OL_L3_wall",
+     "albedo": "assets/buildings/low_office/tex/OL_L3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_L3_wall_normal.png"
+    },
+    {
+     "name": "OL_L4_detail",
+     "albedo": "assets/buildings/low_office/tex/OL_L4_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_office/tex/OL_L4_detail_normal.png"
+    },
+    {
+     "name": "OL_L4_shingle",
+     "albedo": "assets/buildings/low_office/tex/OL_L4_shingle_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_L4_shingle_normal.png"
+    },
+    {
+     "name": "OL_L4_trim",
+     "albedo": "assets/buildings/low_office/tex/OL_L4_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_L4_trim_normal.png"
+    },
+    {
+     "name": "OL_L4_wall",
+     "albedo": "assets/buildings/low_office/tex/OL_L4_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_L4_wall_normal.png"
+    },
+    {
+     "name": "OL_L5_detail",
+     "albedo": "assets/buildings/low_office/tex/OL_L5_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/low_office/tex/OL_L5_detail_normal.png"
+    },
+    {
+     "name": "OL_L5_shingle",
+     "albedo": "assets/buildings/low_office/tex/OL_L5_shingle_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_L5_shingle_normal.png"
+    },
+    {
+     "name": "OL_L5_trim",
+     "albedo": "assets/buildings/low_office/tex/OL_L5_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_L5_trim_normal.png"
+    },
+    {
+     "name": "OL_L5_wall",
+     "albedo": "assets/buildings/low_office/tex/OL_L5_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_L5_wall_normal.png"
+    },
+    {
+     "name": "OL_asphalt",
+     "albedo": "assets/buildings/low_office/tex/OL_asphalt_albedo.jpg",
+     "roughness": 0.9,
+     "normal": "assets/buildings/low_office/tex/OL_asphalt_normal.png"
+    },
+    {
+     "name": "OL_brand",
+     "albedo": "assets/buildings/low_office/tex/OL_brand_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/low_office/tex/OL_brand_normal.png"
+    },
+    {
+     "name": "OL_grass",
+     "albedo": "assets/buildings/low_office/tex/OL_grass_albedo.jpg",
+     "roughness": 0.8,
+     "normal": "assets/buildings/low_office/tex/OL_grass_normal.png"
+    },
+    {
+     "name": "OL_pavers",
+     "albedo": "assets/buildings/low_office/tex/OL_pavers_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/low_office/tex/OL_pavers_normal.png"
+    },
+    {
+     "name": "OL_roof",
+     "albedo": "assets/buildings/low_office/tex/OL_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/low_office/tex/OL_roof_normal.png"
+    },
+    {
+     "name": "HD_L1_facade",
+     "albedo": "assets/buildings/high_density/tex/HD_L1_facade_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/high_density/tex/HD_L1_facade_normal.png"
+    },
+    {
+     "name": "HD_L2_facade",
+     "albedo": "assets/buildings/high_density/tex/HD_L2_facade_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/high_density/tex/HD_L2_facade_normal.png"
+    },
+    {
+     "name": "HD_L3_facade",
+     "albedo": "assets/buildings/high_density/tex/HD_L3_facade_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/high_density/tex/HD_L3_facade_normal.png"
+    },
+    {
+     "name": "HD_L4_facade",
+     "albedo": "assets/buildings/high_density/tex/HD_L4_facade_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/high_density/tex/HD_L4_facade_normal.png"
+    },
+    {
+     "name": "HD_L5_facade",
+     "albedo": "assets/buildings/high_density/tex/HD_L5_facade_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/high_density/tex/HD_L5_facade_normal.png"
+    }
+   ]
+  },
+  {
+   "name": "bld_industry",
+   "cells": [
+    {
+     "name": "IN_L1_detail",
+     "albedo": "assets/buildings/industry/tex/IN_L1_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/industry/tex/IN_L1_detail_normal.png"
+    },
+    {
+     "name": "IN_L1_trim",
+     "albedo": "assets/buildings/industry/tex/IN_L1_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_L1_trim_normal.png"
+    },
+    {
+     "name": "IN_L1v0_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L1v0_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L1v0_roof_normal.png"
+    },
+    {
+     "name": "IN_L1v0_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L1v0_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v0_wall2_normal.png"
+    },
+    {
+     "name": "IN_L1v0_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L1v0_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v0_wall_normal.png"
+    },
+    {
+     "name": "IN_L1v1_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L1v1_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L1v1_roof_normal.png"
+    },
+    {
+     "name": "IN_L1v1_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L1v1_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v1_wall2_normal.png"
+    },
+    {
+     "name": "IN_L1v1_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L1v1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v1_wall_normal.png"
+    },
+    {
+     "name": "IN_L1v2_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L1v2_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L1v2_roof_normal.png"
+    },
+    {
+     "name": "IN_L1v2_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L1v2_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v2_wall2_normal.png"
+    },
+    {
+     "name": "IN_L1v2_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L1v2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v2_wall_normal.png"
+    },
+    {
+     "name": "IN_L1v3_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L1v3_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L1v3_roof_normal.png"
+    },
+    {
+     "name": "IN_L1v3_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L1v3_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v3_wall2_normal.png"
+    },
+    {
+     "name": "IN_L1v3_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L1v3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L1v3_wall_normal.png"
+    },
+    {
+     "name": "IN_L2_detail",
+     "albedo": "assets/buildings/industry/tex/IN_L2_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/industry/tex/IN_L2_detail_normal.png"
+    },
+    {
+     "name": "IN_L2_trim",
+     "albedo": "assets/buildings/industry/tex/IN_L2_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_L2_trim_normal.png"
+    },
+    {
+     "name": "IN_L2v0_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L2v0_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L2v0_roof_normal.png"
+    },
+    {
+     "name": "IN_L2v0_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L2v0_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v0_wall2_normal.png"
+    },
+    {
+     "name": "IN_L2v0_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L2v0_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v0_wall_normal.png"
+    },
+    {
+     "name": "IN_L2v1_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L2v1_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L2v1_roof_normal.png"
+    },
+    {
+     "name": "IN_L2v1_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L2v1_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v1_wall2_normal.png"
+    },
+    {
+     "name": "IN_L2v1_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L2v1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v1_wall_normal.png"
+    },
+    {
+     "name": "IN_L2v2_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L2v2_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L2v2_roof_normal.png"
+    },
+    {
+     "name": "IN_L2v2_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L2v2_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v2_wall2_normal.png"
+    },
+    {
+     "name": "IN_L2v2_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L2v2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v2_wall_normal.png"
+    },
+    {
+     "name": "IN_L2v3_roof",
+     "albedo": "assets/buildings/industry/tex/IN_L2v3_roof_albedo.jpg",
+     "roughness": 0.75,
+     "normal": "assets/buildings/industry/tex/IN_L2v3_roof_normal.png"
+    },
+    {
+     "name": "IN_L2v3_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L2v3_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v3_wall2_normal.png"
+    },
+    {
+     "name": "IN_L2v3_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L2v3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L2v3_wall_normal.png"
+    },
+    {
+     "name": "IN_L3_detail",
+     "albedo": "assets/buildings/industry/tex/IN_L3_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/industry/tex/IN_L3_detail_normal.png"
+    },
+    {
+     "name": "IN_L3_trim",
+     "albedo": "assets/buildings/industry/tex/IN_L3_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_L3_trim_normal.png"
+    },
+    {
+     "name": "IN_L3v0_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L3v0_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v0_wall2_normal.png"
+    },
+    {
+     "name": "IN_L3v0_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L3v0_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v0_wall_normal.png"
+    },
+    {
+     "name": "IN_L3v1_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L3v1_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v1_wall2_normal.png"
+    },
+    {
+     "name": "IN_L3v1_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L3v1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v1_wall_normal.png"
+    },
+    {
+     "name": "IN_L3v2_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L3v2_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v2_wall2_normal.png"
+    },
+    {
+     "name": "IN_L3v2_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L3v2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v2_wall_normal.png"
+    },
+    {
+     "name": "IN_L3v3_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L3v3_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v3_wall2_normal.png"
+    },
+    {
+     "name": "IN_L3v3_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L3v3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L3v3_wall_normal.png"
+    },
+    {
+     "name": "IN_L4_detail",
+     "albedo": "assets/buildings/industry/tex/IN_L4_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/industry/tex/IN_L4_detail_normal.png"
+    },
+    {
+     "name": "IN_L4_trim",
+     "albedo": "assets/buildings/industry/tex/IN_L4_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_L4_trim_normal.png"
+    },
+    {
+     "name": "IN_L4v0_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L4v0_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v0_wall2_normal.png"
+    },
+    {
+     "name": "IN_L4v0_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L4v0_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v0_wall_normal.png"
+    },
+    {
+     "name": "IN_L4v1_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L4v1_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v1_wall2_normal.png"
+    },
+    {
+     "name": "IN_L4v1_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L4v1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v1_wall_normal.png"
+    },
+    {
+     "name": "IN_L4v2_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L4v2_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v2_wall2_normal.png"
+    },
+    {
+     "name": "IN_L4v2_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L4v2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v2_wall_normal.png"
+    },
+    {
+     "name": "IN_L4v3_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L4v3_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v3_wall2_normal.png"
+    },
+    {
+     "name": "IN_L4v3_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L4v3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L4v3_wall_normal.png"
+    },
+    {
+     "name": "IN_L5_detail",
+     "albedo": "assets/buildings/industry/tex/IN_L5_detail_albedo.jpg",
+     "roughness": 0.72,
+     "normal": "assets/buildings/industry/tex/IN_L5_detail_normal.png"
+    },
+    {
+     "name": "IN_L5_trim",
+     "albedo": "assets/buildings/industry/tex/IN_L5_trim_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_L5_trim_normal.png"
+    },
+    {
+     "name": "IN_L5v0_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L5v0_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v0_wall2_normal.png"
+    },
+    {
+     "name": "IN_L5v0_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L5v0_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v0_wall_normal.png"
+    },
+    {
+     "name": "IN_L5v1_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L5v1_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v1_wall2_normal.png"
+    },
+    {
+     "name": "IN_L5v1_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L5v1_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v1_wall_normal.png"
+    },
+    {
+     "name": "IN_L5v2_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L5v2_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v2_wall2_normal.png"
+    },
+    {
+     "name": "IN_L5v2_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L5v2_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v2_wall_normal.png"
+    },
+    {
+     "name": "IN_L5v3_wall2",
+     "albedo": "assets/buildings/industry/tex/IN_L5v3_wall2_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v3_wall2_normal.png"
+    },
+    {
+     "name": "IN_L5v3_wall",
+     "albedo": "assets/buildings/industry/tex/IN_L5v3_wall_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_L5v3_wall_normal.png"
+    },
+    {
+     "name": "IN_asphalt",
+     "albedo": "assets/buildings/industry/tex/IN_asphalt_albedo.jpg",
+     "roughness": 0.9,
+     "normal": "assets/buildings/industry/tex/IN_asphalt_normal.png"
+    },
+    {
+     "name": "IN_brand",
+     "albedo": "assets/buildings/industry/tex/IN_brand_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_brand_normal.png"
+    },
+    {
+     "name": "IN_concrete",
+     "albedo": "assets/buildings/industry/tex/IN_concrete_albedo.jpg",
+     "roughness": 0.85,
+     "normal": "assets/buildings/industry/tex/IN_concrete_normal.png"
+    },
+    {
+     "name": "IN_grass",
+     "albedo": "assets/buildings/industry/tex/IN_grass_albedo.jpg",
+     "roughness": 0.8,
+     "normal": "assets/buildings/industry/tex/IN_grass_normal.png"
+    },
+    {
+     "name": "IN_gravel",
+     "albedo": "assets/buildings/industry/tex/IN_gravel_albedo.jpg",
+     "roughness": 0.9,
+     "normal": "assets/buildings/industry/tex/IN_gravel_normal.png"
+    },
+    {
+     "name": "IN_membrane",
+     "albedo": "assets/buildings/industry/tex/IN_membrane_albedo.jpg",
+     "roughness": 0.6,
+     "normal": "assets/buildings/industry/tex/IN_membrane_normal.png"
+    }
+   ]
+  }
+ ]
+}

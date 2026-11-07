@@ -44,7 +44,7 @@ std::filesystem::path CacheRoot() {
     }
 }
 
-FILE* OpenFile(const std::filesystem::path& path, const char* mode) { return std::fopen(path.c_str(), mode); }
+FILE* OpenFile(const std::filesystem::path& path, const char* mode) { return std::fopen(FsPath(path.wstring()).c_str(), mode); }
 
 // wchar_t is 32 bits here: plain UTF-8 <-> UTF-32. Invalid bytes become U+FFFD.
 std::wstring Utf8ToWide(const std::string& s) {
@@ -144,7 +144,7 @@ int MulDiv(int a, int b, int c) {
 int WStrICmp(const wchar_t* a, const wchar_t* b) { return wcscasecmp(a, b); }
 
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) {
-    return std::fopen(WideToUtf8(path).c_str(), WideToUtf8(mode).c_str());
+    return std::fopen(FsPath(path).c_str(), WideToUtf8(mode).c_str());
 }
 
 double SecondsSinceProcessStart() {

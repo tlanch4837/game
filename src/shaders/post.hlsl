@@ -61,6 +61,7 @@ BIND(21) Texture2D<float4> gCapture : register(t18);
 #define PROBE_ROOMS rooms
 #define PROBE_ROOM_COUNT portalCount.y
 #include "probe.hlsli"
+#include "city_air.hlsli"
 
 static const float kPI = 3.14159265;
 static const float kEarth = 6360e3, kTop = 6420e3;
@@ -276,7 +277,7 @@ float AoPS(FsOut i) : SV_Target {
     float dist = length(toEye);
     float3 V = toEye / dist;
     if (dot(n, V) < 0.0) n = -n;
-    float radius = clamp(dist * 0.05, 0.25, 5.0);
+    float radius = clamp(dist * 0.05, 0.25, CityAirOn(misc.z) ? 14.0 : 5.0); // the city camera stands far off: a building must still darken the street at its foot
     float screen = radius / max(dist, 0.1) * 0.8; // the screen radius is approximate: enough for a horizon search
     float noise = Ign(i.pos.xy), jitter = frac(noise * 7.0 + 0.37);
     float vis = 0.0, weights = 0.0;
@@ -676,11 +677,61 @@ float3 RoomShafts(float3 c, float3 d, float dist, float2 pixel) {
     return c;
 }
 
+// ------------------------------------------------------------------ the city's air (misc.z = 0.5; city_air.hlsli, docs/cs2_look_pass.md)
+// In place of the marched sky, clouds and probe haze on the city map, at every preset.
+int PostTier() { return motion.w > 0.5 ? int(motion.w) - 1 : 4; } // FrameView::postTier: 0 Low .. 4 Ultra / PC (unset reads as PC)
+bool CityLook() { return CityAirOn(misc.z); }
+// Sun shadows past the shadow map's reach (60–120 m round the camera's target) and from the baked far buildings, which cast none:
+// march the depth buffer from the pixel toward the sun, as ContactShadow does up close but metres to a hundred and fifty long, so a
+// tower throws its shadow across the street at any zoom (after Bend Studio's screen-space shadows, "Days Gone", 2020, in idea).
+// Steps by preset: Low 8, Low/Med and Medium 12, High and Ultra 16; jittered per pixel and frame, TAA averages the steps.
+float CitySunShadow(float2 uv, float2 pixel, float3 p, float dist) {
+    if (sunDir.y <= 0.03) return 0.0;
+    const int steps = PostTier() == 0 ? 8 : PostTier() < 3 ? 12 : 16;
+    const float reach = clamp(dist * 0.14, 3.0, 150.0) * saturate(0.35 / max(sunDir.y, 0.05) + 0.4); // longer as the sun sinks
+    const float4 c0 = mul(prevViewProj, float4(p, 1.0));
+    const float2 ndc0 = c0.xy / c0.w;
+    const float jitter = Ign(pixel);
+    const float bias = 0.05 + dist * 0.002, thick = 2.0 + reach * 0.35;
+    float hit = 0.0;
+    for (int k = 0; k < 16; ++k) {
+        if (k >= steps) break;
+        const float t = (k + jitter) / steps;
+        const float3 q = p + sunDir.xyz * (t * t * reach + bias);
+        const float4 c = mul(prevViewProj, float4(q, 1.0));
+        const float2 suv = uv + (c.xy / c.w - ndc0) * float2(0.5, -0.5);
+        if (any(suv < 0.0) || any(suv > 1.0)) break;
+        const float d = gDepth.SampleLevel(gClamp, suv, 0);
+        if (d <= 0.0) continue;
+        const float front = length(eye.xyz - q) - length(eye.xyz - WorldAt(suv, d));
+        if (front > bias && front < thick) { hit = 1.0 - t * t * 0.5; break; } // nearer casters give darker, harder shadow
+    }
+    const float2 e = saturate(min(uv, 1.0 - uv) * 16.0); // rays toward the screen's edge find nothing: fade instead of a line
+    return hit * e.x * e.y;
+}
+float3 CityComposite(float3 c, float sa, float2 uv, float2 pixel, float depth) {
+    float3 world = WorldAt(uv, max(depth, 1e-5));
+    float3 d = normalize(world - eye.xyz);
+    if (depth <= 0.0) {
+        float disc = smoothstep(0.99990, 0.99996, dot(d, sunDir.xyz)) * smoothstep(-0.02, 0.01, d.y);
+        return CitySkyOf(d, skyGrad[0].rgb, skyGrad[1].rgb, sunColorP.rgb, sunDir.xyz) + disc * sunColorP.rgb * 60.0;
+    }
+    // Occlusion dims the ambient share only (see CompositePS; Low has no AO pass), the screen-space sun shadow the sunlit share only:
+    // a pixel the shadow map already shades has almost no sunlit share, so the two never double up.
+    sa = abs(sa);
+    const float share = sa > 0.995 ? 1.0 : saturate((sa - 0.76) / 0.23);
+    const float dist = length(world - eye.xyz);
+    const float ao = PostTier() > 0 ? AoUpsample(pixel, depth) : 1.0;
+    c *= share * ao + (1.0 - share) * (1.0 - 0.92 * CitySunShadow(uv, pixel, world, dist));
+    return lerp(CityHazeOf(d, skyGrad[1].rgb, sunColorP.rgb, sunDir.xyz), c, CityAirKeep(eye.xyz, world));
+}
+
 // ------------------------------------------------------------------ sky, clouds and haze over the lit scene
 float4 CompositePS(FsOut i) : SV_Target {
     float3 c = gScene.SampleLevel(gClamp, i.uv, 0).rgb;
     float depth = gDepth.SampleLevel(gClamp, i.uv, 0);
     if (lightDebug.x > 5.5 && lightDebug.x < 7.5) return float4(gCloudShadow.SampleLevel(gClamp, i.uv, 0).rrr, 1); // the whole cloud shadow map (north up is -z), 30 km across
+    if (CityLook()) return float4(min(CityComposite(c, gScene.SampleLevel(gClamp, i.uv, 0).a, i.uv, i.pos.xy, depth), 2000.0), 1);
     if (misc.z < 0.5) return float4(c * (depth > 0.0 ? AoUpsample(i.pos.xy, depth) : 1.0), 1);
     float3 world = WorldAt(i.uv, max(depth, 1e-5));
     float3 d = normalize(world - eye.xyz);
@@ -1072,6 +1123,24 @@ float3 SampleCatmullRom(float2 uv) {
     return max(sum / total, 0.0);
 }
 
+// The city's grade (docs/cs2_look_pass.md), on exposed linear light before the filmic curve: a handful of ALU folded into the tone
+// map, no LUT and no pass of its own. Cities: Skylines II's screenshots read low key, with olive greens, moderate saturation, a
+// firmer midtone contrast, warm light and cool shade.
+float3 CityGrade(float3 c) {
+    const float3 kLum = float3(0.2126, 0.7152, 0.0722);
+    // Greens toward olive: where green leads, some of its lead goes to red and the whole is dimmed. Lime grass reads as a lawn.
+    float lead = c.g - max(c.r, c.b), green = saturate(lead / max(c.g, 1e-4) * 3.0);
+    c = float3(c.r + lead * 0.30 * green, c.g - lead * 0.12 * green, c.b) * (1.0 - 0.10 * green);
+    float l = max(dot(c, kLum), 1e-5);
+    c = max(lerp(l.xxx, c, 1.10), 0.0); // a little more saturation: the haze already greys the distance
+    c *= 0.52; // low key: CS2's median sits near 80 of 255, a stop under a metered mid grey
+    l *= 0.52;
+    float t = saturate(log2(l / 0.18) * 0.22 + 0.5); // 0 deep shade .. 0.5 mid grey .. 1 sunlit highlight
+    c *= pow(l / 0.18, 0.28); // midtone contrast in log space (luminance only, so hue holds): deep shade, highlights kept
+    c *= lerp(float3(0.92, 0.98, 1.10), float3(1.04, 1.0, 0.94), smoothstep(0.15, 0.85, t)); // cool blue-grey shade, warm light
+    return c;
+}
+
 float4 TonemapPS(FsOut i) : SV_Target {
     float3 c = eye.w > 0.5 ? SampleCatmullRom(i.uv) : gResolved.SampleLevel(gClamp, i.uv, 0).rgb;
     // Win back what temporal accumulation softens. Limited to a local fraction so edges don't ring.
@@ -1079,10 +1148,11 @@ float4 TonemapPS(FsOut i) : SV_Target {
                    gResolved.SampleLevel(gClamp, i.uv + float2(0, res.w), 0).rgb + gResolved.SampleLevel(gClamp, i.uv - float2(0, res.w), 0).rgb) * 0.25;
     c = max(c + clamp((c - blur) * 0.9, -c * 0.3, c * 0.3), 0.0);
     if (lightDebug.x > 0.5) return float4(pow(saturate(c * 0.5 / (1.0 + c * 0.5)), 1.0 / 2.2), 1); // component views: fixed exposure, no grade
-    c = c * ExposureValue() + gBloom.SampleLevel(gClamp, i.uv, 0).rgb * 0.06;
-    // Grade: the sun's warmth stays (a daylight-balanced camera would not cool it), and no desaturation.
-    c *= float3(1.0, 1.0, 1.02);
+    c *= ExposureValue();
+    if (PostTier() > 1) c += gBloom.SampleLevel(gClamp, i.uv, 0).rgb * 0.06; // Low and Low/Med skip the bloom pass
     float2 q = i.uv - 0.5;
+    if (CityLook()) c = CityGrade(c);
+    else c *= float3(1.0, 1.0, 1.02); // grade: the sun's warmth stays (a daylight-balanced camera would not cool it), and no desaturation
     c *= 1.0 - 0.35 * dot(q, q); // vignette
     // Filmic curve: Stephen Hill's fit of the ACES RRT and ODT (BakingLab, MIT licence), which holds hue better than a per-channel curve.
     const float3x3 acesIn = float3x3(0.59719, 0.35458, 0.04823, 0.07600, 0.90834, 0.01566, 0.02840, 0.13383, 0.83777);

@@ -421,11 +421,13 @@ inline void Sync(tbd::Renderer& r) {
     static std::vector<uint32_t> idx;
     v.clear();
     idx.clear();
+    // The zone colours show only while the zoning tool is open, as in CS2: closed, the ground is the ground (docs/cs2_look_pass.md).
+    // TBD_LOOK=0 keeps the old always-on paint for comparisons.
     const tbd::Vec3 n{0, 0, 0}; // unlit: the colour as is
     for (size_t ci = 0; ci < g_zones.cells.size(); ++ci) {
         const tbd::city::ZoneCell& z = g_zones.cells[ci];
         if (z.lot >= 0) continue;
-        if (!g_zoneTool.active && z.zone == tbd::city::kNoZone) continue;
+        if (!g_zoneTool.active && (LookOn() || z.zone == tbd::city::kNoZone)) continue;
         const tbd::Vec3 col = z.zone == tbd::city::kNoZone ? tbd::Vec3{0.62f, 0.64f, 0.62f}
                               : g_zoneTool.active        ? tbd::city::ZoneTypes()[z.zone].color
                                                          : tbd::city::ZoneTypes()[z.zone].color * 0.8f;

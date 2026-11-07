@@ -75,8 +75,26 @@
     if (!self.view.window || w <= 0 || h <= 0) return NO;
     layer.contentsScale = scale;
 
-    NSString* resources = [[NSBundle mainBundle] resourcePath];
-    const std::wstring assets = tbd::platform::Utf8ToWide(std::string(resources.fileSystemRepresentation) + "/assets");
+    // The game's files live in Documents (loaded onto the device through the Files app, Finder / Apple Devices file sharing or
+    // tools/ipad_sync: docs/ipad_loader.md), so new content needs no new build. Documents/assets is the assets root; Documents/bin
+    // stands in for the Windows exe folder (ExeDirectory() + "\\..\\assets"). The few files built into the app (the GUI atlas, the UI
+    // tick) are copied in when missing, so the app starts with its GUI before anything is loaded.
+    NSFileManager* fm = [NSFileManager defaultManager];
+    NSString* docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    NSString* docAssets = [docs stringByAppendingPathComponent:@"assets"];
+    for (NSString* sub in @[ @"bin", @"assets", @"shaders", @"saves" ])
+        [fm createDirectoryAtPath:[docs stringByAppendingPathComponent:sub] withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString* bundled = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"assets"];
+    NSDirectoryEnumerator* walk = [fm enumeratorAtPath:bundled];
+    for (NSString* rel in walk) {
+        if (![walk.fileAttributes.fileType isEqualToString:NSFileTypeRegular]) continue;
+        NSString* to = [docAssets stringByAppendingPathComponent:rel];
+        if ([fm fileExistsAtPath:to]) continue; // what was loaded onto the device wins
+        [fm createDirectoryAtPath:[to stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm copyItemAtPath:[bundled stringByAppendingPathComponent:rel] toPath:to error:nil];
+    }
+    const std::wstring assets = tbd::platform::Utf8ToWide(std::string(docAssets.fileSystemRepresentation));
+    tbd::Log("iOS: assets from %s", docAssets.fileSystemRepresentation);
     tbd::host::Init(assets);
 
     auto renderer = tbd::CreateMetalRenderer();

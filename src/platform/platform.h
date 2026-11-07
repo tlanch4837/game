@@ -29,6 +29,14 @@ void WakeAddressAll(const void* address);
 std::filesystem::path CacheRoot();
 // fopen with a filesystem path (wide on Windows). Returns nullptr on failure.
 FILE* OpenFile(const std::filesystem::path& path, const char* mode);
+// A game path (built with Windows '\' separators: Join, ExeDirectory() + L"\\..\\assets\\...") as a path the OS opens.
+// Windows: unchanged. Apple: '\' becomes '/', since a backslash is an ordinary file-name character there.
+inline std::filesystem::path FsPath(std::wstring p) {
+#ifndef _WIN32
+    for (wchar_t& c : p) if (c == L'\\') c = L'/';
+#endif
+    return std::filesystem::path(p);
+}
 
 // UTF-8 <-> wide strings (UTF-16 on Windows, UTF-32 on Apple).
 std::wstring Utf8ToWide(const std::string& s);

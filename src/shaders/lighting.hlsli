@@ -74,6 +74,8 @@ float SunShadowFactor(float3 shadowPos) {
     float2 dz = abs(det) > 1e-12 ? float2(dy.y * dx.z - dx.y * dy.z, dx.x * dy.z - dy.x * dx.z) / det : float2(0.0, 0.0);
     const float dzMax = 3.0 * texelWorld / (range * texel); // a 70 degree slope, in depth per uv
     dz = clamp(dz, -dzMax, dzMax);
+    // PCSS off (TBD_FEATURECOST bit 2, and the Low preset): one hardware-filtered tap, ahead of the blocker search's five loads.
+    if (FEATURE_OFF(2)) { const float one = gShadowMap.SampleCmpLevelZero(gShadowSampler, uv, shadowPos.z); return lerp(1.0, one, edge); }
 
     const float kSunTan = 0.0125, kMaxCaster = 14.0; // a little over the true 0.0093: reads better at game resolution
     float angle = ShadowNoise() * 6.2831853;
@@ -85,7 +87,6 @@ float SunShadowFactor(float3 shadowPos) {
         float z = gShadowMap.Load(int3(clamp((uv + o) * size, 0.0, size - 1.0), 0));
         if (z < shadowPos.z + dot(o, dz) - 0.0001) { blockers += 1.0; sumZ += z; }
     }
-    if (FEATURE_OFF(2)) { const float one = gShadowMap.SampleCmpLevelZero(gShadowSampler, uv, shadowPos.z); return lerp(1.0, one, edge); }
     if (blockers < 0.5) return 1.0; // no caster near: the common case costs six loads, less than the old nine filtered taps
     float dist = (shadowPos.z - sumZ / blockers) * range;
     float penumbra = clamp(dist * kSunTan / texelWorld, 1.25, 24.0) * texel;
