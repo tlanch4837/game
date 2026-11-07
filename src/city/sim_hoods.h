@@ -142,31 +142,31 @@ public:
                 }
             }
         }
-        // 2. merge small clusters into the neighbour they share the most unblocked border with
-        std::set<int> settled; // small clusters nothing can take (alone, or only walls around them)
+        // 2. merge tiny clusters into the neighbour they share the most unblocked border with
+        std::set<int> settled; // tiny clusters nothing can take (alone, or only walls around them)
         for (;;) {
-            int small = -1;
+            int tiny = -1;
             for (size_t i = 0; i < cl.size(); ++i)
-                if (!cl[i].empty() && (int)cl[i].size() < minCells && !settled.count((int)i) && (small < 0 || cl[i].size() < cl[(size_t)small].size())) small = (int)i;
-            if (small < 0) break;
+                if (!cl[i].empty() && (int)cl[i].size() < minCells && !settled.count((int)i) && (tiny < 0 || cl[i].size() < cl[(size_t)tiny].size())) tiny = (int)i;
+            if (tiny < 0) break;
             std::map<int, int> open, shut; // neighbour cluster -> border cells
-            for (int c : cl[(size_t)small])
+            for (int c : cl[(size_t)tiny])
                 for (int d = 0; d < 4; ++d) {
                     const int n = step(c, d);
-                    if (n < 0 || label[(size_t)n] == small) continue;
+                    if (n < 0 || label[(size_t)n] == tiny) continue;
                     (isBlocked(s.cells.cells[(size_t)c].key, s.cells.cells[(size_t)n].key) ? shut : open)[label[(size_t)n]]++;
                 }
             // a few cells behind a wall still join the larger neighbour; a sizeable group keeps its own identity
-            const std::map<int, int>& pick = !open.empty() ? open : ((int)cl[(size_t)small].size() * 2 < minCells ? shut : open);
+            const std::map<int, int>& pick = !open.empty() ? open : ((int)cl[(size_t)tiny].size() * 2 < minCells ? shut : open);
             int best = -1, bn = 0;
             for (const auto& [k, v] : pick)
                 if (v > bn || (v == bn && cl[(size_t)k].size() < cl[(size_t)best].size())) best = k, bn = v;
             if (best < 0) {
-                settled.insert(small);
+                settled.insert(tiny);
                 continue;
             }
-            for (int c : cl[(size_t)small]) label[(size_t)c] = best, cl[(size_t)best].push_back(c);
-            cl[(size_t)small].clear();
+            for (int c : cl[(size_t)tiny]) label[(size_t)c] = best, cl[(size_t)best].push_back(c);
+            cl[(size_t)tiny].clear();
         }
         // 3. ids by lowest cell key
         std::vector<int> order;
