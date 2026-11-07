@@ -115,6 +115,8 @@ tbd::city::SimEconomy g_simEcon; // treasury and tax rates (sim_economy.h)
 tbd::city::SimBudget g_simBudget; // itemised expenses, loans, balance history, bankruptcy (sim_budget.h)
 tbd::city::SimMilestones g_simMilestones; // population milestones and what they unlock (sim_milestones.h)
 city::NewsFeed g_simNews;          // news_lines.json; sim events post triggers, the radio reads Queue()
+std::string g_simBanner, g_simBannerSub; // the last milestone, for the HUD banner
+ULONGLONG g_simBannerAt = 0;
 double g_simMilestoneQuietUntil = 0; // game minutes: a load re-reaches its milestones silently, without rewards
 constexpr double kRoadUpkeepPerKmDay = 40.0; // whole currency per km of road per day
 
@@ -169,6 +171,9 @@ void SimMilestonesSync() {
     std::string up = b;
     for (char& c : up) c = (char)std::toupper((unsigned char)c);
     Toast(up);
+    g_simBanner = std::string("Milestone reached: ") + last.name;
+    g_simBannerSub = std::to_string(last.population) + " residents.  +" + std::to_string((long long)(last.reward / 100)) + " grant.  New tools unlocked.";
+    g_simBannerAt = GetTickCount64();
     tbd::Log("Sim: milestone %d %s reached at population %llu", g_simMilestones.reached, last.name, (unsigned long long)g_simTotals.population);
     SimNews("milestone_reached");
 }
@@ -691,6 +696,11 @@ void SimHudFill(tbd::gui::CityHud& hud) {
     hud.money = (long long)(g_simEcon.treasury / 100);
     for (int c = 0; c < 4; ++c) hud.incomeDay[c] = (long long)(g_simEcon.lastIncome[c] / 100);
     hud.upkeepDay = (long long)(g_simEcon.lastUpkeep / 100);
+    { // the milestone banner: 5 s, fading over the last one
+        const double age = g_simBannerAt ? (double)(GetTickCount64() - g_simBannerAt) / 1000.0 : 1e9;
+        hud.bannerAlpha = (float)std::clamp(5.0 - age, 0.0, 1.0);
+        hud.banner = g_simBanner, hud.bannerSub = g_simBannerSub;
+    }
     { // the Budget panel's ledger and loans
         using namespace tbd::city;
         tbd::gui::BudgetView& v = hud.bv;

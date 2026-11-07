@@ -53,6 +53,19 @@ inline void BudgetSparkline(DrawList& dl, const Rect& r, const BudgetView& v, co
     }
 }
 
+// The milestone toast: a banner at the top centre, faded by alpha (0..1).
+inline void DrawMilestoneBanner(Context& g, const char* title, const char* sub, float alpha) {
+    const Theme& th = g.Style();
+    const float s = g.Scale(), w = std::round(520.0f * s), h = std::round(70.0f * s);
+    const float x0 = std::round((g.In().viewW - w) * 0.5f), y0 = std::round(70.0f * s);
+    DrawList& dl = g.Draw();
+    dl.Shadow(x0, y0, x0 + w, y0 + h, 10.0f * s, 12.0f * s, Fade(Rgba(0, 0, 0, 140), alpha));
+    dl.Rect(x0, y0, x0 + w, y0 + h, Fade(th.panelTop, alpha), Fade(th.panelBottom, alpha), th.panelRadius, 2.0f * s, Fade(Rgba(250, 200, 90), alpha));
+    DrawIcon(dl, Icon::Chart, x0 + h * 0.5f, y0 + h * 0.5f, h * 0.45f, th.iconStroke * 1.4f, Fade(Rgba(250, 200, 90), alpha));
+    g.TextIn({x0 + h, y0 + h * 0.12f, w - h - 12.0f * s, h * 0.45f}, title, Fade(th.textBright, alpha), 0.0f, th.titleSize * 1.3f, true);
+    g.TextIn({x0 + h, y0 + h * 0.55f, w - h - 12.0f * s, h * 0.35f}, sub, Fade(th.muted, alpha), 0.0f, th.smallSize);
+}
+
 // Hud: CityHud (city_hud.h): tax[4], funding[6], incomeDay[4], upkeepDay, budget, bv.
 template <class Hud>
 inline void DrawBudgetPanel(Context& g, Hud& h) {

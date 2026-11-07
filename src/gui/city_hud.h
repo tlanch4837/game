@@ -82,6 +82,8 @@ struct CityHud {
     BudgetView bv;                           // the Budget panel's ledger and loans (city_budget_panel.h)
     long long lockPop[(int)HudTool::Count] = {}; // in: the population a locked tool needs (milestones), 0 = open
     bool notDoneLocked = false;              // the "not completed" panel is showing a locked tool instead
+    std::string banner, bannerSub;           // in: a milestone banner (top centre) while bannerAlpha > 0
+    float bannerAlpha = 0;
     bool Pending() const { return notDoneName != nullptr; }
     void ShowNotDone(const char* name, const char* blurb, bool locked = false) { notDoneName = name, notDoneBlurb = blurb, tiles = false, notDoneLocked = locked; }
     void Dismiss() { notDoneName = notDoneBlurb = nullptr, tiles = false, budget = false; }
@@ -315,6 +317,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
 
     // ------------------------------------------------------------ Budget (the city sim's economy)
     if (h.budget) DrawBudgetPanel(g, h);
+    if (h.bannerAlpha > 0.0f) DrawMilestoneBanner(g, h.banner.c_str(), h.bannerSub.c_str(), h.bannerAlpha);
 
     // ------------------------------------------------------------ "not completed" panel, above the toolbar
     if (h.notDoneName) {
