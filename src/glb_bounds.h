@@ -1,6 +1,8 @@
 // A .glb's bounding box from its JSON chunk alone (accessor min/max under the node transforms), so a scene can know where
 // everything is without reading gigabytes of geometry and images.
 #pragma once
+#include "platform/platform.h"
+#include <filesystem>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -71,7 +73,7 @@ inline bool Visit(const Json& doc, int node, const M4& parent, int depth, Vec3& 
 // False when the file isn't a readable .glb with the bounds it should carry; the caller must then assume nothing about it.
 inline bool ReadGlbBounds(const std::string& path, Vec3& lo, Vec3& hi) {
     using namespace glb_bounds_detail;
-    FILE* f = _wfopen(meshimport_detail::Utf8ToWide(path).c_str(), L"rb");
+    FILE* f = tbd::platform::WOpen(meshimport_detail::Utf8ToWide(path).c_str(), L"rb");
     if (!f) return false;
     uint32_t head[5] = {};
     std::vector<char> text;

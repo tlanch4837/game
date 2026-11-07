@@ -6,6 +6,7 @@
 #pragma once
 #include "platform/platform.h"
 
+#include <filesystem>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -231,7 +232,7 @@ private:
 inline std::wstring Utf8ToWide(const std::string& s) { return platform::Utf8ToWide(s); }
 
 inline bool ReadFile(const std::string& path, std::vector<uint8_t>& out) {
-    std::ifstream f(Utf8ToWide(path), std::ios::binary);
+    std::ifstream f(std::filesystem::path(Utf8ToWide(path)), std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
@@ -280,7 +281,7 @@ inline void NormalizeToUnitBox(std::vector<Vertex>& v) {
 
 // ---------------------------------------------------------------- OBJ
 inline bool LoadObj(const std::string& path, std::vector<Vertex>& out, bool genNormals, std::string& error) {
-    std::ifstream f(Utf8ToWide(path));
+    std::ifstream f(std::filesystem::path(Utf8ToWide(path)));
     if (!f) { error = "cannot open " + path; return false; }
 
     struct V3 { float x, y, z; };
@@ -529,7 +530,7 @@ private:
         const size_t slash = file.find_last_of("\\/");
         if (slash != std::string::npos) {
             const std::wstring own = std::wstring(file.begin(), file.begin() + (std::ptrdiff_t)slash + 1) + L"hair\\";
-            if (std::ifstream(own + L"hair_style.json") || std::ifstream(own + L"scalp_cards.json") || std::ifstream(own + L"hair_cap.json")) return own;
+            if (std::ifstream(std::filesystem::path(own + L"hair_style.json")) || std::ifstream(std::filesystem::path(own + L"scalp_cards.json")) || std::ifstream(std::filesystem::path(own + L"hair_cap.json"))) return own;
         }
         return IsGenericHuman() ? std::wstring() : ExeDirectory() + L"\\..\\Assets\\hair\\wyatt\\";
     }
@@ -539,7 +540,7 @@ private:
     std::wstring ScalpDir() const {
         const std::wstring own = HairDir();
         if (own.empty()) return own;
-        std::ifstream f(own + L"hair_style.json");
+        std::ifstream f(std::filesystem::path(own + L"hair_style.json"));
         if (!f) return own;
         const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         Json doc;
@@ -548,7 +549,7 @@ private:
         if (!style || style->s.empty()) return own;
         if (style->s == "none") return std::wstring();
         const std::wstring dir = ExeDirectory() + L"\\..\\Assets\\hair\\styles\\" + std::wstring(style->s.begin(), style->s.end()) + L"\\";
-        return std::ifstream(dir + L"scalp_cards.json") ? dir : own;
+        return std::ifstream(std::filesystem::path(dir + L"scalp_cards.json")) ? dir : own;
     }
 
     // Per character hair colour (character/hair_vertex.h HairTint), from hair_look.json in the character's hair folder (HairDir):
@@ -619,7 +620,7 @@ private:
     // keep their own coloured strand sheets. Vertex data: character/hair_vertex.h. `sheet`: a card file with its own strand sheet
     // (brow_cards.json / lash_cards.json from gameenginetools/brow_cards, each card's rect into that sheet).
     static bool ReadWhole(const std::wstring& path, std::vector<uint8_t>& out) {
-        std::ifstream f(path, std::ios::binary);
+        std::ifstream f(std::filesystem::path(path), std::ios::binary);
         if (!f) return false;
         out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
         return !out.empty();
