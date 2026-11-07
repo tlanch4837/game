@@ -17,6 +17,8 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
+#include <wchar.h>
 
 namespace tbd::platform {
 
@@ -138,6 +140,8 @@ int MulDiv(int a, int b, int c) {
     const long long q = (ap + ac / 2) / ac; // magnitude, halves rounded up
     return (int)(((p < 0) != (c < 0)) ? -q : q);
 }
+
+int WStrICmp(const wchar_t* a, const wchar_t* b) { return wcscasecmp(a, b); }
 
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) {
     return std::fopen(WideToUtf8(path).c_str(), WideToUtf8(mode).c_str());

@@ -3,7 +3,7 @@
 #define NOMINMAX
 #include "audio.h"
 
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,6 +11,8 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -93,17 +95,11 @@ void Push(Cmd c) {
     g_cv.notify_one();
 }
 
-std::wstring Widen(const std::string& s) {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w((size_t)std::max(n, 0), L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
-    return w;
-}
+std::wstring Widen(const std::string& s) { return tbd::platform::Utf8ToWide(s); }
 
-bool FileExists(const std::wstring& path) {
-    const DWORD a = GetFileAttributesW(path.c_str());
-    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+bool FileExists(const std::wstring& path) { // a file, not a folder
+    std::error_code ec;
+    return std::filesystem::is_regular_file(std::filesystem::path(path), ec);
 }
 
 // ------------------------------------------------------------------------------------------------ audio thread
@@ -349,13 +345,9 @@ private:
     void LoadZones() {
         defaultSound_ = "ambience/wind";
         defaultVolume_ = 0.7f;
-        HANDLE f = CreateFileW((root_ + L"\\zones.txt").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (f == INVALID_HANDLE_VALUE) return;
-        std::string text;
-        char buf[4096];
-        DWORD got = 0;
-        while (ReadFile(f, buf, sizeof(buf), &got, nullptr) && got > 0) text.append(buf, got);
-        CloseHandle(f);
+        std::ifstream f(std::filesystem::path(root_ + L"\\zones.txt"), std::ios::binary);
+        if (!f) return;
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         std::istringstream lines(text);
         std::string line;
         while (std::getline(lines, line)) {
@@ -435,12 +427,12 @@ private:
 
 bool Start(const std::wstring& assetsRoot) {
     if (g_started.load()) return Running();
-    if (GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) > 0 || GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) > 0 ||
-        GetEnvironmentVariableA("TBD_NOAUDIO", nullptr, 0) > 0)
+    if (tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) > 0 || tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0) > 0 ||
+        tbd::platform::GetEnvA("TBD_NOAUDIO", nullptr, 0) > 0)
         return false;
     const std::wstring root = assetsRoot + L"\\audio";
-    const DWORD attr = GetFileAttributesW(root.c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return false; // nothing to play: leave the device alone
+    std::error_code ec;
+    if (!std::filesystem::is_directory(std::filesystem::path(root), ec)) return false; // nothing to play: leave the device alone
     g_quit = false;
     g_failed = false;
     g_started = true;

@@ -167,7 +167,7 @@ public:
         static const std::vector<float> test = [] {
             char b[96] = {};
             std::vector<float> out(4);
-            return tbd::platform::GetEnvA("TBD_BEND", b, 96) > 0 && sscanf_s(b, "%f %f %f %f", &out[0], &out[1], &out[2], &out[3]) == 4 ? out : std::vector<float>{};
+            return tbd::platform::GetEnvA("TBD_BEND", b, 96) > 0 && sscanf(b, "%f %f %f %f", &out[0], &out[1], &out[2], &out[3]) == 4 ? out : std::vector<float>{};
         }();
         if (test.size() == 4) { std::copy(test.begin(), test.end(), characters_[0]); count = 1; }
         std::vector<std::pair<float, tbd::Vec3>> closest;

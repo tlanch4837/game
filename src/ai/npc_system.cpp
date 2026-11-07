@@ -572,7 +572,7 @@ NpcSystem::~NpcSystem() { impl_->FreeCrowd(); }
 
 static int EnvInt(const char* name, int fallback) {
     char v[32] = {};
-    return GetEnvironmentVariableA(name, v, sizeof(v)) > 0 ? std::atoi(v) : fallback;
+    return tbd::platform::GetEnvA(name, v, sizeof(v)) > 0 ? std::atoi(v) : fallback;
 }
 
 void NpcSystem::Begin(Scene& scene) {

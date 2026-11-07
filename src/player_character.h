@@ -401,7 +401,7 @@ public:
     void OpenTrace(const char* api) {
         api_ = api;
         const std::string path = dir_ + "\\trace_" + api_ + ".txt";
-        if (fopen_s(&trace_, path.c_str(), "w") != 0) trace_ = nullptr;
+        trace_ = std::fopen(path.c_str(), "w");
     }
     ~PlayerScript() { if (trace_) fclose(trace_); }
 
@@ -439,7 +439,7 @@ private:
     void Begin(const std::string& command, PlayerCharacter& player, PhysicsWorld& physics, OrbitCamera& camera) {
         char name[64] = {};
         float a = 0.0f, b = 0.0f;
-        const int n = sscanf_s(command.c_str(), "%63s %f %f", name, (unsigned)sizeof(name), &a, &b);
+        const int n = sscanf(command.c_str(), "%63s %f %f", name, &a, &b);
         const std::string op = name;
         label_ = command;
         for (char& ch : label_) if (ch == ' ') ch = '_';
@@ -462,7 +462,7 @@ private:
             ball_ = physics.AddBall(player.State().feet + Vec3{1.0f, a, 0.0f}, 0.25f);
         } else if (op == "shot") {
             char rest[64] = {};
-            sscanf_s(command.c_str(), "%*s %63s", rest, (unsigned)sizeof(rest));
+            sscanf(command.c_str(), "%*s %63s", rest);
             shot_ = rest;
         } else Log("Playtest: unknown command %s", command.c_str());
     }

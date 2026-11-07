@@ -11,6 +11,7 @@
 #pragma comment(lib, "Synchronization.lib") // WaitOnAddress
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "user32.lib") // GetAsyncKeyState / GetKeyState
 
 namespace tbd::platform {
 
@@ -105,6 +106,7 @@ uint32_t GetEnvA(const char* name, char* buf, uint32_t size) { return GetEnviron
 uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) { return GetEnvironmentVariableW(name, buf, size); }
 uint64_t TickCountMs() { return GetTickCount64(); }
 int MulDiv(int a, int b, int c) { return ::MulDiv(a, b, c); }
+int WStrICmp(const wchar_t* a, const wchar_t* b) { return _wcsicmp(a, b); }
 static_assert(kMaxPath == MAX_PATH);
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) { return _wfopen(path, mode); }
 
