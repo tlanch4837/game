@@ -124,11 +124,7 @@ inline void RoadToolbar(Context& g, city::RoadTool& t, float lift = 34.0f) {
     tip.on = false;
     const float s = g.Scale();
     if (!t.active) {
-        g.BeginPanel("##roads launcher", Anchor::BottomCenter, 0.0f, lift, 0.0f, 0.0f, 6.0f);
-        g.NextWidth(132);
-        if (g.Button("Roads", Icon::Roads)) t.Open();
-        g.EndPanel();
-        return;
+        return; // the city HUD's toolbar (city_hud.h) opens it
     }
     const Theme& th = g.Style();
 

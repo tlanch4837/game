@@ -475,6 +475,11 @@ inline void BuildModel(Mesher& m, const BuildingDef& d, float platformInner) {
     case Model::PassengerHarbor: PassengerHarbor(m, d); break;
     case Model::SmallAirfield: SmallAirfield(m, d); break;
     case Model::RegionalAirport: RegionalAirport(m, d); break;
+    case Model::GlbBuilding: { // the hologram and the site's shell; the finished model is a scene entity (city_transport.inl)
+        const float hw = d.W() * 0.5f, hd = d.D() * 0.5f;
+        m.Box(-hw, hw, -hd, hd, 0.1f, d.height, d.tint);
+        break;
+    }
     }
 }
 

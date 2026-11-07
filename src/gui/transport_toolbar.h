@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "../city/transport.h"
+#include "../city/transit.h"
 #include "road_toolbar.h"
 
 namespace tbd {
@@ -22,13 +22,23 @@ struct TransportToolState {
     bool active = false;
     city::TTab tab = city::TTab::Rail;
     int def = -1; // the chosen building (index into city::Defs()); -1: none, the cursor does nothing
-    int lastDef[(int)city::TTab::Count] = {-1, -1, -1};
+    int lastDef[(int)city::TTab::Count] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     float rotation = 0;
     bool marker = true;     // show the lot outline, the water apron, the shoreline
     bool snapAll = true;
     bool snapTrack = true;  // stations jump onto the nearest railway
     bool snapCoast = true;  // harbours and shipyards jump onto the nearest shore and face the water
     bool bulldoze = false;  // click a placed building to remove it
+    // transit lines + outside connections (city/transit.h)
+    bool lines = false;                                 // the Lines page instead of the buildings picker
+    city::TMode lmode = city::TMode::Bus;
+    city::TKind lkind = city::TKind::Passenger;
+    int outKind = -1;                                   // >= 0: placing an outside connection (a city::OutKind)
+    bool lineBulldoze = false;                          // click a checkpoint / line / outside connection to remove it
+    int lineStops = 0;                                  // set by the host: checkpoints in the line being built
+    bool cancelLine = false;                            // set by Esc / the GUI: drop the line in progress (the host consumes it)
+    bool finishLine = false;                            // set by the GUI: Finish pressed (the host consumes it)
+    char status[160] = {};                              // set by the host: demand / flow line
     int openRoad = -1;      // set by the GUI: a track tile was picked (an index into city::Assets()); the host consumes it
 
     void Select(int d) {
@@ -53,7 +63,8 @@ struct TransportToolState {
     }
     // Esc: drop the chosen asset first, then close
     void Escape() {
-        if (bulldoze) bulldoze = false;
+        if (lines && (lineStops > 0 || outKind >= 0 || lineBulldoze)) outKind = -1, lineBulldoze = false, cancelLine = true;
+        else if (bulldoze) bulldoze = false;
         else if (def >= 0) def = -1;
         else active = false;
     }
@@ -114,6 +125,10 @@ inline void DrawThumb(DrawList& dl, const Rect& r, const city::BuildingDef& d, f
         dl.Rect(x0 + w * 0.12f, y0 + h * 0.1f, x1 - w * 0.12f, y0 + h * 0.4f, ink, 1.0f);
         for (int i = 0; i < 6; ++i) dl.Line(x0 + w * (0.17f + 0.13f * i), y0 + h * 0.4f, x0 + w * (0.17f + 0.13f * i), y1 - 1.0f, 1.0f * scale, ink);
         break;
+    case city::Model::GlbBuilding: // bay doors along the front and a yard behind
+        dl.Rect(x0 + w * 0.08f, y0 + h * 0.08f, x1 - w * 0.08f, y0 + h * 0.5f, ink, 1.0f);
+        for (int i = 0; i < 4; ++i) dl.Rect(x0 + w * (0.14f + 0.2f * i), y0 + h * 0.4f, x0 + w * (0.26f + 0.2f * i), y0 + h * 0.5f, dark, 0.0f);
+        break;
     case city::Model::TrainStation:
         dl.Line(x0, (y0 + y1) * 0.5f - 1.0f * scale, x1, (y0 + y1) * 0.5f - 1.0f * scale, 1.2f * scale, ink);
         dl.Line(x0, (y0 + y1) * 0.5f + 1.0f * scale, x1, (y0 + y1) * 0.5f + 1.0f * scale, 1.2f * scale, ink);
@@ -149,12 +164,7 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
     const float s = g.Scale();
     t.openRoad = -1;
     if (!t.active) {
-        g.BeginPanel("##transport launcher", Anchor::BottomCenter, -150.0f, lift, 0.0f, 0.0f, 6.0f);
-        g.NextWidth(132);
-        const bool open = g.Button("Transport", Icon::Transport);
-        g.EndPanel();
-        if (open) t.active = true;
-        return open;
+        return false; // the city HUD's toolbar (city_hud.h) opens it
     }
     const Theme& th = g.Style();
     Tip tip;
@@ -179,6 +189,11 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
         if (IconBox(g, tip, "##rot right", plus, Icon::RotateRight, false, "Rotate right ( . )", locked)) t.Rotate(-15.0f);
     }
     {
+        Row row = BeginRow(g, "Page", 430);
+        if (IconBox(g, tip, "##page bld", row.Slot(0, 2), Icon::Transport, !t.lines, "Buildings: depots, stations, harbours, airports")) t.lines = false, t.outKind = -1, t.lineBulldoze = false, t.cancelLine = true;
+        if (IconBox(g, tip, "##page lines", row.Slot(1, 2), Icon::Roads, t.lines, "Lines: bus, tram, train, boat, plane, subway routes and outside connections")) t.lines = true, t.def = -1, t.bulldoze = false;
+    }
+    {
         Row row = BeginRow(g, "Show Marker", 430);
         if (IconBox(g, tip, "##marker", row.Slot(0, 1), Icon::Marker, t.marker, t.marker ? "Lot outline, water apron and shoreline shown" : "Markers hidden")) t.marker = !t.marker;
     }
@@ -196,6 +211,70 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
         }
     }
     g.EndPanel();
+
+    // ---------------------------------------------------------------- the Lines page: pick a mode, click checkpoints, click the first again to close
+    if (t.lines) {
+        const float lw = std::clamp(g.In().viewW / s - (8.0f + 448.0f + 8.0f + 8.0f), 340.0f, 700.0f);
+        g.BeginPanel("##transit lines", Anchor::BottomLeft, 8.0f + 448.0f + 8.0f, lift, lw, 0.0f, 10.0f);
+        const float size = std::round(40.0f * s), gap = std::round(4.0f * s);
+        {
+            const Rect bar = g.Reserve(size, lw * s);
+            static const Icon kIc[] = {Icon::Roads, Icon::Transport, Icon::Rail, Icon::Ship, Icon::Plane, Icon::Underground};
+            for (int i = 0; i < (int)city::TMode::Count; ++i) {
+                char id[16];
+                std::snprintf(id, sizeof(id), "##lmode%d", i);
+                const Rect r = {std::round(bar.x + i * (size + gap)), bar.y, size, size};
+                if (IconBox(g, tip, id, r, kIc[i], t.outKind < 0 && !t.lineBulldoze && (int)t.lmode == i, city::TModeName((city::TMode)i))) t.lmode = (city::TMode)i, t.outKind = -1, t.lineBulldoze = false, t.cancelLine = true;
+            }
+            const Rect close = {bar.x + bar.w - size, bar.y, size, size};
+            if (IconBox(g, tip, "##lclose", close, Icon::Close, false, "Close (Esc)")) t.active = false, t.lines = false, t.cancelLine = true;
+        }
+        {
+            const Rect bar = g.Reserve(size * 0.8f, lw * s);
+            const float bw = std::round(120.0f * s);
+            for (int k = 0; k < 2; ++k) {
+                char id[16];
+                std::snprintf(id, sizeof(id), "##lkind%d", k);
+                const Rect r = {bar.x + k * (bw + gap), bar.y, bw, bar.h};
+                const bool on = (int)t.lkind == k;
+                if (IconBox(g, tip, id, r, Icon::None, on, k ? "Cargo lines only stop at cargo checkpoints" : "Passenger lines only stop at passenger checkpoints")) t.lkind = (city::TKind)k, t.cancelLine = true;
+                g.TextIn(r, k ? "Cargo" : "Passengers", on ? th.textBright : th.text, 0.5f, th.smallSize);
+            }
+            const Rect fin = {bar.x + bar.w - bw, bar.y, bw, bar.h};
+            if (IconBox(g, tip, "##lfinish", fin, Icon::None, false, "Finish an out-and-back line (Enter). Clicking the first checkpoint again closes a loop", t.lineStops < 2)) t.finishLine = true;
+            g.TextIn(fin, "Finish (Enter)", t.lineStops < 2 ? th.muted : th.text, 0.5f, th.smallSize);
+        }
+        {
+            const Rect bar = g.Reserve(size * 0.8f, lw * s);
+            const float bw = std::round(104.0f * s);
+            static const char* const kOut[] = {"Road", "Rail", "Sea", "Air"};
+            for (int k = 0; k < 4; ++k) {
+                char id[16];
+                std::snprintf(id, sizeof(id), "##lout%d", k);
+                const Rect r = {bar.x + k * (bw + gap), bar.y, bw, bar.h};
+                if (IconBox(g, tip, id, r, Icon::None, t.outKind == k, "Outside connection: a two-way link to cities beyond the map, for people and cargo")) t.outKind = t.outKind == k ? -1 : k, t.lineBulldoze = false, t.cancelLine = true;
+                char lab[24];
+                std::snprintf(lab, sizeof(lab), "<> %s", kOut[k]);
+                g.TextIn(r, lab, t.outKind == k ? th.textBright : th.text, 0.5f, th.smallSize);
+            }
+            const Rect bd = {bar.x + bar.w - size, bar.y, size, bar.h};
+            if (IconBox(g, tip, "##lbulldoze", bd, Icon::Bulldoze, t.lineBulldoze, "Remove a checkpoint, line or outside connection")) t.lineBulldoze = !t.lineBulldoze, t.outKind = -1, t.cancelLine = true;
+        }
+        {
+            const Rect r = g.Reserve(std::round(18.0f * s), 0);
+            char hint[200];
+            if (t.lineBulldoze) std::snprintf(hint, sizeof(hint), "Remove: click a line, checkpoint or outside connection   Esc: stop");
+            else if (t.outKind >= 0) std::snprintf(hint, sizeof(hint), "Click to place a two-way outside connection (people and cargo both ways)   Esc: stop");
+            else if (t.lineStops == 0) std::snprintf(hint, sizeof(hint), "%s %s line: click the first checkpoint", city::TKindName(t.lkind), city::TModeName(t.lmode));
+            else std::snprintf(hint, sizeof(hint), "%d checkpoint%s: click the next, click the FIRST again to close the loop, Enter to finish, Esc to cancel", t.lineStops, t.lineStops == 1 ? "" : "s");
+            g.TextIn(r, hint, th.muted, 0.0f, th.smallSize);
+            const Rect r2 = g.Reserve(std::round(18.0f * s), 0);
+            g.TextIn(r2, t.status, th.text, 0.0f, th.smallSize);
+        }
+        g.EndPanel();
+        if (tip.on) g.Chip(tip.x, tip.y, tip.text);
+        return false;
+    }
 
     // ---------------------------------------------------------------- picker (bottom centre): info card, tabs, tiles
     const float panelW = std::clamp(g.In().viewW / s - (8.0f + 448.0f + 8.0f + 8.0f), 340.0f, 700.0f);
@@ -270,11 +349,13 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
     {
         const float size = std::round(40.0f * s), gap = std::round(4.0f * s);
         const Rect bar = g.Reserve(size, panelW * s);
-        static const Icon kIcons[] = {Icon::Transport, Icon::Ship, Icon::Plane};
+        static const Icon kIcons[] = {Icon::Transport, Icon::Ship, Icon::Plane, Icon::Roads, Icon::Fire, Icon::Health, Icon::Park, Icon::Police, Icon::Education, Icon::Comms};
+        int slot = 0; // a service tab (Fire, Healthcare, Police, ...) is its own panel from its HUD button; the others share Transportation
         for (int i = 0; i < (int)city::TTab::Count; ++i) {
+            if (i != (int)t.tab && city::TabGroup((city::TTab)i) != city::TabGroup(t.tab)) continue;
             char id[16];
             std::snprintf(id, sizeof(id), "##ttab%d", i);
-            const Rect r = {std::round(bar.x + i * (size + gap)), bar.y, size, size};
+            const Rect r = {std::round(bar.x + slot++ * (size + gap)), bar.y, size, size};
             if (IconBox(g, tip, id, r, kIcons[i], (int)t.tab == i, city::TTabName((city::TTab)i))) t.SelectTab((city::TTab)i);
         }
         const Rect close = {bar.x + bar.w - size, bar.y, size, size};

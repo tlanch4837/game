@@ -95,6 +95,7 @@ struct Lot {
     V2 c, front; // front: the way the building's +Z (its street face) points, toward the road
     float y = 0;
     int w = 0, d = 0, type = 0;
+    int level = 1;             // the model's _L<level>; the sim levels lots up and down (Relevel)
     std::string path;
     float progress = 0, duration = 60; // game minutes
     bool alive = true;
@@ -115,6 +116,10 @@ public:
     uint64_t builtFrom = ~0ull;     // the road network version the cells were made from
     std::vector<uint64_t> removed;  // lots demolished since the host last emptied this (it deletes their buildings)
     int maxConstructing = 8;
+    // Demand gate (the city sim, S2): when on, a spawn first picks a zone category with weight catWeight[cat] (0 = that
+    // category does not grow now), then a free front cell of it. Off: the original uniform pick over all front cells.
+    bool gateSpawns = false;
+    float catWeight[(int)ZoneCat::Count] = {1, 1, 1, 1};
     std::vector<BlockRect> blockers; // no cell grows inside these (set the list, then force a Rebuild: builtFrom = ~0)
     std::mt19937 rng{20261106};
 
@@ -305,13 +310,20 @@ public:
     // The terrain changed (a lot was levelled): the cells' heights follow.
     void Reground(const GroundFn& ground) {
         if (!ground) return;
-        for (ZoneCell& z : cells) {
-            const float h = kCell * 0.5f;
-            const V2 q[4] = {z.c - z.dir * h - z.out * h, z.c + z.dir * h - z.out * h, z.c + z.dir * h + z.out * h, z.c - z.dir * h + z.out * h};
-            for (int k = 0; k < 4; ++k) z.y[k] = ground(q[k].x, q[k].z);
-            z.yc = ground(z.c.x, z.c.z);
-        }
+        for (ZoneCell& z : cells) RegroundCell(z, ground);
         ++version;
+    }
+    // Only the cells within `radius` of p (a lot was levelled: the ground changed there and nowhere else).
+    void Reground(const GroundFn& ground, V2 p, float radius) {
+        if (!ground) return;
+        CellsNear(p, radius, [&](int j) { RegroundCell(cells[j], ground); });
+        ++version;
+    }
+    static void RegroundCell(ZoneCell& z, const GroundFn& ground) {
+        const float h = kCell * 0.5f;
+        const V2 q[4] = {z.c - z.dir * h - z.out * h, z.c + z.dir * h - z.out * h, z.c + z.dir * h + z.out * h, z.c - z.dir * h + z.out * h};
+        for (int k = 0; k < 4; ++k) z.y[k] = ground(q[k].x, q[k].z);
+        z.yc = ground(z.c.x, z.c.z);
     }
 
     // ---------------------------------------------------------------- roads in front of a lot
@@ -472,6 +484,58 @@ public:
         if (spawnTimer_ < 0) spawnTimer_ = 0;
     }
 
+    // Dev / stress tools: one spawn attempt now, outside the clock and the construction cap.
+    bool SpawnNow() { return TrySpawn(); }
+
+    // A saved lot back on its cells (game load). False when a cell is missing, taken, or not zoned for it: that lot is
+    // dropped and the zone regrows.
+    bool AddLoadedLot(Lot l) {
+        if (l.cells.empty()) return false;
+        for (int ci : l.cells)
+            if (ci < 0 || ci >= (int)cells.size() || cells[ci].lot >= 0 || cells[ci].zone != (uint8_t)l.type) return false;
+        l.frontSeg = cells[l.cells.front()].seg;
+        l.alive = true;
+        const int li = (int)lots.size();
+        for (int ci : l.cells) cells[ci].lot = li;
+        nextLot_ = std::max(nextLot_, l.id + 1);
+        lots.push_back(std::move(l));
+        ++version;
+        return true;
+    }
+    // The cell whose centre is nearest p within `maxDist` (-1 none).
+    int NearestCell(V2 p, float maxDist) const {
+        int best = -1;
+        float bd = maxDist;
+        CellsNear(p, maxDist, [&](int j) {
+            const float d = Len(cells[j].c - p);
+            if (d < bd) bd = d, best = j;
+        });
+        return best;
+    }
+
+    // Swaps lot li to a model of the same type and footprint at `level` and starts its construction again. False (and
+    // nothing changes) when the catalog has no such model.
+    bool Relevel(int li, int level) {
+        if (li < 0 || li >= (int)lots.size() || !lots[li].alive) return false;
+        Lot& l = lots[li];
+        std::vector<const BuildingModel*> fit;
+        for (const BuildingModel& m : models)
+            if (m.type == l.type && m.w == l.w && m.d == l.d && m.level == level) fit.push_back(&m);
+        if (fit.empty()) return false;
+        const BuildingModel& m = *fit[rng() % fit.size()];
+        l.level = level;
+        l.path = m.path;
+        l.progress = 0;
+        l.duration = ConstructMinutes(m);
+        ++version;
+        return true;
+    }
+    bool HasModel(int type, int w, int d, int level) const {
+        for (const BuildingModel& m : models)
+            if (m.type == type && m.w == w && m.d == d && m.level == level) return true;
+        return false;
+    }
+
     static float ConstructMinutes(const BuildingModel& m) { return ZoneTypes()[m.type].pitched ? 50.0f : 45.0f + 4.0f * m.w * m.d; }
 
 private:
@@ -515,6 +579,15 @@ private:
         for (size_t i = 0; i < cells.size(); ++i)
             if (cells[i].depth == 0 && cells[i].zone != kNoZone && cells[i].lot < 0) fronts.push_back((int)i);
         if (fronts.empty()) return false;
+        if (gateSpawns) { // demand first: a category by weight, then its front cells only
+            std::vector<int> byCat[(int)ZoneCat::Count];
+            for (int f : fronts) byCat[(int)ZoneTypes()[cells[f].zone].cat].push_back(f);
+            float w[(int)ZoneCat::Count], sum = 0;
+            for (int c = 0; c < (int)ZoneCat::Count; ++c) sum += (w[c] = byCat[c].empty() ? 0.0f : std::max(0.0f, catWeight[c]));
+            if (sum <= 0) return false;
+            std::discrete_distribution<int> pickCat(w, w + (int)ZoneCat::Count);
+            fronts = std::move(byCat[pickCat(rng)]);
+        }
         for (int attempt = 0; attempt < 6; ++attempt) {
             const ZoneCell& s = cells[fronts[rng() % fronts.size()]];
             const uint8_t zone = s.zone;
@@ -546,7 +619,7 @@ private:
             const BuildingModel& m = *fit[pick(rng)];
             Lot l;
             l.id = nextLot_++;
-            l.w = m.w, l.d = m.d, l.type = m.type, l.path = m.path;
+            l.w = m.w, l.d = m.d, l.type = m.type, l.path = m.path, l.level = m.level;
             l.duration = ConstructMinutes(m);
             V2 sum{};
             float ysum = 0;

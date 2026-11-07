@@ -45,6 +45,11 @@ if not exist "%OUT%" mkdir "%OUT%"
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E VSVegetationDepth -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_veg_depth_vs.spv" "%SRC%\mesh.hlsl" || exit /b 1
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E PSVegetationDepth -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_veg_depth_ps.spv" "%SRC%\mesh.hlsl" || exit /b 1
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E PSVegetationShade -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_veg_shade_ps.spv" "%SRC%\mesh.hlsl" || exit /b 1
+rem City chunk bakes and volumes (Track R): the bake pass and ChunkVolPS (src\city_buildings.inl).
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E ChunkBakeVS -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_chunk_bake_vs.spv" "%SRC%\mesh.hlsl" || exit /b 1
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E ChunkBakePS -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_chunk_bake_ps.spv" "%SRC%\mesh.hlsl" || exit /b 1
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E ChunkVolVS -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_chunk_vol_vs.spv" "%SRC%\mesh.hlsl" || exit /b 1
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E ChunkVolPS -DVULKAN -I "%SRC%" -Fo "%OUT%\mesh_chunk_vol_ps.spv" "%SRC%\mesh.hlsl" || exit /b 1
 rem The smooth in-game UI (Renderer::DrawUi): rounded boxes, shadows, capsules and SDF text.
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E UiVS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_vs.spv" "%SRC%\ui.hlsl" || exit /b 1
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E UiPS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_ps.spv" "%SRC%\ui.hlsl" || exit /b 1

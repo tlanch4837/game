@@ -10,6 +10,7 @@
 tbd::city::UtilWorld g_util;
 tbd::gui::UtilToolState g_utilTool;
 tbd::city::UtilReport g_utilReport;
+tbd::city::UtilSolveCache g_utilSolve; // when g_utilReport was last solved (versions of roads, zones, utilities)
 struct UtilInput {
     bool have = false; // cursor on the ground
     tbd::Vec3 hit{};
@@ -41,7 +42,7 @@ tbd::city::PlaceContext UtilContext() {
     cx.net = &g_roads.net;
     cx.zones = &g_zones;
     cx.ground = RoadsGround;
-    cx.sea = g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 1 ? tbd::IslandMap::kSeaLevel : -1e9f;
+    cx.sea = g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind >= 1 ? tbd::IslandMap::kSeaLevel : -1e9f;
     return cx;
 }
 
@@ -245,12 +246,7 @@ void UtilSync(float realDt) {
     UtilDemo();
     const float minutes = realDt * g_clock.Rate();
     if (minutes > 0) g_util.Tick(minutes);
-    static uint64_t kNet = ~0ull, kZone = ~0ull, kUtil = ~0ull;
-    if (kNet != g_roads.net.version || kZone != g_zones.version || kUtil != g_util.version) {
-        kNet = g_roads.net.version, kZone = g_zones.version;
-        g_util.Solve(g_roads.net, g_zones, g_utilReport);
-        kUtil = g_util.version;
-    }
+    g_utilSolve.Update(g_util, g_roads.net, g_zones, g_utilReport); // only when roads, zones or utilities changed
     bool changed = false;
     for (uint64_t id : g_util.removed) { // demolished (bulldozed, or 15 days without a road): the building goes
         auto it = g_utilEntity.find(id);

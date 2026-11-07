@@ -110,12 +110,7 @@ inline bool UtilityToolbar(Context& g, UtilToolState& t, const city::UtilReport&
     using namespace util_ui;
     const float s = g.Scale();
     if (!t.active) {
-        g.BeginPanel("##utilities launcher", Anchor::BottomCenter, -300.0f, lift, 0.0f, 0.0f, 6.0f);
-        g.NextWidth(132);
-        const bool open = g.Button("Utilities", Icon::Utilities);
-        g.EndPanel();
-        if (open) t.active = true;
-        return open;
+        return false; // the city HUD's toolbar (city_hud.h) opens it
     }
     const Theme& th = g.Style();
     Tip tip;

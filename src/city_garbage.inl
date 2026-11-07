@@ -73,9 +73,16 @@ inline int CompAt(const tbd::city::Network& net, const std::vector<int>& segComp
 }
 } // namespace garbage
 
+// Runs once per game hour on the minutes gathered since (it used to run every frame, looping lots x facilities): the
+// same totals per game month, collected in hourly batches instead of per frame. Each lot only looks at the facilities on
+// its own road network component.
 void GarbageSync(float realDt) {
     using namespace garbage;
-    const float minutes = realDt * g_clock.Rate();
+    static float pending = 0;
+    pending += realDt * g_clock.Rate() * g_clockBoost;
+    if (pending < 60.0f) return;
+    const float minutes = pending;
+    pending = 0;
     const float months = minutes / (30.0f * 1440.0f);
     const auto& net = g_roads.net;
     static std::vector<int> segComp;
@@ -102,6 +109,9 @@ void GarbageSync(float realDt) {
         fac.push_back({k, i, gate, CompAt(net, segComp, gate, 12.0f), T.tPerMonth, k == Facility::Hazardous ? kRange * 2 : kRange});
     }
     for (const Facility& f : fac) st.capacityPerMonth += f.capacity;
+    std::unordered_map<int, std::vector<int>> facByComp; // road component -> its open facilities
+    for (int f = 0; f < (int)fac.size(); ++f)
+        if (fac[(size_t)f].capacity > 0 && fac[(size_t)f].comp >= 0) facByComp[fac[(size_t)f].comp].push_back(f);
 
     // ---- lots produce; each lot is served by the nearest open facility on its road network (industrial waste site
     //      first for industry), facilities fill up in order of distance
@@ -117,9 +127,10 @@ void GarbageSync(float realDt) {
         const int comp = l.frontSeg >= 0 && l.frontSeg < (int)segComp.size() ? segComp[(size_t)l.frontSeg] : -1;
         int best = -1;
         float bestD = 1e30f;
-        for (int f = 0; f < (int)fac.size(); ++f) {
+        const auto fc = facByComp.find(comp);
+        static const std::vector<int> kNone;
+        for (int f : fc == facByComp.end() ? kNone : fc->second) {
             const Facility& F = fac[(size_t)f];
-            if (F.capacity <= 0 || F.comp < 0 || F.comp != comp) continue;
             float d = tbd::city::Len(F.at - l.c);
             if (d > F.range) continue;
             if (F.kind == Facility::Hazardous) d = Industrial(l.type) ? d * 0.25f : d * 4.0f; // industry prefers it, others avoid it

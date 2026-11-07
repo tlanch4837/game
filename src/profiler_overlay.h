@@ -13,6 +13,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -37,6 +38,23 @@ struct Sample {
     uint64_t triangles = 0;
     uint32_t entities = 0, entitiesDrawn = 0, sceneDraws = 0;
     uint32_t instancesDrawn = 0, instancesTotal = 0, instanceRanges = 0, casterInstances = 0;
+    // Draws and triangles by kind (main.cpp's DrawCats, the last finished frame).
+    struct Cat {
+        const char* name = "";
+        uint32_t draws = 0;
+        uint64_t triangles = 0;
+    };
+    std::vector<Cat> cats;
+    // The city sim scheduler (city_sim.inl SimProfile): totals, then one row per registered system.
+    struct SimRow {
+        std::string name;
+        double ms = 0.0, avgMs = 0.0;
+    };
+    bool simActive = false;
+    double simMs = 0.0, simAvgMs = 0.0, simBudgetMs = 0.0, simBacklog = 0.0;
+    uint32_t simTicks = 0;
+    std::vector<SimRow> sim;
+    std::vector<std::pair<std::string, std::string>> simInfo; // label, value (demand, population, levels)
 };
 
 // The streamer's state (world_streaming.inl fills it in Streamer::Snapshot()).
@@ -256,6 +274,26 @@ public:
         row("INSTANCES", Grouped(smp.instancesDrawn) + " OF " + Grouped(smp.instancesTotal), cText);
         row("INSTANCE RANGES", Grouped(smp.instanceRanges), cText);
         row("SHADOW INSTANCES", Grouped(smp.casterInstances), cText);
+
+        if (!smp.cats.empty()) {
+            section("DRAWS BY KIND");
+            for (const Sample::Cat& c : smp.cats)
+                if (c.draws || c.triangles) row(c.name, Grouped(c.draws) + "   " + Grouped(c.triangles / 1000) + "K TRIS", cText);
+        }
+
+        if (smp.simActive) {
+            section("CITY SIM");
+            const Vec3 simColor = smp.simMs <= smp.simBudgetMs + 0.25 ? cText : cWarn;
+            row("SIM FRAME", Fmt("%.2f", smp.simMs) + " / " + Fmt("%.2f MS", smp.simBudgetMs), simColor);
+            row("SIM AVERAGE", Fmt("%.2f MS", smp.simAvgMs), cText);
+            row("TICKS", Grouped(smp.simTicks) + "   BEHIND " + Fmt("%.0f MIN", smp.simBacklog), smp.simBacklog >= 2.0 ? cWarn : cText);
+            for (const Sample::SimRow& sys : smp.sim) {
+                std::string label = sys.name;
+                for (char& ch : label) ch = (char)std::toupper((unsigned char)ch);
+                row(label.c_str(), Fmt("%.3f", sys.ms) + " / " + Fmt("%.3f MS", sys.avgMs), cText);
+            }
+            for (const auto& info : smp.simInfo) row(info.first.c_str(), info.second, cText);
+        }
 
         if (st.active) {
             section("STREAMING");

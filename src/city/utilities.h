@@ -505,6 +505,21 @@ private:
     }
 };
 
+// Solves only when the road network, the zone grid or the utilities changed since the last solve; the report is the
+// cache. The city sim reads its per-lot result (sim_coverage.h ApplyUtilities) without solving again.
+struct UtilSolveCache {
+    uint64_t net = ~0ull, zones = ~0ull, util = ~0ull;
+    uint64_t solves = 0;
+    bool Update(UtilWorld& w, const Network& n, const ZoneGrid& z, UtilReport& out) {
+        if (net == n.version && zones == z.version && util == w.version) return false;
+        net = n.version, zones = z.version;
+        w.Solve(n, z, out);
+        util = w.version;
+        ++solves;
+        return true;
+    }
+};
+
 // Dimensions of a worked-out line, for the cost chip.
 inline int UtilLineCost(const UtilLine& l) { return (int)(l.Length() * UtilLineCostPerMetre(l.kind, l.elev)); }
 

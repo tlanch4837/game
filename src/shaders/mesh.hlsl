@@ -1186,7 +1186,7 @@ float4 SpomPS(VSOut i) {
     // Normal: the relief's own edge, from the gradient of whichever face of the layer was hit (its front, or its back when the
     // ray came at it from behind), so the slab's rim and a baluster's flank point sideways; plus the normal map's fine detail.
     float2 dim; gAlbedo.GetDimensions(dim.x, dim.y);
-    const float2 e = 1.5 / dim * size;
+    const float2 e = 3.5 / dim * size; // wide enough to average out the relief's 8-bit depth steps on rounded shapes (cattle)
     const float2 rC = SpomRange(q.xy, size);
     const bool back = abs(q.z - rC.x) < abs(q.z - rC.y) && rC.y > rC.x + 0.004 && rC.x > 0.02;
     const float2 rx = SpomRange(q.xy + float2(e.x, 0), size) - SpomRange(q.xy - float2(e.x, 0), size);
@@ -1603,8 +1603,21 @@ float4 InteriorPS(VSOut i) {
     return float4(lerp(glass, ovLit, ov.a), 0.76 + 0.23 * share);
 }
 
+// Track R's dithered LOD transitions (Renderer::SetDrawFade): an old and a new representation of the same buildings, each showing the
+// pixels the other hides, by a per-pixel value that moves every frame so TAA blends the two.
+float FadeNoise(float2 p) {
+    p += fmod(gLight.eye.w, 64.0) * 5.588238;
+    return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715))));
+}
+bool FadeHides(float2 pixel, float keep) {
+    if (keep == 0.0 || abs(keep) >= 0.999) return false;
+    const float n = FadeNoise(pixel);
+    return keep > 0.0 ? n >= keep : n < -keep;
+}
+
 // The HDR scene: linear color, physically based sun. Vertex alpha below 0.25 marks terrain.
 float4 PSMain(VSOut i) : SV_Target {
+    if (FadeHides(i.pos.xy, MATERIAL_CONSTANTS.w)) discard;
     gShadowPixel = i.pos.xy;
     if (FEATURE_OFF(256)) { // Graphics > Quality: Unlit (and TBD_FEATURECOST): the texture under a fixed half-Lambert key, no shadows or probes
         float4 tex = gAlbedo.Sample(gTexSampler, i.uv);
@@ -1760,4 +1773,197 @@ float4 ShadowInstancedVS(VSIn v, InstanceIn inst) : SV_Position {
         world = root + (world - root) * (t * t * (3.0 - 2.0 * t));
     }
     return mul(pc.mvp, float4(world, 1.0));
+}
+
+// ------------------------------------------------------------------ city chunk bakes and volumes (Track R, src/city_buildings.inl)
+// The bake: a cell's buildings drawn through one face's orthographic matrix (ChunkFaceMatrix, chunk_faces.hlsli) into the impostor
+// store's three targets. Two pipelines share this shader: the surface pass (depth LESS; targets 0 and 1) and the relief pass (no
+// depth test, MIN blend into target 2 only), so target 2 ends up with the first and the last surface along the face's view.
+#include "chunk_faces.hlsli"
+struct ChunkBakeVSOut {
+    float4 pos : SV_Position;
+    float4 color : COLOR;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+};
+ChunkBakeVSOut ChunkBakeVS(VSIn v, InstanceIn inst) {
+    ChunkBakeVSOut o;
+    const float3 world = InstanceWorld(v, inst);
+    o.pos = mul(pc.mvp, float4(world, 1.0));
+    const float3 c0 = float3(inst.row0.x, inst.row1.x, inst.row2.x), c1 = float3(inst.row0.y, inst.row1.y, inst.row2.y), c2 = float3(inst.row0.z, inst.row1.z, inst.row2.z);
+    o.normal = cross(c1, c2) * v.normal.x + cross(c2, c0) * v.normal.y + cross(c0, c1) * v.normal.z;
+    o.color = v.color;
+    o.uv = v.uv;
+    return o;
+}
+struct ChunkBakeOut {
+    float4 albedo : SV_Target0;
+    float4 normal : SV_Target1;
+    float2 relief : SV_Target2;
+};
+ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
+    ChunkBakeOut o;
+    const float a = i.color.a;
+    float3 albedo;
+    if (a > 0.806 && a < 0.824) { // SPOM slab: rgb is the slab's frame, the texture spans the face (SlabPS)
+        const bool roof = a > 0.815;
+        const float2 size = max(i.color.gb, 0.1);
+        albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, roof ? i.uv.y / size.y : 1.0 - i.uv.y / size.y), 2.0).rgb;
+    } else if (abs(a - 0.8) < 0.004) { // silhouette POM volume (SpomPS): rg the volume's size
+        const float2 size = max(i.color.rg, 0.05);
+        albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, 1.0 - i.uv.y / size.y), 2.0).rgb;
+    } else if (abs(a - 0.665) < 0.003 || abs(a - 0.70) < 0.003 || abs(a - 0.645) < 0.003) { // windows: a dark pane
+        albedo = float3(0.16, 0.19, 0.23);
+    } else {
+        const float4 tex = gAlbedo.SampleLevel(gTexSampler, i.uv, 2.0);
+        clip(tex.a - 0.4);
+        albedo = tex.rgb * saturate(i.color.rgb);
+    }
+    const float3 n = dot(i.normal, i.normal) > 1e-8 ? normalize(i.normal) : float3(0, 1, 0);
+    o.albedo = float4(albedo, 1.0);
+    o.normal = float4(n * 0.5 + 0.5, 1.0);
+    o.relief = float2(i.pos.z, 1.0 - i.pos.z);
+    return o;
+}
+
+// The chunk volume: one box per far cell, its vertices carrying the box (ChunkVolVS). Each pixel marches the eye ray through the box
+// against the top face's relief (at most 24 steps, then 4 bisections), colours the hit from the face that sees it (the top for a
+// roof, the side facing the ray for a wall, checked against that side's own first surface), lights it like any surface and writes
+// its depth (only ever farther than the box: SV_DepthLessEqual under reversed z keeps early rejection).
+// Vertex alpha 0.852 marks these vertices (free in PSMain's codes), should one ever reach the ordinary pipeline.
+struct ChunkVSOut {
+    noperspective centroid float4 pos : SV_Position; // fxc: a conservative depth output wants this on the position
+    float3 worldPos : TEXCOORD0;
+    nointerpolation float3 boxLo : TEXCOORD1;
+    nointerpolation float3 boxSize : TEXCOORD2;
+    nointerpolation float2 slot : TEXCOORD3; // the cell's strip: its first texel in the atlas
+    float4 clip : TEXCOORD4;
+    nointerpolation float4 eyeClip : TEXCOORD5; // the eye through the same matrix: clip space is linear along the ray
+    nointerpolation float2 qf : TEXCOORD6;      // x the quality (0 low, 1 medium, 2 high), y the fade (SetDrawFade's meaning)
+};
+ChunkVSOut ChunkVolVS(VSIn v) {
+    ChunkVSOut o;
+    o.pos = mul(pc.mvp, float4(v.pos, 1.0));
+    o.worldPos = v.pos;
+    o.boxLo = v.normal;
+    o.boxSize = max(v.color.rgb, 0.01);
+    o.slot = v.uv;
+    o.clip = o.pos;
+    o.eyeClip = mul(pc.mvp, float4(gLight.eye.xyz, 1.0));
+    // alpha = 0.851 + 0.001 * quality + 0.00045 * (fade + 1): the free codes 0.851 .. 0.854 (city_buildings.inl, VolCode)
+    const float x = (v.color.a - 0.851) * 1000.0;
+    const float q = clamp(floor(x + 1e-3), 0.0, 2.0);
+    o.qf = float2(q, clamp((x - q) / 0.45 - 1.0, -1.0, 1.0));
+    return o;
+}
+static float2 sChunkSlot = float2(0, 0);
+static float sChunkTile = 64.0;
+static float2 sChunkAtlas = float2(4096, 4096);
+float2 ChunkTexel(int f, float2 uv) { // texel position (not normalized) of face f's (u, v), kept half a texel inside the tile
+    const float2 t = clamp(uv, 0.5 / sChunkTile, 1.0 - 0.5 / sChunkTile) * sChunkTile;
+    return sChunkSlot + float2(f * sChunkTile, 0.0) + t;
+}
+float2 ChunkRelief(int f, float2 uv) { // x: where the solid starts, y: where it ends (0..1 along the face's view); y < x: empty
+    const float2 r = gSurface.SampleLevel(gTexSampler, (floor(ChunkTexel(f, uv)) + 0.5) / sChunkAtlas, 0.0).rg; // the texel's own pair
+    return float2(r.x, 1.0 - r.y);
+}
+bool ChunkSolid(float3 q) {
+    const float3 t = ChunkFaceUVD(0, q);
+    const float2 r = ChunkRelief(0, t.xy);
+    return r.y > r.x && t.z >= r.x - 0.002 && t.z <= r.y + 0.002;
+}
+struct ChunkVolOut {
+    float4 color : SV_Target0;
+    float depth : SV_DepthLessEqual;
+};
+float ChunkCheapShadow(float3 sp) { // the low tier: one hardware-filtered tap of the sun's map
+    if (gLight.shadowParams.w < 0.5) return 1.0;
+    const float2 uv = float2(sp.x * 0.5 + 0.5, 0.5 - sp.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || sp.z >= 1.0) return 1.0;
+    return gShadowMap.SampleCmpLevelZero(gShadowSampler, uv, sp.z);
+}
+// Tiers (R5), all from the same bake: high 24 march steps and 4 bisections with the full shadow filter; medium 12 and 2; low 6 and 1
+// with one shadow tap. City_buildings.inl picks one per cell from its size on screen, capped by TBD_CHUNK_QUALITY.
+ChunkVolOut ChunkVolPS(ChunkVSOut i, bool front : SV_IsFrontFace) {
+    if (FadeHides(i.pos.xy, i.qf.y)) discard;
+    const int quality = (int)i.qf.x;
+    gShadowPixel = i.pos.xy;
+    sChunkSlot = i.slot;
+    sChunkTile = max(MATERIAL_CONSTANTS.z, 4.0);
+    gSurface.GetDimensions(sChunkAtlas.x, sChunkAtlas.y);
+    const float3 eye = gLight.eye.xyz, lo = i.boxLo, size = i.boxSize;
+    const float3 toP = i.worldPos - eye;
+    const float lenP = length(toP);
+    const float3 vw = toP / lenP;
+    // The ray against the box, from the eye: [tIn, tOut] metres. A back face only works when the eye is inside (front faces gone).
+    const float3 safe = float3(abs(vw.x) > 1e-6 ? vw.x : 1e-6, abs(vw.y) > 1e-6 ? vw.y : 1e-6, abs(vw.z) > 1e-6 ? vw.z : 1e-6);
+    const float3 inv = 1.0 / safe;
+    const float3 ta = (lo - eye) * inv, tb = (lo + size - eye) * inv;
+    const float3 tmin = min(ta, tb), tmax = max(ta, tb);
+    const float tIn = max(max(max(tmin.x, tmin.y), tmin.z), 0.0), tOut = min(min(tmax.x, tmax.y), tmax.z);
+    const bool inside = all(eye > lo) && all(eye < lo + size);
+    if (!front && !inside) discard;
+    if (tOut <= tIn) discard;
+    const float3 q0 = (eye + vw * tIn - lo) / size, dq = vw / size; // box space: q(t) = q0 + dq * (t - tIn)
+    const int kSteps = quality >= 2 ? 24 : quality == 1 ? 12 : 6;
+    const float dt = (tOut - tIn) / kSteps;
+    float tLo = 0.0, tHi = 0.0;
+    bool hit = false;
+    [loop] for (int k = 0; k <= kSteps; ++k) {
+        tHi = dt * k;
+        if (ChunkSolid(q0 + dq * tHi)) { hit = true; break; }
+        tLo = tHi;
+    }
+    if (!hit) discard;
+    const int kBisect = quality >= 2 ? 4 : quality == 1 ? 2 : 1;
+    [loop] for (int r = 0; r < kBisect; ++r) {
+        const float tm = 0.5 * (tLo + tHi);
+        if (ChunkSolid(q0 + dq * tm)) tHi = tm; else tLo = tm;
+    }
+    const float3 q = q0 + dq * tHi, qLo = q0 + dq * tLo;
+    // Which face sees the hit: the top when the ray came down onto the solid (the sample before it lay over the same column). Else a
+    // wall: it faces whichever neighbouring top texel toward the eye, along x or along z, is open at the hit's depth. That side face
+    // colours it, unless its first surface there is another building in front (then the other axis' side, if that one sees it).
+    const float3 tTop = ChunkFaceUVD(0, qLo);
+    const float2 rTop = ChunkRelief(0, tTop.xy);
+    int face = 0;
+    if (!(rTop.y > rTop.x && tTop.z < rTop.x + 0.01)) {
+        const float3 tq = ChunkFaceUVD(0, q);
+        const float e = 1.0 / sChunkTile;
+        const float sx = dq.x < 0.0 ? 1.0 : -1.0, sz = dq.z < 0.0 ? 1.0 : -1.0; // toward the eye; the top face's u is x, v is z
+        const float2 rx = ChunkRelief(0, tq.xy + float2(sx * e, 0.0)), rz = ChunkRelief(0, tq.xy + float2(0.0, sz * e));
+        const bool openX = !(rx.y > rx.x) || rx.x > tq.z, openZ = !(rz.y > rz.x) || rz.x > tq.z;
+        const bool alongX = openX == openZ ? abs(vw.x) >= abs(vw.z) : openX;
+        face = ChunkSideFacing(dq, alongX);
+        const float3 ts = ChunkFaceUVD(face, q);
+        const float2 rs = ChunkRelief(face, ts.xy);
+        if (!(rs.y > rs.x) || abs(ts.z - rs.x) > 0.06) {
+            const int other = ChunkSideFacing(dq, !alongX);
+            const float3 to = ChunkFaceUVD(other, q);
+            const float2 ro = ChunkRelief(other, to.xy);
+            if (ro.y > ro.x && abs(to.z - ro.x) <= 0.06) face = other;
+        }
+    }
+    const float2 fuv = ChunkFaceUVD(face, q).xy;
+    const float2 at = ChunkTexel(face, fuv) / sChunkAtlas;
+    const float4 albedo = gAlbedo.SampleLevel(gTexSampler, at, 0.0);
+    const float4 nTex = gNormalMap.SampleLevel(gTexSampler, at, 0.0);
+    const float3 n = normalize(nTex.xyz * 2.0 - 1.0 + float3(0, 1e-4, 0));
+    const float t = tIn + tHi;
+    const float3 wp = eye + vw * t;
+    // Its own light: the sun's shadow at the hit (normal-offset as ShadeVertex does), clouds, sky.
+    const float grazing = 1.0 - saturate(dot(n, gLight.sunDir.xyz));
+    const float3 shadowPos = mul(gLight.shadowVP, float4(wp + n * (gLight.shadowParams.z * (1.0 + 2.0 * grazing)), 1.0)).xyz;
+    const float3 tightPos = mul(gLight.tightVP, float4(wp + n * (gLight.tightParams.z * (1.0 + 2.0 * grazing)), 1.0)).xyz;
+    gTightSoft = 1.0;
+    gPixelShadow = quality >= 1 ? ShadowFactor(shadowPos, tightPos) : ChunkCheapShadow(shadowPos);
+    gMatAO = nTex.a;
+    const float cloudSun = CloudSun(wp);
+    float share;
+    const float3 lit = LitPbr(pow(saturate(albedo.rgb), 2.2), n, wp, gPixelShadow * cloudSun, 0.8, 0.0, cloudSun, share);
+    ChunkVolOut o;
+    o.color = float4(lit, 0.76 + 0.23 * share);
+    const float4 c = i.eyeClip + (i.clip - i.eyeClip) * (t / lenP);
+    o.depth = saturate(c.z / c.w);
+    return o;
 }

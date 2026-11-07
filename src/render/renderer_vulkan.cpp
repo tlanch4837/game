@@ -1,6 +1,7 @@
 // Vulkan backend (1.3: dynamic rendering + synchronization2, so there are no render passes or framebuffers).
 #include "mesh_weld.h"
 #include "renderer.h"
+#include "chunk_faces.h"
 
 #ifndef TBD_HAVE_VULKAN
 
@@ -1040,6 +1041,320 @@ public:
         if (prepass_ == 1) return; // the pre-pass: its draws are counted once, when shaded
         ++counts_.draws;
         counts_.triangles += (uint64_t)(mesh.count / 3) * count;
+    }
+
+    void DrawInstancedTransient(MeshId id, const float* rows, uint32_t count, const Mat4& viewProj) override {
+        if (!frameActive_ || count == 0 || !rows || resolved_ || id >= meshes_.size() || !meshes_[id].buffer.buffer || meshes_[id].topology != Topology::Triangles)
+            return;
+        const size_t bytes = (size_t)count * kInstanceStride;
+        const size_t offset = (used_ + 15) & ~size_t(15);
+        if (offset + bytes > kTransientBytes) {
+            Log("Vulkan: transient buffer full, instanced draw dropped");
+            return;
+        }
+        std::memcpy(static_cast<uint8_t*>(frame_->transient.mapped) + offset, rows, bytes);
+        used_ = offset + bytes;
+        const Mesh& mesh = meshes_[id];
+        PushConstants pc;
+        std::memcpy(pc.mvp, viewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, instancedPipeline_);
+        vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        const VkBuffer buffers[2] = {mesh.buffer.buffer, frame_->transient.buffer};
+        const VkDeviceSize offsets[2] = {mesh.base, (VkDeviceSize)offset};
+        vkCmdBindVertexBuffers(cmd_, 0, 2, buffers, offsets);
+        if (mesh.indexed) {
+            vkCmdBindIndexBuffer(cmd_, mesh.buffer.buffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_, mesh.count, count, 0, 0, 0);
+        } else {
+            vkCmdDraw(cmd_, mesh.count, count, 0, 0);
+        }
+        ++counts_.draws;
+        counts_.triangles += (uint64_t)(mesh.count / 3) * count;
+    }
+
+    void SetDrawFade(float keep) override {
+        materialConstants_[3] = keep;
+        if (frameActive_ && !resolved_) vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(PushConstants), sizeof(materialConstants_), materialConstants_);
+    }
+
+    void DrawShadowInstancedTransient(MeshId id, const float* rows, uint32_t count) override {
+        if (!shadowActive_ || count == 0 || !rows || id >= meshes_.size() || !meshes_[id].buffer.buffer || meshes_[id].topology != Topology::Triangles) return;
+        const size_t bytes = (size_t)count * kInstanceStride;
+        const size_t offset = (used_ + 15) & ~size_t(15);
+        if (offset + bytes > kTransientBytes) {
+            Log("Vulkan: transient buffer full, instanced caster dropped");
+            return;
+        }
+        std::memcpy(static_cast<uint8_t*>(frame_->transient.mapped) + offset, rows, bytes);
+        used_ = offset + bytes;
+        if (!shadowInstancedBound_ || forceShadowRebind_) {
+            forceShadowRebind_ = false;
+            vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowTarget_ == ShadowMap::Tight ? tightInstancedPipeline_ : shadowInstancedPipeline_);
+            shadowInstancedBound_ = true;
+        }
+        PushConstants pc;
+        std::memcpy(pc.mvp, lightVP_.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        DrawTransientInstances(meshes_[id], offset, count);
+        ++counts_.shadowDraws;
+        counts_.shadowTriangles += (uint64_t)(meshes_[id].count / 3) * count;
+    }
+
+    // ------------------------------------------------------------------ city chunk bakes (Track R; renderer.h, shaders/chunk_faces.hlsli)
+    // The chunk store is an impostor store of its own (three channel arrays, one layer per face, channel 2 RG16 for the relief's
+    // start and end, and a tile depth buffer): a face is drawn into a layer, then copied into the atlas channel, a plain 2D image
+    // registered in textures_ so DrawChunkVolumes (and SetMaterial) binds it like any other texture.
+    static constexpr VkFormat kChunkFormats[3] = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16_UNORM};
+
+    void ReleaseChunkAtlas() {
+        if (!chunkTile_) return;
+        vkDeviceWaitIdle(device_);
+        for (TextureId& id : chunkTex_) {
+            DestroyTexture(id); // also drops the material sets that name it
+            id = kNoTexture;
+        }
+        for (StoreImage& img : chunkStore_) DestroyStoreImage(img);
+        DestroyStoreImage(chunkDepth_);
+        chunkTile_ = chunkW_ = chunkH_ = 0;
+    }
+
+    bool CreateChunkAtlas(uint32_t tile, uint32_t width, uint32_t height) override {
+        if (!device_ || frameActive_ || tile < 4 || width < tile * kChunkFaceCount || height < tile) return false;
+        if (tile == chunkTile_ && width == chunkW_ && height == chunkH_) return true;
+        ReleaseChunkAtlas();
+        chunkTile_ = tile, chunkW_ = width, chunkH_ = height; // from here a failure releases what was made
+        const auto fail = [this] { ReleaseChunkAtlas(); return false; };
+        for (int c = 0; c < 3; ++c) {
+            VkFormatProperties fp;
+            vkGetPhysicalDeviceFormatProperties(phys_, kChunkFormats[c], &fp);
+            const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT |
+                                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            if ((fp.optimalTilingFeatures & need) != need) {
+                Log("Vulkan: format %d cannot be rendered to, blended and sampled; no chunk atlas", (int)kChunkFormats[c]);
+                return fail();
+            }
+            if (!CreateStoreImage(kChunkFormats[c], tile, tile, (uint32_t)kChunkFaceCount,
+                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT, chunkStore_[c]))
+                return fail();
+        }
+        if (!CreateStoreImage(kDepthFormat, tile, tile, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, chunkDepth_)) return fail();
+        for (int c = 0; c < 3; ++c) {
+            Texture tex;
+            VkImageCreateInfo ii = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            ii.imageType = VK_IMAGE_TYPE_2D;
+            ii.format = kChunkFormats[c];
+            ii.extent = {width, height, 1};
+            ii.mipLevels = 1;
+            ii.arrayLayers = 1;
+            ii.samples = VK_SAMPLE_COUNT_1_BIT;
+            ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+            ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            if (!AllocateImage(ii, tex.image, tex.memory)) { DestroyTextureObjects(tex); return fail(); }
+            VkImageViewCreateInfo vi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = tex.image;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = ii.format; // RG16 reads (r, g, 0, 1)
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            if (vkCreateImageView(device_, &vi, nullptr, &tex.view) != VK_SUCCESS) { DestroyTextureObjects(tex); return fail(); }
+            TextureId id;
+            if (!freeTextures_.empty()) { id = freeTextures_.back(); freeTextures_.pop_back(); textures_[id] = tex; }
+            else { id = (TextureId)textures_.size(); textures_.push_back(tex); }
+            chunkTex_[c] = id;
+        }
+        // The atlas starts empty (channel 2 all ones: relief (1, 1) reads as nothing there), then rests in the shader-read layout.
+        const bool ok = Immediate([&] {
+            for (int c = 0; c < 3; ++c) {
+                const VkImage image = textures_[chunkTex_[c]].image;
+                ImageBarrier(image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                VkClearColorValue value = {};
+                if (c == 2) value.float32[0] = value.float32[1] = value.float32[2] = value.float32[3] = 1.0f;
+                const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                vkCmdClearColorImage(cmd_, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+                ImageBarrier(image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            }
+        });
+        if (!ok) return fail();
+        Log("Vulkan: chunk atlas %ux%u, %u px tiles (%u cells)", width, height, tile, (width / (tile * kChunkFaceCount)) * (height / tile));
+        return true;
+    }
+
+    TextureId ChunkAtlasTexture(int channel) const override { return channel >= 0 && channel < 3 ? chunkTex_[channel] : kNoTexture; }
+
+    bool BeginChunkBake() override {
+        if (!frameActive_ || resolved_ || shadowActive_ || chunkBaking_ || !chunkTile_ || !chunkBakePipelines_[0] || !chunkBakePipelines_[1]) return false;
+        vkCmdEndRendering(cmd_); // the main pass has drawn nothing yet; EndChunkBake starts it again
+        chunkBaking_ = true;
+        return true;
+    }
+
+    void ChunkBakeFace(const ChunkBakeItem* items, uint32_t count, const Mat4& faceViewProj, uint32_t atlasX, uint32_t atlasY) override {
+        if (!chunkBaking_ || atlasX + chunkTile_ > chunkW_ || atlasY + chunkTile_ > chunkH_) return;
+        const uint32_t layer = chunkLayer_++ % (uint32_t)kChunkFaceCount;
+        // Every layer is cleared before it is drawn, so the store's old contents never matter: from UNDEFINED, after the last copy.
+        for (StoreImage& img : chunkStore_)
+            ImageBarrier(img.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT, (uint32_t)kChunkFaceCount);
+        ImageBarrier(chunkDepth_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        VkRenderingAttachmentInfo colors[3] = {{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}, {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO},
+                                               {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO}};
+        const float clears[3][4] = {{0, 0, 0, 0}, {0.5f, 0.5f, 1.0f, 1.0f}, {1, 1, 0, 0}};
+        for (int c = 0; c < 3; ++c) {
+            colors[c].imageView = chunkStore_[c].layerViews[layer];
+            colors[c].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colors[c].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colors[c].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            std::memcpy(colors[c].clearValue.color.float32, clears[c], sizeof(clears[c]));
+        }
+        VkRenderingAttachmentInfo depth = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = chunkDepth_.layerViews[0];
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.clearValue.depthStencil = {1.0f, 0}; // the bake tests LESS, not reversed
+        VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {chunkTile_, chunkTile_}};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 3;
+        ri.pColorAttachments = colors;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(cmd_, &ri);
+        // Flipped like the main pass, so clip y = +1 is the image's top row, as on Direct3D: the atlas reads the same on both.
+        const VkViewport vp = {0.0f, (float)chunkTile_, (float)chunkTile_, -(float)chunkTile_, 0.0f, 1.0f};
+        const VkRect2D scissor = {{0, 0}, {chunkTile_, chunkTile_}};
+        vkCmdSetViewport(cmd_, 0, 1, &vp);
+        vkCmdSetScissor(cmd_, 0, 1, &scissor);
+        PushConstants pc;
+        std::memcpy(pc.mvp, faceViewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        // The rows go into the transient buffer once; both passes draw from there. SIZE_MAX marks an item that is skipped.
+        chunkOffsets_.assign(count, SIZE_MAX);
+        for (uint32_t k = 0; k < count; ++k) {
+            const ChunkBakeItem& it = items[k];
+            if (!it.rows || !it.count || it.mesh >= meshes_.size() || !meshes_[it.mesh].buffer.buffer || meshes_[it.mesh].topology != Topology::Triangles) continue;
+            const size_t bytes = (size_t)it.count * kInstanceStride, offset = (used_ + 15) & ~size_t(15);
+            if (offset + bytes > kTransientBytes) { Log("Vulkan: transient buffer full, chunk bake item dropped"); continue; }
+            std::memcpy(static_cast<uint8_t*>(frame_->transient.mapped) + offset, it.rows, bytes);
+            used_ = offset + bytes;
+            chunkOffsets_[k] = offset;
+        }
+        for (int pass = 0; pass < 2; ++pass) {
+            vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkBakePipelines_[pass]);
+            TextureId bound = kNoTexture;
+            bool any = false;
+            for (uint32_t k = 0; k < count; ++k) {
+                if (chunkOffsets_[k] == SIZE_MAX) continue;
+                if (!any || items[k].albedo != bound) { SetMaterial(items[k].albedo, kNoTexture, kNoTexture); bound = items[k].albedo; any = true; }
+                DrawTransientInstances(meshes_[items[k].mesh], chunkOffsets_[k], items[k].count);
+            }
+        }
+        vkCmdEndRendering(cmd_);
+        // Into the atlas.
+        for (int c = 0; c < 3; ++c) {
+            const VkImage atlas = textures_[chunkTex_[c]].image;
+            ImageBarrier(chunkStore_[c].image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                         VK_ACCESS_2_TRANSFER_READ_BIT, (uint32_t)kChunkFaceCount);
+            // The previous face's copy into the same image counts as well as this frame's samplers.
+            ImageBarrier(atlas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkImageCopy region = {};
+            region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
+            region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.dstOffset = {(int32_t)atlasX, (int32_t)atlasY, 0};
+            region.extent = {chunkTile_, chunkTile_, 1};
+            vkCmdCopyImage(cmd_, chunkStore_[c].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, atlas, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            ImageBarrier(atlas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+    }
+
+    void EndChunkBake() override {
+        if (!chunkBaking_) return;
+        chunkBaking_ = false;
+        BeginMainRendering(); // clears the scene's targets: nothing was drawn into them yet
+        SetMaterial(kNoTexture, kNoTexture, kNoTexture);
+    }
+
+    // A one-off copy between an atlas channel and a CPU buffer, outside the frame; waits. Rows tightly packed, top row first.
+    bool ChunkAtlasCopy(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, std::vector<uint8_t>* out, const uint8_t* in) {
+        if (channel < 0 || channel > 2 || !chunkTile_ || !w || !h || x + w > chunkW_ || y + h > chunkH_) return false;
+        const VkImage atlas = textures_[chunkTex_[channel]].image;
+        const size_t bytes = (size_t)w * h * 4;
+        Buffer staging;
+        if (!CreateBuffer(bytes, staging, true, out ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) {
+            DestroyBuffer(staging);
+            return false;
+        }
+        if (in) std::memcpy(staging.mapped, in, bytes);
+        const VkImageLayout copyLayout = out ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        const VkAccessFlags2 copyAccess = out ? VK_ACCESS_2_TRANSFER_READ_BIT : VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        const bool ok = Immediate([&] {
+            ImageBarrier(atlas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, copyLayout,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT, copyAccess);
+            VkBufferImageCopy region = {}; // bufferRowLength 0: tightly packed
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageOffset = {(int32_t)x, (int32_t)y, 0};
+            region.imageExtent = {w, h, 1};
+            if (out) vkCmdCopyImageToBuffer(cmd_, atlas, copyLayout, staging.buffer, 1, &region);
+            else vkCmdCopyBufferToImage(cmd_, staging.buffer, atlas, copyLayout, 1, &region);
+            ImageBarrier(atlas, VK_IMAGE_ASPECT_COLOR_BIT, copyLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, out ? 0 : VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            if (out) { // the copy's writes, for the host to map
+                VkMemoryBarrier2 mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+                mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+                mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+                mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+                VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+                dep.memoryBarrierCount = 1;
+                dep.pMemoryBarriers = &mb;
+                vkCmdPipelineBarrier2(cmd_, &dep);
+            }
+        });
+        if (ok && out) out->assign(static_cast<const uint8_t*>(staging.mapped), static_cast<const uint8_t*>(staging.mapped) + bytes);
+        DestroyBuffer(staging);
+        return ok;
+    }
+    bool ReadChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, std::vector<uint8_t>& out) override {
+        return ChunkAtlasCopy(channel, x, y, w, h, &out, nullptr);
+    }
+    bool WriteChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t* texels) override {
+        return texels && ChunkAtlasCopy(channel, x, y, w, h, nullptr, texels);
+    }
+
+    void DrawChunkVolumes(MeshId id, const Mat4& viewProj) override {
+        if (!frameActive_ || resolved_ || chunkBaking_ || !chunkTile_ || !chunkVolPipeline_ || id >= meshes_.size() || !meshes_[id].buffer.buffer || !meshes_[id].indexed) return;
+        const Mesh& mesh = meshes_[id];
+        vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, chunkVolPipeline_);
+        SetMaterial(chunkTex_[0], chunkTex_[1], chunkTex_[2]);
+        materialConstants_[2] = (float)chunkTile_;
+        vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(PushConstants), sizeof(materialConstants_), materialConstants_);
+        PushConstants pc;
+        std::memcpy(pc.mvp, viewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        vkCmdPushConstants(cmd_, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        vkCmdBindVertexBuffers(cmd_, 0, 1, &mesh.buffer.buffer, &mesh.base);
+        vkCmdBindIndexBuffer(cmd_, mesh.buffer.buffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd_, mesh.count, 1, 0, 0, 0);
+        ++counts_.draws;
+        counts_.triangles += mesh.count / 3;
+        materialConstants_[2] = 0.0f;
+        SetMaterial(kNoTexture, kNoTexture, kNoTexture);
     }
 
     void EndShadowPass() override {
@@ -2660,6 +2975,8 @@ private:
                         VK_CHECK(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &shade, nullptr, &prepassPipelines_[v][1]));
                     }
                 }
+                // Optional: without them the city simply has no chunk volumes (BeginChunkBake says false).
+                if (!CreateChunkPipelines(gi, instancedVi)) Log("Vulkan: chunk bake / volume pipelines unavailable (mesh_chunk_*.spv missing or failed)");
                 VkShaderModule vegetationVs = LoadShader(L"mesh_veg_vs.spv");
                 if (!vegetationVs) return false;
                 instancedStages[0].module = vegetationVs;
@@ -2809,6 +3126,77 @@ private:
         VK_CHECK(vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE));
         VK_CHECK(vkQueueWaitIdle(queue_));
         return true;
+    }
+
+    // The bake's two pipelines and the volumes' one. `scene` is the HDR scene's lit-triangle pipeline (depth tested, the velocity
+    // target untouched), `instancedVi` the instanced vertex input. All or none: a failure leaves none of them.
+    bool CreateChunkPipelines(const VkGraphicsPipelineCreateInfo& scene, const VkPipelineVertexInputStateCreateInfo& instancedVi) {
+        VkShaderModule bakeVs = LoadShader(L"mesh_chunk_bake_vs.spv"), bakePs = LoadShader(L"mesh_chunk_bake_ps.spv");
+        VkShaderModule volVs = LoadShader(L"mesh_chunk_vol_vs.spv"), volPs = LoadShader(L"mesh_chunk_vol_ps.spv");
+        bool ok = bakeVs && bakePs && volVs && volPs;
+        VkPipelineShaderStageCreateInfo stages[2] = {{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO},
+                                                     {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        for (int pass = 0; pass < 2 && ok; ++pass) {
+            stages[0].module = bakeVs;
+            stages[0].pName = "ChunkBakeVS";
+            stages[1].module = bakePs;
+            stages[1].pName = "ChunkBakePS";
+            VkPipelineColorBlendAttachmentState targets[3] = {};
+            const VkColorComponentFlags all = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            for (int t = 0; t < 3; ++t) targets[t].colorWriteMask = (pass == 0) == (t < 2) ? all : 0;
+            if (pass == 1) { // the relief: the nearest start and the farthest end over every surface, so MIN of (d, 1 - d)
+                VkPipelineColorBlendAttachmentState& b = targets[2];
+                b.blendEnable = VK_TRUE;
+                b.srcColorBlendFactor = b.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                b.colorBlendOp = VK_BLEND_OP_MIN;
+                b.srcAlphaBlendFactor = b.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                b.alphaBlendOp = VK_BLEND_OP_MIN;
+                b.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT;
+            }
+            VkPipelineColorBlendStateCreateInfo blend = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            blend.attachmentCount = 3;
+            blend.pAttachments = targets;
+            VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+            ds.depthTestEnable = pass == 0 ? VK_TRUE : VK_FALSE;
+            ds.depthWriteEnable = pass == 0 ? VK_TRUE : VK_FALSE;
+            ds.depthCompareOp = VK_COMPARE_OP_LESS;
+            VkPipelineRasterizationStateCreateInfo rs = *scene.pRasterizationState;
+            rs.cullMode = VK_CULL_MODE_NONE;
+            VkPipelineRenderingCreateInfo rendering = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+            rendering.colorAttachmentCount = 3;
+            rendering.pColorAttachmentFormats = kChunkFormats;
+            rendering.depthAttachmentFormat = kDepthFormat;
+            VkGraphicsPipelineCreateInfo gi = scene;
+            gi.pNext = &rendering;
+            gi.pStages = stages;
+            gi.pVertexInputState = &instancedVi;
+            gi.pRasterizationState = &rs;
+            gi.pDepthStencilState = &ds;
+            gi.pColorBlendState = &blend;
+            ok = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gi, nullptr, &chunkBakePipelines_[pass]) == VK_SUCCESS;
+        }
+        if (ok) { // the volumes: the scene's own state, ChunkVolPS writing depth as well
+            stages[0].module = volVs;
+            stages[0].pName = "ChunkVolVS";
+            stages[1].module = volPs;
+            stages[1].pName = "ChunkVolPS";
+            VkGraphicsPipelineCreateInfo gi = scene;
+            gi.pStages = stages;
+            ok = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &gi, nullptr, &chunkVolPipeline_) == VK_SUCCESS;
+        }
+        for (VkShaderModule m : {bakeVs, bakePs, volVs, volPs})
+            if (m) vkDestroyShaderModule(device_, m, nullptr);
+        if (!ok) DestroyChunkPipelines();
+        return ok;
+    }
+
+    void DestroyChunkPipelines() {
+        for (VkPipeline* p : {&chunkBakePipelines_[0], &chunkBakePipelines_[1], &chunkVolPipeline_}) {
+            if (*p) vkDestroyPipeline(device_, *p, nullptr);
+            *p = VK_NULL_HANDLE;
+        }
     }
 
     // Compute: one set layout (four read buffers, three written), a descriptor pool per frame in flight.
@@ -3259,6 +3647,19 @@ private:
         }
     }
 
+    // DrawInstancedMesh with the instance rows at `offset` of this frame's transient buffer.
+    void DrawTransientInstances(const Mesh& mesh, size_t offset, uint32_t count) {
+        const VkBuffer buffers[2] = {mesh.buffer.buffer, frame_->transient.buffer};
+        const VkDeviceSize offsets[2] = {mesh.base, (VkDeviceSize)offset};
+        vkCmdBindVertexBuffers(cmd_, 0, 2, buffers, offsets);
+        if (mesh.indexed) {
+            vkCmdBindIndexBuffer(cmd_, mesh.buffer.buffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_, mesh.count, count, 0, 0, 0);
+        } else {
+            vkCmdDraw(cmd_, mesh.count, count, 0, 0);
+        }
+    }
+
     void Submit(VkBuffer buffer, VkDeviceSize offset, uint32_t count, Topology topology, const Mat4& mvp,
                 const Mat4& model, bool depthTest, bool indexed = false, VkDeviceSize indexOffset = 0) {
         const int index = (topology == Topology::Lines ? 2 : 0) + (depthTest ? 0 : 1);
@@ -3636,6 +4037,9 @@ private:
             FlushStreamRetired(true);
             DestroyStreaming();
             DestroyStore();
+            for (StoreImage& img : chunkStore_) DestroyStoreImage(img); // the atlas itself is in textures_
+            DestroyStoreImage(chunkDepth_);
+            DestroyChunkPipelines();
             DestroyPostTargets();
             DestroyBuffer(captureBuffer_);
             for (VkPipeline p : postPipelines_)
@@ -3795,6 +4199,14 @@ private:
     VkDescriptorSet storeSet_ = VK_NULL_HANDLE;
     VkPipelineLayout storeLayout_ = VK_NULL_HANDLE;
     uint32_t storeLayers_ = 0, storeTile_ = 0;
+
+    StoreImage chunkStore_[3], chunkDepth_;  // city chunk bakes: one layer per face, and the tile's depth
+    TextureId chunkTex_[3] = {kNoTexture, kNoTexture, kNoTexture}; // the atlas channels, in textures_
+    VkPipeline chunkBakePipelines_[2] = {}; // surfaces, then the relief's MIN pass
+    VkPipeline chunkVolPipeline_ = VK_NULL_HANDLE;
+    uint32_t chunkTile_ = 0, chunkW_ = 0, chunkH_ = 0, chunkLayer_ = 0;
+    bool chunkBaking_ = false;
+    std::vector<size_t> chunkOffsets_; // ChunkBakeFace: each item's rows in the transient buffer
 
     float clear_[4] = {};
     StoreImage sunCache_; // the sun map's depth from the casters that don't move

@@ -324,6 +324,56 @@ public:
     virtual void Draw(MeshId mesh, const Mat4& mvp, const Mat4& model, bool depthTest, bool counted) = 0;
     // `count` instances of the mesh, from instance `first`, into the HDR scene with the current material. Always counted.
     virtual void DrawInstanced(MeshId mesh, InstanceBufferId buffer, uint32_t first, uint32_t count, const Mat4& viewProj) = 0;
+    // Like DrawInstanced, with instance rows (kInstanceFloats each, as CreateInstanceBuffer takes them) valid for this
+    // call only: copied into the per-frame transient buffer, so instances that move every frame (cosmetic traffic) need
+    // no buffer of their own. Always counted.
+    virtual void DrawInstancedTransient(MeshId mesh, const float* rows, uint32_t count, const Mat4& viewProj) = 0;
+    // DrawInstancedTransient's twin for the current shadow pass (between BeginShadowPass and EndShadowPass): per-frame rows, no
+    // buffer of their own. Casters are not counted as scene draws.
+    virtual void DrawShadowInstancedTransient(MeshId mesh, const float* rows, uint32_t count) = 0;
+    // ---- city chunk bakes (Track R, src/city_buildings.inl): a 128 m city cell drawn into five orthographic faces (top and four
+    // sides; the table is shaders/chunk_faces.hlsli, render/chunk_faces.h) that ChunkVolPS ray marches from far away. Built on the
+    // impostor store: a face is drawn into a store layer (with the store's tile depth buffer), then copied into the atlas, where a
+    // cell owns a strip of five tile x tile texels. Three atlases, bound as the albedo, normal and surface textures of a material:
+    //   channel 0  albedo + coverage  RGBA8: unlit, display space as the textures hold it; a = 1 where something was drawn
+    //   channel 1  normal + AO        RGBA8: world normal * 0.5 + 0.5; a = occlusion (1 = open)
+    //   channel 2  relief             RG16:  r = depth where the solid starts, g = 1 - depth where the last of it ends (0..1 along the
+    //                                        face's view; empty texels hold r = 1, g = 1, so end < start)
+    // CreateChunkAtlas: outside BeginFrame..EndFrame; again with another size frees the old one. False when unsupported.
+    virtual bool CreateChunkAtlas(uint32_t tile, uint32_t width, uint32_t height) { (void)tile; (void)width; (void)height; return false; }
+    virtual TextureId ChunkAtlasTexture(int channel) const { (void)channel; return kNoTexture; }
+    // One mesh (a material part) and its instances, for ChunkBakeFace. Rows as DrawInstancedTransient takes them.
+    struct ChunkBakeItem {
+        MeshId mesh = kInvalidMesh;
+        TextureId albedo = kNoTexture;
+        const float* rows = nullptr;
+        uint32_t count = 0;
+    };
+    // Bakes: inside a frame, after the shadow passes (and BeginCapture..EndCapture), before the scene's first draw. Between Begin and
+    // End only ChunkBakeFace; End restores the scene's targets, cleared (as EndCapture does). Not counted as scene draws.
+    virtual bool BeginChunkBake() { return false; }
+    // One face: clears the store's tile, draws the items through `faceViewProj` (ChunkFaceMatrix), copies the tile to the atlas at
+    // texel (atlasX, atlasY) in all three channels.
+    virtual void ChunkBakeFace(const ChunkBakeItem* items, uint32_t count, const Mat4& faceViewProj, uint32_t atlasX, uint32_t atlasY) {
+        (void)items; (void)count; (void)faceViewProj; (void)atlasX; (void)atlasY;
+    }
+    virtual void EndChunkBake() {}
+    // Debug and the disk cache: a w x h block of one channel, 4 bytes a texel (RG16 as two little-endian uint16). Outside frames;
+    // Read waits for the GPU, Write is queued ahead of the next frame.
+    virtual bool ReadChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, std::vector<uint8_t>& out) {
+        (void)channel; (void)x; (void)y; (void)w; (void)h; (void)out; return false;
+    }
+    virtual bool WriteChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t* texels) {
+        (void)channel; (void)x; (void)y; (void)w; (void)h; (void)texels; return false;
+    }
+    // The chunk volumes (ChunkVolPS) into the HDR scene: `mesh` holds one box per cell, its vertices encoded as ChunkVolVS reads
+    // them (position world; normal the box's low corner; rgb the box's size, a 0.852; uv the cell's strip in the atlas, texels).
+    // Binds the atlas itself; afterwards the material is the default one. Counted.
+    virtual void DrawChunkVolumes(MeshId mesh, const Mat4& viewProj) { (void)mesh; (void)viewProj; }
+    // A screen-door fade for the lit scene draws that follow, until changed (Track R's dithered LOD transitions): keep in (0, 1)
+    // shows the pixels whose dither value lies below keep, keep in (-1, 0) the ones at or above -keep (the complement: an old and a
+    // new representation with keep t and -t never overlap and leave no holes), 0 or 1 no fade. Sent with the material's constants (w).
+    virtual void SetDrawFade(float keep) { materialConstants_[3] = keep; }
     // Vertices valid for this call only (copied into a per-frame buffer).
     virtual void DrawTransient(const Vertex* vertices, uint32_t count, Topology topology, const Mat4& mvp,
                                const Mat4& model, bool depthTest) = 0;
@@ -383,7 +433,7 @@ protected:
     std::unordered_map<TextureId, float> skinDetailScale_; // SetSkinDetailScale; only the ones off the default
     std::unordered_map<TextureId, float> skinPoreDepth_;   // SetSkinPoreDepth; only the ones off the default
     // The bound material's constants for the pixel shader (D3D12 root constants b3, Vulkan push constants at offset 128):
-    // x skin detail scale, y skin pore depth (0 = default 1), zw spare. Set by SetMaterial, sent with every lit draw.
+    // x skin detail scale, y skin pore depth (0 = default 1), z the chunk tile (DrawChunkVolumes), w the fade (SetDrawFade). Set by SetMaterial, sent with every lit draw.
     float materialConstants_[4] = {kDefaultSkinDetailScale, 0.0f, 0.0f, 0.0f};
     void ForgetMaterialConstants(TextureId id) { skinDetailScale_.erase(id); skinPoreDepth_.erase(id); }
     uint64_t sunCacheKey_ = 0;

@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <unordered_map>
 #include <memory>
@@ -41,16 +42,27 @@
 #include "render/mesh_weld.h"
 #include "culling.h"
 #include "mesh_lod.h"
+#include "render/chunk_faces.h"
 #include "editor_draw.h"
 #include "gui/gui.h"             // in-game GUI (portable, no Win32); see docs/gui.md
 #include "gui/terrain_toolbar.h" // its first user: the terrain sandbox toolbar
+#include "gui/city_hud.h"      // the CS2-style bottom toolbar, status bar and side icons
 #include "gui/zone_toolbar.h"     // zoning (src/city/zoning.h): zone painting, growth, the game clock
 #include "gui/transport_toolbar.h" // transport buildings (src/city/transport.h): depots, stations, harbours, airports
 #include "gui/utility_toolbar.h"   // utilities: electricity, water, sewage (city_utilities.inl hosts them)
 #include "city/transport_models.h"
 #include "city/industry.h"         // specialized industry (city_industry.inl hosts it)
 #include "city/utilities.h"        // utilities (city_utilities.inl hosts them)
+#include "city/sim.h"              // the city sim's fixed-step scheduler (city_sim.inl hosts it)
+#include "city/sim_cells.h"        // the city sim's per-cell counters: homes, jobs, residents, employment
+#include "city/sim_growth.h"       // the city sim's demand, demand-gated growth, level up / down, abandonment
+#include "city/sim_coverage.h"     // the city sim's utilities per cell and service coverage
+#include "city/sim_economy.h"      // the city sim's treasury, taxes and upkeep
+#include "city/sim_flow.h"         // the city sim's flow traffic: vehicles per hour per road segment
+#include "city/sim_agents.h"       // cosmetic cars driven by the flow (not simulated)
+#include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building
+#include "city/road_names.h"     // road / street / highway names, house numbers (chip under the road tool's cursor, F2 renames)
 #include "undo.h" // engine-wide undo stack (shared with the Character Creator)
 #include "gizmo.h"
 #include "inspector.h"
@@ -346,6 +358,22 @@ struct Engine {
 
 Engine g_engine;
 tbd::profiler::Overlay g_profiler; // F3; does nothing while off, and never on in a TBD_SHOT / TBD_CAPTURE run
+// Draws and triangles by kind (F3's DRAWS BY KIND, TBD_DRAWCATS=1 HUD line, the 600-frame scene log): the renderer's counters
+// read before and after each part of the scene. Shadow casters come from FrameCounts' own shadow counters. UI is what the
+// frame drew after the scene (post passes, grid, gizmos, HUD, GUI). Shown one frame late, since UI ends after the overlay draws.
+enum DrawCat : int { kCatTerrain, kCatVegetation, kCatGroundGrid, kCatProps, kCatZoned, kCatEntities, kCatPrepass, kCatRoads, kCatRail,
+                     kCatCity, kCatAgents, kCatWater, kCatUi, kCatShadow, kCatCount };
+inline const char* const kDrawCatNames[kCatCount] = {"TERRAIN", "VEGETATION", "GROUND GRID", "PROPS INSTANCED", "ZONED BUILDINGS", "OTHER ENTITIES",
+                                                     "DEPTH PREPASS", "ROADS", "RAIL", "CITY TOOLS", "TRAFFIC", "WATER", "UI AND POST", "SHADOW"};
+struct DrawCats {
+    uint32_t draws[kCatCount] = {};
+    uint64_t tris[kCatCount] = {};
+    void Add(int cat, const tbd::FrameCounts& before, const tbd::FrameCounts& after) {
+        draws[cat] += after.draws - before.draws;
+        tris[cat] += after.triangles - before.triangles;
+    }
+};
+DrawCats g_drawCats, g_drawCatsShown; // this frame's, and the last finished frame's
 tbd::PlayMode g_play; // the toolbar's Play: first-person fly / walk camera, see play_mode.h
 tbd::PhysicsWorld g_physics;     // made on the first Play, never in a TBD_SHOT / TBD_CAPTURE run; see physics.h
 tbd::ai::NpcSystem g_npcs;       // AI agents while playing; see ai/npc_system.h
@@ -442,6 +470,7 @@ bool ProjectWantsSandbox(const std::wstring& folder) {
 }
 
 void SaveTerrainEdits();
+void NewCityGame(int seed); // city_game.inl: the random north-land / south-sea map with the default corridor
 void LoadTerrainEdits();
 void RebuildSceneMeshes();
 
@@ -450,16 +479,13 @@ void StartTerrainSandbox() {
     g_engine.scene.entities.clear();
     g_engine.scene.selected = -1;
     g_engine.terrain.params.flatStart = false;
-    g_engine.terrain.params.mapKind = 1; // the island with sea and river (island_map.h)
-    g_engine.sun.showSky = false;        // from kilometres up the physical sky's haze and clouds turn the whole view white
+    g_engine.terrain.params.mapKind = 2; // the random city map (city_map.h); NewCityGame sets the seed and the default corridor
     RebuildSceneMeshes();
-    g_engine.camera.target = {0.0f, 0.0f, 0.0f};
-    g_engine.camera.distance = 9500.0f; // the whole island; zoom in with the wheel
-    g_engine.camera.pitch = 1.15f;
-    g_engine.camera.yaw = 0.0f;
-    g_terrainEdit.on = true;
-    if (GetFileAttributesW(TerrainEditPath().c_str()) != INVALID_FILE_ATTRIBUTES) LoadTerrainEdits(); // continue where the last session stopped
-    else Toast("TERRAIN SANDBOX - DRAG RAISES, SHIFT DIGS, CTRL FLATTENS, [ ] SIZE, F8 SAVES, U TOOLBAR");
+    g_terrainEdit.on = false;
+    int seed = (int)(GetTickCount64() % 900000ull) + 100; // random every start; TBD_SEED=<n> pins it
+    char sv[16] = {};
+    if (GetEnvironmentVariableA("TBD_SEED", sv, sizeof(sv)) > 0) seed = atoi(sv);
+    NewCityGame(seed);
     { // TBD_BRUSHTEST="x z radius metres": one stroke at startup, so a capture can show the brush's effect without a mouse
         char v[96] = {};
         float x, z, radius, metres;
@@ -2325,6 +2351,49 @@ void UpdateFly(float dt) {
     g_engine.camera.Fly(forward * speed, right * speed, up * speed);
 }
 
+
+// City camera from the keyboard (not flying, not walking): WASD / arrows slide the target over the ground,
+// Q / E turn around it, Z / X tilt; Shift = 3x. The wheel zoom eases toward its goal and toward the cursor.
+bool RoadRenameActive(); // defined with the road rename box
+struct CamSmooth { float goal = -1.0f, lastSet = -1.0f; bool anchored = false; tbd::Vec3 anchor{}; };
+CamSmooth g_camSmooth;
+bool AppHasFocus() {
+    DWORD pid = 0;
+    HWND fg = GetForegroundWindow();
+    return fg && GetWindowThreadProcessId(fg, &pid) && pid == GetCurrentProcessId();
+}
+void UpdateCityCam(float dt) {
+    tbd::OrbitCamera& cam = g_engine.camera;
+    // smooth zoom, anchored on the ground point that was under the cursor
+    if (g_camSmooth.goal > 0.0f) {
+        if (g_camSmooth.lastSet >= 0.0f && std::fabs(cam.distance - g_camSmooth.lastSet) > 1e-5f) g_camSmooth.goal = -1.0f; // someone else moved it (Frame, Home)
+        else {
+            const float d = cam.distance, nd = d + (g_camSmooth.goal - d) * (1.0f - std::exp(-14.0f * dt));
+            if (g_camSmooth.anchored && d > 1e-6f) cam.target = g_camSmooth.anchor + (cam.target - g_camSmooth.anchor) * (nd / d);
+            cam.distance = nd;
+            g_camSmooth.lastSet = nd;
+            if (std::fabs(nd - g_camSmooth.goal) < g_camSmooth.goal * 0.002f) g_camSmooth.goal = -1.0f;
+        }
+    }
+    if (g_engine.drag == Drag::Fly || g_play.active || RoadRenameActive() || !AppHasFocus()) return;
+    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+    if (down(VK_CONTROL) || down(VK_MENU)) return;
+    const float fw = ((down('W') || down(VK_UP)) ? 1.0f : 0.0f) - ((down('S') || down(VK_DOWN)) ? 1.0f : 0.0f);
+    const float rt = ((down('D') || down(VK_RIGHT)) ? 1.0f : 0.0f) - ((down('A') || down(VK_LEFT)) ? 1.0f : 0.0f);
+    const float turn = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
+    const float tilt = (down('X') ? 1.0f : 0.0f) - (down('Z') ? 1.0f : 0.0f);
+    if (fw == 0.0f && rt == 0.0f && turn == 0.0f && tilt == 0.0f) return;
+    const float fast = down(VK_SHIFT) ? 3.0f : 1.0f, k = tbd::character::CameraScale();
+    tbd::Vec3 f = cam.Forward(); f.y = 0.0f;
+    const float fl = std::sqrt(f.x * f.x + f.z * f.z);
+    if (fl > 1e-4f) f = f * (1.0f / fl);
+    tbd::Vec3 r = cam.Right(); r.y = 0.0f;
+    const float pan = std::max(cam.distance, 0.5f) * 1.1f * fast * k * dt; // screen-relative: the same feel at every zoom
+    cam.target = cam.target + (f * fw + r * rt) * pan;
+    cam.yaw += turn * 1.6f * fast * k * dt;
+    cam.pitch = std::clamp(cam.pitch + tilt * 0.9f * fast * k * dt, 0.05f, 1.5f);
+}
+
 void OnTransport(int action, void*); // defined with the toolbar hooks below
 
 // Loads a terrain file for the walking ground grid (worker thread; ImportFile touches no shared state).
@@ -2625,6 +2694,8 @@ static std::string RemoteEntityLine(int i) {
 }
 static bool RemoteVec(const std::string& text, tbd::Vec3& v) { float x, y, z; if (sscanf(text.c_str(), "%f %f %f", &x, &y, &z) != 3) return false; v = {x, y, z}; return true; }
 
+bool IndustryDemo(float x, float z, std::string& out); // city_industry.inl
+bool IndustryDump(const std::string& path, std::string& out);
 // The command's reply, or false with the reason. A screenshot answers later, from RemoteShotAfterFrame.
 static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
     const std::vector<std::string>& a = q->args;
@@ -2774,6 +2845,12 @@ static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
     }
     if (cmd == "reload_shaders") { OnCommand(IDM_RELOADSHADERS); out = "shaders reloaded (engine.log lists any errors)"; return true; }
     if (cmd == "rebuild_game") { OnCommand(IDM_REBUILDGAME); out = "gameplay DLL rebuild started"; return true; }
+    if (cmd == "industry_demo") { // industry_demo|x z: one site of each industry in a row, areas drawn, for screenshots
+        float x = cam.target.x, z = cam.target.z;
+        if (a.size() > 1) sscanf(a[1].c_str(), "%f %f", &x, &z);
+        return IndustryDemo(x, z, out);
+    }
+    if (cmd == "industry_dump") return IndustryDump(a.size() > 1 ? a[1] : std::string("industry_models_data.js"), out); // industry_dump|path.js
     if (cmd == "screenshot") { // screenshot|path.bmp|frames to wait: answered once that frame is drawn
         if (g_remoteShot.request) { out = "a screenshot is already pending"; return false; }
         g_remoteShot.request = q;
@@ -2992,6 +3069,36 @@ void RoadsSync(tbd::Renderer& r) {
     g_roadGpu.arrows = out.arrows.empty() ? tbd::kInvalidMesh : r.CreateMesh(out.arrows.data(), (uint32_t)out.arrows.size(), tbd::Topology::Triangles);
 }
 
+// Road names: generated per chain of segments (city/road_names.h). F2 over a road renames its whole chain.
+tbd::city::RoadNames g_roadNames;
+struct RoadRename {
+    bool active = false;
+    int seg = -1;
+    std::string text;
+} g_roadRename;
+bool RoadRenameActive() { return g_roadRename.active; }
+int g_hoverSeg = -1; // the road under the road tool's cursor (set while its labels draw)
+float g_hoverT = 0;
+int g_hoverSide = 1;
+
+void RoadRenameBegin() {
+    if (g_hoverSeg < 0) return;
+    g_roadNames.Update(g_roads.net);
+    g_roadRename = {true, g_hoverSeg, g_roadNames.Label(g_hoverSeg)};
+}
+// Keys while the rename box is open: returns true (it swallows every key so tool shortcuts don't fire while typing).
+bool RoadRenameKey(WPARAM wparam) {
+    if (wparam == VK_ESCAPE) g_roadRename.active = false;
+    else if (wparam == VK_RETURN) {
+        g_roadRename.active = false;
+        g_roadNames.Rename(g_roads.net, g_roadRename.seg, g_roadRename.text); // empty text clears back to the generated name
+    } else if (wparam == VK_BACK && !g_roadRename.text.empty()) g_roadRename.text.pop_back();
+    return true;
+}
+void RoadRenameChar(WPARAM wparam) {
+    if (wparam >= 32 && wparam < 127 && g_roadRename.text.size() < 32) g_roadRename.text.push_back((char)wparam);
+}
+
 // Length / slope / angle / elevation chips over the world, and the reason a placement is refused, beside the cursor.
 void RoadsWorldLabels() {
     auto project = [](tbd::Vec3 p, float& x, float& y) {
@@ -3012,6 +3119,31 @@ void RoadsWorldLabels() {
              g_roads.mode != tbd::city::ToolMode::Replace && g_roads.mode != tbd::city::ToolMode::Swap &&
              g_roads.mode != tbd::city::ToolMode::Bulldoze && project(g_roads.cursor.p, x, y))
         g_gui.Chip(x, y + 34.0f * DpiScale(), tbd::city::ModeName(g_roads.mode));
+
+    // the road under the cursor: name, class, house number; F2 renames
+    g_hoverSeg = -1;
+    if (g_roads.haveCursor && !g_roads.Pending() && !g_roadRename.active) {
+        const tbd::city::Network& net = g_roads.net;
+        const tbd::city::V2 p{g_roads.cursor.p.x, g_roads.cursor.p.z};
+        float t = 0, d = 0;
+        const int s = net.SegmentAt(p, 0.5f, t, d);
+        if (s >= 0 && !net.IsRailSeg(s)) {
+            g_roadNames.Update(net);
+            if (const tbd::city::RoadChain* ch = g_roadNames.ChainOf(s)) {
+                const tbd::city::Cubic c = net.Curve(s);
+                g_hoverSeg = s, g_hoverT = t;
+                g_hoverSide = tbd::city::Dot2(tbd::city::LeftOf(c.Tan(t)), p - c.At(t)) > 0 ? 1 : -1;
+                std::string line = ch->name.Full() + "  -  " + tbd::city::RoadNames::ClassLabel(ch->cls);
+                if (ch->cls != tbd::city::RoadClass::Highway && ch->cls != tbd::city::RoadClass::Path)
+                    line += "  -  No. " + std::to_string(g_roadNames.HouseNumber(net, s, t, g_hoverSide));
+                if (project(g_roads.cursor.p, x, y)) g_gui.Chip(x, y - 34.0f * DpiScale(), (line + "  [F2 rename]").c_str());
+            }
+        }
+    }
+    if (g_roadRename.active && project(g_roads.cursor.p, x, y)) {
+        const std::string box = "Rename road: " + g_roadRename.text + "_   [Enter ok, Esc cancel, empty = auto]";
+        g_gui.Chip(x, y - 34.0f * DpiScale(), box.c_str(), tbd::gui::Rgba(30, 90, 150, 235));
+    }
 }
 
 #include "city_zones.inl"
@@ -3019,13 +3151,71 @@ void RoadsWorldLabels() {
 #include "city_transport.inl" // transport buildings: depots, stations, harbours, airports (hologram, then construction)
 #include "city_industry.inl" // specialized industry: hubs, drawn work areas, resource heat maps
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
+#include "city_game.inl"     // the city game: new random map, default corridor, game saves
+#include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
+#include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
+
+// Which HUD button the open transport panel belongs to: Transportation, or the service tab's own (Fire, Healthcare, Police, ...).
+int HudForTransportTab() {
+    using tbd::gui::HudTool;
+    switch (g_transportTool.tab) {
+    case tbd::city::TTab::Fire: return (int)HudTool::Fire;
+    case tbd::city::TTab::Health: case tbd::city::TTab::Death: return (int)HudTool::Health;
+    case tbd::city::TTab::Police: return (int)HudTool::Police;
+    case tbd::city::TTab::Education: return (int)HudTool::Education;
+    case tbd::city::TTab::Comms: return (int)HudTool::Comms;
+    default: return (int)HudTool::Transport;
+    }
+}
+
+// The HUD toolbar's launch: closes whatever tool is open, then opens `tool` (a gui::HudTool); the same button again closes it.
+void HudOpenTool(int tool) {
+    using tbd::gui::HudTool;
+    const bool utilWasOpen = g_utilTool.active;
+    const int open = g_zoneTool.active ? (int)HudTool::Zoning
+                     : g_roads.active ? (int)HudTool::Roads
+                     : g_utilTool.active ? (g_utilTool.tab == tbd::city::UTab::Electricity ? (int)HudTool::Electricity : (int)HudTool::Water)
+                     : g_transportTool.active ? HudForTransportTab()
+                     : g_indTool.active ? (g_indTool.waste ? (int)HudTool::Garbage : (int)HudTool::Industry) : -1;
+    g_zoneTool.active = false;
+    if (g_roads.active) g_roads.Close();
+    g_utilTool.Close();
+    g_transportTool.active = false, g_transportTool.def = -1;
+    g_indTool.active = false, g_indTool.mode = IndustryTool::Pick, g_indTool.drawing = -1, g_indTool.wsel = -1, g_indTool.point = 0;
+    if (utilWasOpen) UtilToolClosed();
+    if (open == tool) return; // toggled off
+    g_terrainEdit.on = false;
+    switch ((HudTool)tool) {
+    case HudTool::Zoning: g_zoneTool.active = true; break;
+    case HudTool::Roads: g_roads.Open(); break;
+    case HudTool::Electricity: g_utilTool.active = true, g_utilTool.SelectTab(tbd::city::UTab::Electricity); break;
+    case HudTool::Water: g_utilTool.active = true, g_utilTool.SelectTab(tbd::city::UTab::Water); break;
+    case HudTool::Transport: g_transportTool.active = true; if (tbd::city::IsServiceTab(g_transportTool.tab)) g_transportTool.SelectTab(tbd::city::TTab::Rail); break;
+    case HudTool::Fire: g_transportTool.active = true; g_transportTool.SelectTab(tbd::city::TTab::Fire); break;
+    case HudTool::Health: g_transportTool.active = true; g_transportTool.SelectTab(tbd::city::TTab::Health); break;
+    case HudTool::Police: g_transportTool.active = true; g_transportTool.SelectTab(tbd::city::TTab::Police); break;
+    case HudTool::Education: g_transportTool.active = true; g_transportTool.SelectTab(tbd::city::TTab::Education); break;
+    case HudTool::Comms: g_transportTool.active = true; g_transportTool.SelectTab(tbd::city::TTab::Comms); break;
+    case HudTool::Industry:
+    case HudTool::Garbage:
+        g_indTool.active = true;
+        g_indTool.waste = tool == (int)HudTool::Garbage;
+        g_indTool.kind = g_indTool.waste ? (int)tbd::city::IndKind::Landfill : 0;
+        break;
+    default: break;
+    }
+}
+
+float g_guiScaleSel = 1.0f; // the HUD Options menu: interface size multiplier
 
 // ------------------------------------------------------------------- in-game GUI, per frame
 // Runs the GUI frame (input queued by GuiMouse since the last frame), the terrain toolbar, and draws it over everything.
 // TBD_GUI_POINTER="x y [down]": a scripted pointer for captures (there is no mouse in a TBD_CAPTURE run); with "down" the
 // button goes down on the 30th GUI frame (once the layout has settled) and stays down, showing the pressed / dragged state.
 void DrawGameGui(tbd::Renderer& r, float topInset) {
-    const bool terrainShow = g_engine.terrain.params.enabled && (g_terrainSandbox || g_terrainEdit.on) && !g_roads.active;
+    static bool terrainPanelOpen = false; // the HUD's Terrain button
+    static float terrainSlide = 0.0f;     // 0 hidden .. 1 shown, eased
     const bool show = g_guiVisible && !g_play.active; // the road tool's "Roads" button is always there
     if (!show) {
         g_gui.Reset(); // hidden panels must stop taking clicks at once
@@ -3057,7 +3247,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     QueryPerformanceCounter(&now);
     const float guiDt = last.QuadPart ? (float)((now.QuadPart - last.QuadPart) / (double)g_engine.tickFreq.QuadPart) : 1.0f / 60.0f; // eases transitions
     last = now;
-    g_gui.BeginFrame(g_guiInput.Take((float)g_engine.vpW, (float)g_engine.vpH, DpiScale(), guiDt));
+    g_gui.BeginFrame(g_guiInput.Take((float)g_engine.vpW, (float)g_engine.vpH, DpiScale() * g_guiScaleSel, guiDt));
     tbd::gui::TerrainStatus status;
     status.tiles = g_engine.terrain.field.TileCount();
     tbd::Vec3 hit;
@@ -3071,14 +3261,33 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     const tbd::gui::TerrainToolbarState state{&g_terrainEdit.on, &g_terrainEdit.mode, &g_terrainEdit.radius, &g_terrainEdit.metresPerSecond};
     // The status line rides above the toast chip row (DrawStatsText: 8 px margin, a 1.5 px-cell chip with 4 px padding, a gap).
     const float toastLift = 8.0f + 7.0f * 1.5f + 8.0f + 8.0f;
-    const tbd::gui::TerrainAction action = terrainShow ? tbd::gui::TerrainToolbar(g_gui, state, status, toastLift) : tbd::gui::TerrainAction::None;
+    terrainSlide += ((terrainPanelOpen && g_engine.terrain.params.enabled ? 1.0f : 0.0f) - terrainSlide) * std::min(1.0f, guiDt * 12.0f);
+    if (std::fabs(terrainSlide - (terrainPanelOpen ? 1.0f : 0.0f)) < 0.003f) terrainSlide = terrainPanelOpen ? 1.0f : 0.0f;
+    const float ease = terrainSlide * terrainSlide * (3.0f - 2.0f * terrainSlide); // smoothstep
+    const tbd::gui::TerrainAction action = tbd::gui::TerrainToolbar(g_gui, state, status, 4.0f + 106.0f, ease);
     const bool roadsWereOpen = g_roads.active;
     if (g_roads.active) RoadsWorldLabels(); // under the panels
     if (g_transportTool.active) TransportWorldLabels();
     UtilWorldLabels();   // the no electricity / water / sewage / road bubbles over buildings
     UtilToolLabels();    // the utilities tool's cursor chip
-    tbd::gui::ClockBar(g_gui, g_clock, toastLift);  // bottom centre; the tools sit above it
-    const float toolLift = toastLift + 50.0f;
+    static tbd::gui::CityHud hud;
+    hud.selected = g_zoneTool.active ? (int)tbd::gui::HudTool::Zoning
+                   : g_roads.active ? (int)tbd::gui::HudTool::Roads
+                   : g_utilTool.active ? (g_utilTool.tab == tbd::city::UTab::Electricity ? (int)tbd::gui::HudTool::Electricity : (int)tbd::gui::HudTool::Water)
+                   : g_transportTool.active ? HudForTransportTab()
+                   : g_indTool.active ? (g_indTool.waste ? (int)tbd::gui::HudTool::Garbage : (int)tbd::gui::HudTool::Industry) : -1;
+    hud.terrainOpen = terrainPanelOpen;
+    SimHudFill(hud);
+    g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
+    const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
+    SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim
+    g_gameSlot = hud.slot;
+    if (hud.gameAction) g_gameAction = hud.gameAction, hud.gameAction = 0; // bottom centre, tight to the edge; the tools sit above it
+    if (hud.request == (int)tbd::gui::HudTool::Terrain) {
+        terrainPanelOpen = !terrainPanelOpen;
+        if (!terrainPanelOpen) g_terrainEdit.on = false; // hidden: left clicks are no longer the brush's
+    } else if (hud.request >= 0) HudOpenTool(hud.request);
+    const float toolLift = 4.0f + hudH;
     if (!g_zoneTool.active && !g_indTool.active && !g_transportTool.active && !g_utilTool.active) tbd::gui::RoadToolbar(g_gui, g_roads, toolLift);
     if (!g_roads.active && !g_indTool.active && !g_transportTool.active && !g_utilTool.active && tbd::gui::ZoneToolbar(g_gui, g_zoneTool, toolLift)) g_terrainEdit.on = false;
     if (!g_roads.active && !g_zoneTool.active && !g_transportTool.active && !g_utilTool.active && IndustryToolbar(toolLift)) g_terrainEdit.on = false;
@@ -3159,12 +3368,24 @@ void RenderFrame() {
     tbd::Renderer& r = *g_engine.renderer;
     g_engine.stats.BeginFrame();
     g_profiler.BeginFrame();
+    static LARGE_INTEGER frameCpuStart;
+    QueryPerformanceCounter(&frameCpuStart); // TBD_DRAWCATS: CPU ms of the frame = this to the end, less the fence wait and Present
     float dt = FrameDelta();
+    FrameMark("frame-start");
     ZonesSync(dt); // the game clock, zone growth and construction
+    FrameMark("zones-sync");
     UtilSync(dt); // utilities: the no-road clock, the networks, the source buildings
-    TransportSync(dt); // transport buildings: planned -> building -> done on the same clock
+    FrameMark("util-sync");
+    TransportSync(dt);
+    FrameMark("transport-sync");
+    GameSync(); // HUD save / load / new map, restored zone paint // transport buildings: planned -> building -> done on the same clock
     IndustrySync(dt); // specialized industry output
+    FrameMark("industry-sync");
     GarbageSync(dt);  // garbage produced, collected and processed
+    SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
+    FrameMark("sim-sync");
+    CityStressSync(); // TBD_CITY_STRESS only
+    CityChunkCheckSync(); // TBD_CHUNK_CHECK only
     // TBD_PLAYTEST: Play starts itself, on a fixed clock; see PlayerScript.
     static bool playtestTried = false;
     if (!playtestTried && !g_engine.scenePath.empty() && !SceneLoadActive()) { // the scene is open
@@ -3254,6 +3475,7 @@ void RenderFrame() {
     tbd::audio::UpdateFrame(g_engine.camera.Eye(), g_engine.camera.Forward(), g_engine.camera.Up(), g_play.active,
                             g_play.active && g_play.walking, tbd::kPlayEyeHeight); // no-op unless audio.h's Start succeeded
     UpdateFly(dt);
+    UpdateCityCam(dt);
     g_engine.faceDriver.Update(dt, g_engine.scene);
     tbd::FaceTab_Tick();
     CharacterCreatorHost(); tbd::character::Tick(); // Character panel: at most one re-deform per frame; TBD_CHARPRESET
@@ -3810,6 +4032,7 @@ void RenderFrame() {
     static tbd::material_lab::Lab materialLab;
     if (matLab) materialLab.Build(r); // makes textures, so it runs before the frame opens
     RoadsSync(r);                       // road textures and meshes: also before the frame opens
+    CityBuildingsSync(r, viewProj, eye); // zoned buildings: cells, tiers, bake cache, proxies, instance rows (uploads: before the frame)
     r.BeginFrame(clear);
     traceMark(kTraceBegin);
     FrameMark("begin-frame");
@@ -3852,6 +4075,8 @@ void RenderFrame() {
         mix(light.shadowVP, sizeof(light.shadowVP));
         const uint64_t terrainKey = g_engine.terrain.params.enabled ? g_engine.terrain.ShadowCastersKey(shadowFocus, shadowRadius) : 0;
         mix(&terrainKey, sizeof(terrainKey));
+        const uint64_t buildingsKey = CityBuildingsShadowKey();
+        mix(&buildingsKey, sizeof(buildingsKey));
         g_engine.sunMoving.resize(entityCount);
         for (size_t i = 0; i < entityCount; ++i) {
             g_engine.sunMoving[i] = g_engine.animator.Animates(g_engine.meshes[i]) ? 1 : 0;
@@ -3871,6 +4096,7 @@ void RenderFrame() {
             for (size_t i = 0; i < entityCount; ++i)
                 if (!g_engine.sunMoving[i] && (g_engine.entityVisible[i] & kVisibleSun)) DrawEntityCaster(r, i, kVisibleSun);
             DrawInstancedCasters(r);
+            CityBuildingsCasters(r);
             if (sunCacheOn && sunKey == lastSunKey) r.StoreSunCache(sunKey);
         }
         lastSunKey = sunKey;
@@ -3905,6 +4131,7 @@ void RenderFrame() {
         r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
         r.EndCapture();
     }
+    CityBuildingsBake(r, eye); // this frame's chunk bakes: after the shadows and the capture, before the scene
     traceMark(kTraceShadow);
     FrameMark("shadow");
     // Where the scene's triangles go, every 600 frames: by kind, and the entities that cost the most.
@@ -3913,8 +4140,11 @@ void RenderFrame() {
     uint64_t triTerrain = 0, triVegetation = 0, triGrid = 0, triInstanced = 0;
     const auto trisNow = [&] { return r.Counts().triangles; };
     uint64_t triMark = trisNow();
+    g_drawCats = {};
+    const tbd::FrameCounts sceneStart = r.Counts();
     if (g_engine.terrain.params.enabled) g_engine.terrain.Draw(r, sceneViewProj, eye, g_engine.camera.Forward());
     triTerrain = trisNow() - triMark;
+    g_drawCats.Add(kCatTerrain, sceneStart, r.Counts());
     // Near entities, then the instances (scattered over the ground), then the big pieces.
     bool materialSet = false;
     tbd::TextureId boundAlbedo = tbd::kNoTexture, boundNormal = tbd::kNoTexture, boundSurface = tbd::kNoTexture;
@@ -3933,13 +4163,18 @@ void RenderFrame() {
     const auto drawInstanced = [&] {
         r.SetScenePrepass(0);
         uint64_t mark = trisNow();
+        tbd::FrameCounts catMark = r.Counts();
         if (!((featureOff | qualityOff) & 1024)) g_vegetation.Draw(r, sceneViewProj, vegetationTime, useMaterial);
         triVegetation = trisNow() - mark;
+        g_drawCats.Add(kCatVegetation, catMark, r.Counts());
+        catMark = r.Counts();
         mark = trisNow();
         if (!((featureOff | qualityOff) & 512)) ground_bake::DrawGrid(r, sceneViewProj, useMaterial);
         triGrid = trisNow() - mark;
+        g_drawCats.Add(kCatGroundGrid, catMark, r.Counts());
         mark = trisNow();
         struct InstancedDone { uint64_t* out; uint64_t mark; const std::function<uint64_t()> now; ~InstancedDone() { *out = now() - mark; } } instancedDone{&triInstanced, mark, trisNow};
+        struct PropsDone { tbd::Renderer& r; tbd::FrameCounts mark; ~PropsDone() { g_drawCats.Add(kCatProps, mark, r.Counts()); } } propsDone{r, r.Counts()};
         for (const InstancedAsset& asset : g_engine.instanced) {
             if (asset.visible.empty()) continue;
             const auto it = g_engine.matParts.find(asset.mesh);
@@ -3958,6 +4193,8 @@ void RenderFrame() {
         r.SetScenePrepass(0);
     };
     if (prepassOn) {
+        const tbd::FrameCounts prepassMark = r.Counts();
+        struct PrepassDone { tbd::Renderer& r; tbd::FrameCounts mark; ~PrepassDone() { g_drawCats.Add(kCatPrepass, mark, r.Counts()); } } prepassDone{r, prepassMark};
         r.SetScenePrepass(1);
         for (const SceneDraw& d : g_engine.sceneDraws)
             if (d.opaque) r.Draw(d.mesh, g_engine.mvps[d.entity], g_engine.models[d.entity], true, false);
@@ -3981,7 +4218,10 @@ void RenderFrame() {
         }
         useMaterial(d.albedo, d.normal, d.surface);
         r.SetScenePrepass(prepassOn && d.opaque ? 2 : 0);
+        const tbd::FrameCounts drawMark = r.Counts();
         r.Draw(d.mesh, g_engine.mvps[d.entity], g_engine.models[d.entity], true, true);
+        const bool zoned = d.entity < g_engine.scene.entities.size() && g_engine.scene.entities[d.entity].name.compare(0, 15, "Zoned building ") == 0;
+        g_drawCats.Add(zoned ? kCatZoned : kCatEntities, drawMark, r.Counts());
         if (drawStats && d.entity < entityTris.size()) { const uint64_t t = r.MeshIndexCount(d.mesh) / 3; entityTris[d.entity] += t; triEntities += t; }
     }
     if (!instancesDrawn) drawInstanced();
@@ -4007,8 +4247,10 @@ void RenderFrame() {
         bool any = false;
         for (int m = 0; m < tbd::city::kMatCount; ++m) {
             if (g_roadGpu.mesh[m] == tbd::kInvalidMesh) continue;
+            const tbd::FrameCounts roadMark = r.Counts();
             r.SetMaterial(g_roadGpu.albedo[m], g_roadGpu.normal[m]);
             r.Draw(g_roadGpu.mesh[m], sceneViewProj, tbd::Mat4::Identity(), true, true);
+            g_drawCats.Add(m == (int)tbd::city::Mat::Track ? kCatRail : kCatRoads, roadMark, r.Counts());
             any = true;
         }
         if (g_roads.active && g_roadGpu.arrows != tbd::kInvalidMesh) { // lane direction arrows: road editor only
@@ -4018,12 +4260,35 @@ void RenderFrame() {
         }
         if (any) r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
     }
+    {
+        const tbd::FrameCounts zonedMark = r.Counts();
+        CityBuildingsDraw(r, sceneViewProj);
+        g_drawCats.Add(kCatZoned, zonedMark, r.Counts());
+    }
+    const tbd::FrameCounts cityMark = r.Counts();
     ZonesDraw(r, sceneViewProj); // zone cells, construction sites, the zoning cursor
     TransportDraw(r, sceneViewProj); // transport buildings, the hologram being placed, lot markers
     UtilDraw(r, sceneViewProj); // poles, pylons, wires, the underground view, the utilities cursor
     IndustryDraw(r, sceneViewProj); // industry hubs, work areas, the resource heat map
     GarbageDraw(r, sceneViewProj);  // garbage heaps, the garbage info view
+    const tbd::FrameCounts agentsMark = r.Counts();
+    g_drawCats.Add(kCatCity, cityMark, agentsMark);
+    SimAgentsDraw(r, sceneViewProj); // cosmetic traffic from the flow solve: one instanced draw per car model
+    g_drawCats.Add(kCatAgents, agentsMark, r.Counts());
+    const tbd::FrameCounts waterMark = r.Counts();
     g_water.SubmitDraw(r, sceneViewProj, waterJitter);
+    g_drawCats.Add(kCatWater, waterMark, r.Counts());
+    const tbd::FrameCounts sceneEnd = r.Counts(); // everything after this is UI and post (closed at the end of the frame)
+    {
+        // The draws counted between the shadow pass and the terrain (sky, clouds...) and anything not wrapped above.
+        uint32_t known = 0;
+        uint64_t knownTris = 0;
+        for (int c = 0; c < kCatCount; ++c) { known += g_drawCats.draws[c]; knownTris += g_drawCats.tris[c]; }
+        const uint32_t sceneDrawsAll = sceneEnd.draws - sceneStart.draws;
+        const uint64_t sceneTrisAll = sceneEnd.triangles - sceneStart.triangles;
+        g_drawCats.draws[kCatEntities] += sceneDrawsAll > known ? sceneDrawsAll - known : 0;
+        g_drawCats.tris[kCatEntities] += sceneTrisAll > knownTris ? sceneTrisAll - knownTris : 0;
+    }
     tbd::profiler::Sample profSample; // the profiler overlay's numbers; only gathered while it is on
     if (g_profiler.Enabled()) {
         for (const InstancedAsset& asset : g_engine.instanced) {
@@ -4038,6 +4303,8 @@ void RenderFrame() {
         profSample.cullMs = (cullEnd.QuadPart - cullStart.QuadPart) * 1000.0 / g_engine.tickFreq.QuadPart;
         profSample.draws = r.Counts().draws;
         profSample.triangles = r.Counts().triangles;
+        SimProfile(profSample);
+        for (int c = 0; c < kCatCount; ++c) profSample.cats.push_back({kDrawCatNames[c], g_drawCatsShown.draws[c], g_drawCatsShown.tris[c]});
     }
     if (captureFramesLeft == 1) { // the numbers behind a capture's frame time
         uint32_t drawnInstances = 0, instanceTotal = 0, instancedDraws = 0, castInstances = 0;
@@ -4122,6 +4389,11 @@ void RenderFrame() {
     if (g_engine.terrain.params.enabled)
         lines.push_back("TERRAIN " + std::to_string(g_engine.terrain.LoadedChunks()) + " CHUNKS");
     if (g_stream.Active()) lines.push_back(g_stream.StatusLine());
+    static const bool drawCatsLine = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
+    if (drawCatsLine) { // the building budget's two numbers, and the shadow pass
+        lines.push_back("ZONED " + Grouped(g_drawCatsShown.draws[kCatZoned]) + " DRAWS " + Grouped(g_drawCatsShown.tris[kCatZoned] / 1000) + "K TRIS");
+        lines.push_back("SHADOW " + Grouped(g_drawCatsShown.draws[kCatShadow]) + " DRAWS " + Grouped(g_drawCatsShown.tris[kCatShadow] / 1000) + "K TRIS");
+    }
     if (SceneLoadActive()) lines.push_back(SceneLoadStatus());
     if (g_engine.drag == Drag::Fly) {
         char speed[32];
@@ -4152,6 +4424,7 @@ void RenderFrame() {
     FrameMark("overlays");
     r.EndFrame();
     FrameMark("end-frame");
+    CityChunkCheckAfterFrame(r);
     if (remoteShot) RemoteShotAfterFrame(r);
     if (!playtestShot.empty()) {
         std::vector<uint8_t> px;
@@ -4267,6 +4540,41 @@ void RenderFrame() {
     }
     if (g_shot.active) FaceShotStep(r);
     g_engine.stats.AddDraws(r.Counts().draws, r.Counts().triangles);
+    { // close the frame's draws by kind: UI and post is everything counted after the scene ended
+        uint32_t scene = 0;
+        uint64_t sceneTris = 0;
+        for (int c = 0; c < kCatCount; ++c)
+            if (c != kCatUi && c != kCatShadow) { scene += g_drawCats.draws[c]; sceneTris += g_drawCats.tris[c]; }
+        const tbd::FrameCounts end = r.Counts();
+        g_drawCats.draws[kCatUi] = end.draws > scene ? end.draws - scene : 0;
+        g_drawCats.tris[kCatUi] = end.triangles > sceneTris ? end.triangles - sceneTris : 0;
+        g_drawCats.draws[kCatShadow] = end.shadowDraws;
+        g_drawCats.tris[kCatShadow] = end.shadowTriangles;
+        g_drawCatsShown = g_drawCats;
+        static const bool drawCatsLog = [] { char v[8] = {}; return GetEnvironmentVariableA("TBD_DRAWCATS", v, sizeof(v)) > 0 && v[0] != '0'; }();
+        static uint32_t drawCatsFrame = 0;
+        if (drawCatsLog && ++drawCatsFrame % 300 == 0) {
+            std::string line;
+            char item[96];
+            for (int c = 0; c < kCatCount; ++c) {
+                if (!g_drawCats.draws[c] && !g_drawCats.tris[c]) continue;
+                snprintf(item, sizeof(item), "%s%s %u/%.1fk", line.empty() ? "" : ", ", kDrawCatNames[c], g_drawCats.draws[c], (double)g_drawCats.tris[c] / 1e3);
+                line += item;
+            }
+            const double* gpu = r.GpuPasses();
+            double gpuAll = 0;
+            for (int k = 0; k < 8; ++k) gpuAll += gpu[k];
+            const tbd::FrameStats& fs = g_engine.stats.Shown();
+            LARGE_INTEGER nowCpu;
+            QueryPerformanceCounter(&nowCpu);
+            const double wallMs = (double)(nowCpu.QuadPart - frameCpuStart.QuadPart) * 1000.0 / (double)g_engine.tickFreq.QuadPart;
+            const double cpuMs = wallMs - r.FenceWaitMs() - r.PresentMs();
+            tbd::Log("Draws by kind: total %u draws %.2f M tris (shadow %u); frame %.2f ms, cpu %.2f ms (fence %.2f, present %.2f), gpu %.2f ms (scene %.2f, shadow %.2f); "
+                     "cam %.0f %.0f %.0f dist %.0f; %s",
+                     end.draws, (double)end.triangles / 1e6, end.shadowDraws, fs.frameMs, cpuMs, r.FenceWaitMs(), r.PresentMs(), gpuAll, gpu[1], gpu[0],
+                     eye.x, eye.y, eye.z, g_engine.camera.distance, line.c_str());
+        }
+    }
 }
 
 // -------------------------------------------------------------------- input
@@ -4347,6 +4655,11 @@ void ContinueDrag(LPARAM lparam) {
 
 // Keys that don't tear down windows (those are menu accelerators). Returns true when the key was used.
 bool HandleKey(WPARAM wparam, LPARAM lparam) {
+    if (g_roadRename.active) return RoadRenameKey(wparam);
+    if (wparam == VK_F2 && g_roads.active && g_hoverSeg >= 0) {
+        RoadRenameBegin();
+        return true;
+    }
     if (g_play.active) { // Play owns the keyboard: Esc stops, G walks / flies, WASD etc. are polled by PlayMode::Update
         if (wparam == VK_ESCAPE) OnTransport(2, nullptr);
         else if (wparam == 'G' && !(lparam & (1 << 30))) {
@@ -4389,6 +4702,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
     if (g_transportTool.active) { // the transport tool's keys: Esc drops the building / closes, , . rotate
         switch (wparam) {
         case VK_ESCAPE: g_transportTool.Escape(); return true;
+        case VK_RETURN: if (g_transportTool.lines) { g_transportTool.finishLine = true; return true; } break;
         case VK_OEM_COMMA: g_transportTool.Rotate(15.0f); return true;
         case VK_OEM_PERIOD: g_transportTool.Rotate(-15.0f); return true;
         }
@@ -4425,6 +4739,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         return true;
     }
     if (!repeat && wparam == VK_F8) { SaveTerrainEdits(); return true; }
+    if (!repeat && ctrl && (GetKeyState(VK_SHIFT) & 0x8000) && wparam == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
     if (!repeat && wparam == VK_F11) { LoadTerrainEdits(); return true; }
     if (ctrl || alt) return false;
     if (!repeat && wparam == 'T') {
@@ -4585,6 +4900,12 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case WM_PAINT: // the render loop owns this window's contents
         ValidateRect(hwnd, nullptr);
         return 0;
+    case WM_CHAR:
+        if (g_roadRename.active) {
+            RoadRenameChar(wparam);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (HandleKey(wparam, lparam)) return 0;
         break;
@@ -4633,6 +4954,10 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         if (g_utilTool.active && (g_utilIn.laying || g_utilTool.def >= 0 || g_utilTool.Laying() || g_utilTool.bulldoze) && g_engine.drag == Drag::None) { // right click ends the line, then drops the item
             if (g_utilIn.laying) g_utilIn.laying = false;
             else g_utilTool.def = -1, g_utilTool.line = -1, g_utilTool.bulldoze = false;
+            return 0;
+        }
+        if (g_transportTool.active && g_transportTool.lines && (g_transportTool.lineStops > 0 || g_transportTool.outKind >= 0 || g_transportTool.lineBulldoze) && g_engine.drag == Drag::None) { // right click drops the line in progress / the connection tool
+            g_transportTool.Escape();
             return 0;
         }
         if (g_transportTool.active && (g_transportTool.def >= 0 || g_transportTool.bulldoze) && g_engine.drag == Drag::None) { // right click drops the chosen building
@@ -4688,7 +5013,18 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case WM_MOUSEWHEEL: {
         const float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
-        else g_engine.camera.Zoom(notches * ((GetKeyState(VK_SHIFT) & 0x8000) ? 0.12f : 0.5f) * tbd::character::CameraScale()); // slower than before (x0.5); Shift: fine steps; creator open: slower still
+        else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
+            const float n = notches * ((GetKeyState(VK_SHIFT) & 0x8000) ? 0.12f : 0.5f) * tbd::character::CameraScale();
+            const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
+            g_camSmooth.goal = std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
+            g_camSmooth.lastSet = g_engine.camera.distance;
+            POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ScreenToClient(hwnd, &pt);
+            tbd::Vec3 hit;
+            g_camSmooth.anchored = !g_play.active &&
+                GroundHit(g_engine.camera.ScreenRay((float)pt.x, (float)pt.y, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+            if (g_camSmooth.anchored) g_camSmooth.anchor = hit;
+        }
         return 0;
     }
     }
@@ -5024,6 +5360,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_INITMENUPOPUP:
         UpdateMenu();
         break;
+    case WM_CHAR:
+        if (g_roadRename.active) {
+            RoadRenameChar(wparam);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (HandleKey(wparam, lparam)) return 0;
         break;
@@ -5108,6 +5450,12 @@ LRESULT CALLBACK FloatProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_CLOSE:
         SetViewportFloating(false);
         return 0;
+    case WM_CHAR:
+        if (g_roadRename.active) {
+            RoadRenameChar(wparam);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
         if (HandleKey(wparam, lparam)) return 0;
         break;

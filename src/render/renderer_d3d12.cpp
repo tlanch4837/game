@@ -23,6 +23,7 @@
 
 #include "cloud_noise.h"
 #include "mesh_weld.h"
+#include "chunk_faces.h"
 #include "renderer.h"
 extern float g_brightness; // main.cpp: user brightness multiplier
 extern float g_sceneExposure; // main.cpp: the scene's fixed exposure (Scene::exposure), 0 = auto
@@ -153,6 +154,7 @@ void PrecompileD3D12Shaders(std::atomic<int>& done, std::atomic<int>& total, con
         {L"post.hlsl", "CloudResolvePS", "ps_5_1"}, {L"post.hlsl", "ProbeTracePS", "ps_5_1"}, {L"post.hlsl", "ProbeBlendPS", "ps_5_1"}, {L"post.hlsl", "ExposurePS", "ps_5_1"},
         {L"post.hlsl", "BloomPS", "ps_5_1"}, {L"water.hlsl", "WaterVS", "vs_5_1"}, {L"water.hlsl", "WaterPS", "ps_5_1"}, {L"water.hlsl", "CSRipple", "cs_5_1", true},
         {L"water.hlsl", "CSWaves", "cs_5_1", true}, {L"water.hlsl", "CSSky", "cs_5_1", true},
+        {L"mesh.hlsl", "ChunkBakeVS", "vs_5_1"}, {L"mesh.hlsl", "ChunkBakePS", "ps_5_1"}, {L"mesh.hlsl", "ChunkVolVS", "vs_5_1"}, {L"mesh.hlsl", "ChunkVolPS", "ps_5_1"},
     };
     total = (int)std::size(items);
     std::atomic<int> next{0};
@@ -1277,6 +1279,30 @@ public:
         list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
         DrawInstancedMesh(mesh, instanceBuffers_[buffer], first, count);
         if (prepass_ == 1) return; // the pre-pass: its draws are counted once, when shaded
+        ++counts_.draws;
+        counts_.triangles += (uint64_t)(mesh.count / 3) * count;
+    }
+
+    void DrawInstancedTransient(MeshId id, const float* rows, uint32_t count, const Mat4& viewProj) override {
+        if (count == 0 || !rows || resolved_ || id >= meshes_.size() || !meshes_[id].buffer || meshes_[id].topology != Topology::Triangles) return;
+        const size_t bytes = (size_t)count * kInstanceStride;
+        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
+        if (offset + bytes > kTransientBytes) {
+            Log("D3D12: transient buffer full, instanced draw dropped");
+            return;
+        }
+        std::memcpy(frame_->transientPtr + offset, rows, bytes);
+        frame_->transientUsed = offset + bytes;
+        InstanceBuffer ib;
+        ib.view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+        const Mesh& mesh = meshes_[id];
+        PushConstants pc;
+        std::memcpy(pc.mvp, viewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        list_->SetPipelineState(instancedPso_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
+        DrawInstancedMesh(mesh, ib, 0, count);
         ++counts_.draws;
         counts_.triangles += (uint64_t)(mesh.count / 3) * count;
     }
@@ -2573,6 +2599,7 @@ private:
             {"INSTROW", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
         };
 
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC chunkScenePd = {};
         for (int i = 0; i < 8; ++i) { // 0-3 draw into the HDR scene, 4-7 are the same states for display-space overlays
             const bool lines = (i & 3) >= 2;
             const bool depth = (i % 2) == 0;
@@ -2598,6 +2625,7 @@ private:
             pd.DSVFormat = kDepthFormat;
             pd.SampleDesc.Count = 1;
             CHECK(device_->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(i < 4 ? &pso_[i] : &psoOverlay_[i - 4])));
+            if (i == 0) chunkScenePd = pd; // the chunk volumes draw like the scene's lit triangles
             if (i == 0) { // instanced draws: the HDR scene's lit triangles, with the second vertex stream
                 ComPtr<ID3DBlob> instancedVs;
                 if (!CompileShader(L"mesh.hlsl", "VSInstanced", "vs_5_1", instancedVs)) return false;
@@ -2649,6 +2677,7 @@ private:
                 CHECK(device_->CreateGraphicsPipelineState(&ipd, IID_PPV_ARGS(&skinnedMotionPso_)));
             }
         }
+        if (!CreateChunkPipelines(layout, instancedLayout, chunkScenePd)) return false;
         return CreateShadowResources(layout, instancedLayout);
     }
 
@@ -3133,6 +3162,403 @@ private:
         }
     }
 
+    // ------------------------------------------------------------------ city chunk bakes (Track R; renderer.h, shaders/chunk_faces.hlsli)
+    // The chunk store is an impostor store of its own (the same three channel arrays and tile depth buffer as the self-test's, one
+    // layer per face, channel 2 RG16 for the relief's start and end): a face is drawn into a layer, then copied into the atlas
+    // channel, a plain Texture2D registered as a material texture so DrawChunkVolumes binds it like any other.
+    static constexpr DXGI_FORMAT kChunkFormats[3] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16_UNORM};
+
+    D3D12_CPU_DESCRIPTOR_HANDLE ChunkRtv(UINT channel, UINT layer) const {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = chunkRtvHeap_->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += (SIZE_T)(channel * kChunkFaceCount + layer) * rtvSize_;
+        return h;
+    }
+
+    void ReleaseChunkAtlas() {
+        if (!chunkTile_) return;
+        WaitIdle();
+        for (TextureId& id : chunkTex_) {
+            if (id < textures_.size() && textures_[id].resource) {
+                textures_[id] = Tex{};
+                freeTexSlots_.push_back(id);
+            }
+            id = kNoTexture;
+        }
+        for (auto& r : chunkAtlas_) r.Reset();
+        for (auto& r : chunkStore_) r.Reset();
+        chunkDepth_.Reset();
+        chunkTile_ = chunkW_ = chunkH_ = 0;
+    }
+
+    bool CreateChunkAtlas(uint32_t tile, uint32_t width, uint32_t height) override {
+        if (!device_ || tile < 4 || width < tile * kChunkFaceCount || height < tile) return false;
+        if (tile == chunkTile_ && width == chunkW_ && height == chunkH_) return true;
+        ReleaseChunkAtlas();
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        for (int c = 0; c < 3; ++c) {
+            D3D12_RESOURCE_DESC rd = {};
+            rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            rd.Width = tile;
+            rd.Height = tile;
+            rd.DepthOrArraySize = (UINT16)kChunkFaceCount;
+            rd.MipLevels = 1;
+            rd.Format = kChunkFormats[c];
+            rd.SampleDesc.Count = 1;
+            rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+            D3D12_CLEAR_VALUE cv = {};
+            cv.Format = kChunkFormats[c];
+            if (c == 2) cv.Color[0] = cv.Color[1] = 1.0f; // empty relief
+            if (c == 1) cv.Color[0] = cv.Color[1] = 0.5f, cv.Color[2] = cv.Color[3] = 1.0f;
+            if (FAILED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &cv, IID_PPV_ARGS(&chunkStore_[c])))) return false;
+            D3D12_RESOURCE_DESC ad = rd;
+            ad.Width = width;
+            ad.Height = height;
+            ad.DepthOrArraySize = 1;
+            ad.Flags = D3D12_RESOURCE_FLAG_NONE;
+            if (FAILED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &ad, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&chunkAtlas_[c])))) return false;
+        }
+        if (!chunkRtvHeap_) {
+            D3D12_DESCRIPTOR_HEAP_DESC hd = {};
+            hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            hd.NumDescriptors = 3 * kChunkFaceCount;
+            CHECK(device_->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&chunkRtvHeap_)));
+            hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+            hd.NumDescriptors = 1;
+            CHECK(device_->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&chunkDsvHeap_)));
+        }
+        for (UINT c = 0; c < 3; ++c)
+            for (UINT l = 0; l < (UINT)kChunkFaceCount; ++l) {
+                D3D12_RENDER_TARGET_VIEW_DESC rv = {};
+                rv.Format = kChunkFormats[c];
+                rv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+                rv.Texture2DArray.FirstArraySlice = l;
+                rv.Texture2DArray.ArraySize = 1;
+                device_->CreateRenderTargetView(chunkStore_[c].Get(), &rv, ChunkRtv(c, l));
+            }
+        D3D12_RESOURCE_DESC dd = {};
+        dd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        dd.Width = tile;
+        dd.Height = tile;
+        dd.DepthOrArraySize = 1;
+        dd.MipLevels = 1;
+        dd.Format = kTileDepthFormat;
+        dd.SampleDesc.Count = 1;
+        dd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE dc = {};
+        dc.Format = kTileDepthFormat;
+        dc.DepthStencil.Depth = 1.0f;
+        if (FAILED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &dd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &dc, IID_PPV_ARGS(&chunkDepth_)))) return false;
+        device_->CreateDepthStencilView(chunkDepth_.Get(), nullptr, chunkDsvHeap_->GetCPUDescriptorHandleForHeapStart());
+
+        // The atlas starts empty (relief 1, 1), then waits in the pixel shader state like every texture.
+        ComPtr<ID3D12CommandAllocator> alloc;
+        ComPtr<ID3D12GraphicsCommandList> cl;
+        CHECK(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)));
+        CHECK(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&cl)));
+        for (int c = 0; c < 3; ++c) {
+            D3D12_RESOURCE_BARRIER b = {};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = chunkAtlas_[c].Get();
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            cl->ResourceBarrier(1, &b);
+        }
+        cl->Close();
+        ID3D12CommandList* lists[] = {cl.Get()};
+        queue_->ExecuteCommandLists(1, lists);
+        WaitIdle();
+        chunkTile_ = tile, chunkW_ = width, chunkH_ = height;
+        for (UINT c = 0; c < 3; ++c) { // empty texels: relief (1, 1) reads as nothing there
+            std::vector<uint8_t> fill((size_t)width * 4, c == 2 ? 0xFF : 0);
+            std::vector<uint8_t> all((size_t)width * height * 4);
+            for (uint32_t y = 0; y < height; ++y) std::memcpy(all.data() + (size_t)y * width * 4, fill.data(), fill.size());
+            if (!WriteChunkAtlas((int)c, 0, 0, width, height, all.data())) return false;
+        }
+        for (UINT c = 0; c < 3; ++c) {
+            UINT slot;
+            if (!freeTexSlots_.empty()) { slot = freeTexSlots_.back(); freeTexSlots_.pop_back(); }
+            else if (nextTexSlot_ < kMaxTextures) slot = nextTexSlot_++;
+            else { Log("D3D12: out of texture slots for the chunk atlas"); return false; }
+            Tex tex;
+            tex.resource = chunkAtlas_[c];
+            tex.slot = slot;
+            D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+            sv.Format = kChunkFormats[c];
+            sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            sv.Texture2D.MipLevels = 1;
+            device_->CreateShaderResourceView(chunkAtlas_[c].Get(), &sv, TexCpu(slot));
+            if (slot >= textures_.size()) textures_.resize(slot + 1);
+            textures_[slot] = std::move(tex);
+            chunkTex_[c] = (TextureId)slot;
+        }
+        Log("D3D12: chunk atlas %ux%u, %u px tiles (%u cells)", width, height, tile, (width / (tile * kChunkFaceCount)) * (height / tile));
+        return true;
+    }
+
+    TextureId ChunkAtlasTexture(int channel) const override { return channel >= 0 && channel < 3 ? chunkTex_[channel] : kNoTexture; }
+
+    bool BeginChunkBake() override {
+        if (!frame_ || resolved_ || !chunkTile_ || !chunkBakePso_[0] || !chunkBakePso_[1]) return false;
+        for (auto& r : chunkStore_) Transition(r.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        chunkBaking_ = true;
+        return true;
+    }
+
+    void ChunkBakeFace(const ChunkBakeItem* items, uint32_t count, const Mat4& faceViewProj, uint32_t atlasX, uint32_t atlasY) override {
+        if (!chunkBaking_ || atlasX + chunkTile_ > chunkW_ || atlasY + chunkTile_ > chunkH_) return;
+        const UINT layer = chunkLayer_++ % (UINT)kChunkFaceCount;
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[3] = {ChunkRtv(0, layer), ChunkRtv(1, layer), ChunkRtv(2, layer)};
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = chunkDsvHeap_->GetCPUDescriptorHandleForHeapStart();
+        list_->OMSetRenderTargets(3, rtvs, FALSE, &dsv);
+        const float clear0[4] = {0, 0, 0, 0}, clear1[4] = {0.5f, 0.5f, 1.0f, 1.0f}, clear2[4] = {1, 1, 0, 0};
+        list_->ClearRenderTargetView(rtvs[0], clear0, 0, nullptr);
+        list_->ClearRenderTargetView(rtvs[1], clear1, 0, nullptr);
+        list_->ClearRenderTargetView(rtvs[2], clear2, 0, nullptr);
+        list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        const D3D12_VIEWPORT vp = {0, 0, (float)chunkTile_, (float)chunkTile_, 0.0f, 1.0f};
+        const D3D12_RECT scissor = {0, 0, (LONG)chunkTile_, (LONG)chunkTile_};
+        list_->RSSetViewports(1, &vp);
+        list_->RSSetScissorRects(1, &scissor);
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        PushConstants pc;
+        std::memcpy(pc.mvp, faceViewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
+        // The rows go into the transient buffer once; both passes draw from there.
+        static std::vector<InstanceBuffer> views;
+        views.assign(count, InstanceBuffer{});
+        for (uint32_t k = 0; k < count; ++k) {
+            const ChunkBakeItem& it = items[k];
+            if (!it.rows || !it.count || it.mesh >= meshes_.size() || !meshes_[it.mesh].buffer || meshes_[it.mesh].topology != Topology::Triangles) continue;
+            const size_t bytes = (size_t)it.count * kInstanceStride, offset = (frame_->transientUsed + 15) & ~size_t(15);
+            if (offset + bytes > kTransientBytes) { Log("D3D12: transient buffer full, chunk bake item dropped"); continue; }
+            std::memcpy(frame_->transientPtr + offset, it.rows, bytes);
+            frame_->transientUsed = offset + bytes;
+            views[k].view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+        }
+        for (int pass = 0; pass < 2; ++pass) {
+            list_->SetPipelineState(chunkBakePso_[pass].Get());
+            TextureId bound = kNoTexture;
+            bool any = false;
+            for (uint32_t k = 0; k < count; ++k) {
+                if (!views[k].view.SizeInBytes) continue;
+                if (!any || items[k].albedo != bound) { SetMaterial(items[k].albedo, kNoTexture, kNoTexture); bound = items[k].albedo; any = true; }
+                DrawInstancedMesh(meshes_[items[k].mesh], views[k], 0, items[k].count);
+            }
+        }
+        // Into the atlas.
+        for (int c = 0; c < 3; ++c) {
+            Transition(chunkStore_[c].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            Transition(chunkAtlas_[c].Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+            dst.pResource = chunkAtlas_[c].Get();
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.pResource = chunkStore_[c].Get();
+            src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.SubresourceIndex = layer;
+            const D3D12_BOX box = {0, 0, 0, chunkTile_, chunkTile_, 1};
+            list_->CopyTextureRegion(&dst, atlasX, atlasY, 0, &src, &box);
+            Transition(chunkAtlas_[c].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            Transition(chunkStore_[c].Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
+    }
+
+    void EndChunkBake() override {
+        if (!chunkBaking_) return;
+        chunkBaking_ = false;
+        for (auto& r : chunkStore_) Transition(r.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        const D3D12_CPU_DESCRIPTOR_HANDLE targets[2] = {ColorRtv(), PostRtv(kVelocity)};
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsvHeap_->GetCPUDescriptorHandleForHeapStart();
+        list_->OMSetRenderTargets(2, targets, FALSE, &dsv);
+        const float noMotion[4] = {0, 0, 0, 0};
+        list_->ClearRenderTargetView(targets[1], noMotion, 0, nullptr);
+        list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0, 0, nullptr);
+        const D3D12_VIEWPORT vp = {0, 0, (float)rw_, (float)rh_, 0.0f, 1.0f};
+        const D3D12_RECT scissor = {0, 0, (LONG)rw_, (LONG)rh_};
+        list_->RSSetViewports(1, &vp);
+        list_->RSSetScissorRects(1, &scissor);
+        SetMaterial(kNoTexture, kNoTexture, kNoTexture);
+    }
+
+    // A one-off copy between an atlas channel and a CPU buffer, outside the frame; waits.
+    bool ChunkAtlasCopy(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, std::vector<uint8_t>* out, const uint8_t* in) {
+        if (channel < 0 || channel > 2 || !chunkAtlas_[channel] || !w || !h) return false;
+        D3D12_RESOURCE_DESC box = chunkAtlas_[channel]->GetDesc();
+        if (x + w > box.Width || y + h > box.Height) return false;
+        box.Width = w;
+        box.Height = h;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp = {};
+        UINT64 bytes = 0;
+        device_->GetCopyableFootprints(&box, 0, 1, 0, &fp, nullptr, nullptr, &bytes);
+        ComPtr<ID3D12Resource> staging;
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = out ? D3D12_HEAP_TYPE_READBACK : D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC bd = {};
+        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        bd.Width = bytes;
+        bd.Height = 1;
+        bd.DepthOrArraySize = 1;
+        bd.MipLevels = 1;
+        bd.SampleDesc.Count = 1;
+        bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, out ? D3D12_RESOURCE_STATE_COPY_DEST : D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&staging)))) return false;
+        if (in) {
+            uint8_t* mapped = nullptr;
+            D3D12_RANGE noRead = {0, 0};
+            if (FAILED(staging->Map(0, &noRead, reinterpret_cast<void**>(&mapped)))) return false;
+            for (uint32_t row = 0; row < h; ++row) std::memcpy(mapped + fp.Offset + (size_t)row * fp.Footprint.RowPitch, in + (size_t)row * w * 4, (size_t)w * 4);
+            staging->Unmap(0, nullptr);
+        }
+        ComPtr<ID3D12CommandAllocator> alloc;
+        ComPtr<ID3D12GraphicsCommandList> cl;
+        if (FAILED(device_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc))) ||
+            FAILED(device_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc.Get(), nullptr, IID_PPV_ARGS(&cl))))
+            return false;
+        D3D12_RESOURCE_BARRIER b = {};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource = chunkAtlas_[channel].Get();
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        b.Transition.StateAfter = out ? D3D12_RESOURCE_STATE_COPY_SOURCE : D3D12_RESOURCE_STATE_COPY_DEST;
+        cl->ResourceBarrier(1, &b);
+        D3D12_TEXTURE_COPY_LOCATION tex = {}, buf = {};
+        tex.pResource = chunkAtlas_[channel].Get();
+        tex.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        buf.pResource = staging.Get();
+        buf.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        buf.PlacedFootprint = fp;
+        if (out) {
+            const D3D12_BOX src = {x, y, 0, x + w, y + h, 1};
+            cl->CopyTextureRegion(&buf, 0, 0, 0, &tex, &src);
+        } else {
+            cl->CopyTextureRegion(&tex, x, y, 0, &buf, nullptr);
+        }
+        std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+        cl->ResourceBarrier(1, &b);
+        cl->Close();
+        ID3D12CommandList* lists[] = {cl.Get()};
+        queue_->ExecuteCommandLists(1, lists);
+        WaitIdle();
+        if (out) {
+            out->resize((size_t)w * h * 4);
+            uint8_t* mapped = nullptr;
+            const D3D12_RANGE all = {0, (SIZE_T)bytes};
+            if (FAILED(staging->Map(0, &all, reinterpret_cast<void**>(&mapped)))) return false;
+            for (uint32_t row = 0; row < h; ++row) std::memcpy(out->data() + (size_t)row * w * 4, mapped + fp.Offset + (size_t)row * fp.Footprint.RowPitch, (size_t)w * 4);
+            const D3D12_RANGE none = {0, 0};
+            staging->Unmap(0, &none);
+        }
+        return true;
+    }
+    bool ReadChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, std::vector<uint8_t>& out) override {
+        return ChunkAtlasCopy(channel, x, y, w, h, &out, nullptr);
+    }
+    bool WriteChunkAtlas(int channel, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t* texels) override {
+        return texels && ChunkAtlasCopy(channel, x, y, w, h, nullptr, texels);
+    }
+
+    void DrawChunkVolumes(MeshId id, const Mat4& viewProj) override {
+        if (!frame_ || resolved_ || !chunkTile_ || !chunkVolPso_ || id >= meshes_.size() || !meshes_[id].buffer || !meshes_[id].indexed) return;
+        const Mesh& mesh = meshes_[id];
+        SetMaterial(chunkTex_[0], chunkTex_[1], chunkTex_[2]);
+        materialConstants_[2] = (float)chunkTile_;
+        list_->SetGraphicsRoot32BitConstants(6, 4, materialConstants_, 0);
+        PushConstants pc;
+        std::memcpy(pc.mvp, viewProj.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        list_->SetPipelineState(chunkVolPso_.Get());
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
+        list_->IASetVertexBuffers(0, 1, &mesh.view);
+        list_->IASetIndexBuffer(&mesh.indexView);
+        list_->DrawIndexedInstanced(mesh.count, 1, 0, 0, 0);
+        ++counts_.draws;
+        counts_.triangles += mesh.count / 3;
+        materialConstants_[2] = 0.0f;
+        SetMaterial(kNoTexture, kNoTexture, kNoTexture);
+    }
+
+    void SetDrawFade(float keep) override {
+        materialConstants_[3] = keep;
+        if (frame_ && list_ && !resolved_) list_->SetGraphicsRoot32BitConstants(6, 4, materialConstants_, 0);
+    }
+
+    void DrawShadowInstancedTransient(MeshId id, const float* rows, uint32_t count) override {
+        if (count == 0 || !rows || !frame_ || id >= meshes_.size() || !meshes_[id].buffer || meshes_[id].topology != Topology::Triangles) return;
+        const size_t bytes = (size_t)count * kInstanceStride;
+        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
+        if (offset + bytes > kTransientBytes) {
+            Log("D3D12: transient buffer full, instanced caster dropped");
+            return;
+        }
+        std::memcpy(frame_->transientPtr + offset, rows, bytes);
+        frame_->transientUsed = offset + bytes;
+        InstanceBuffer ib;
+        ib.view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+        if (!shadowInstancedBound_ || forceShadowRebind_) {
+            forceShadowRebind_ = false;
+            list_->SetPipelineState(shadowTarget_ == ShadowMap::Tight ? tightInstancedPso_.Get() : shadowInstancedPso_.Get());
+            shadowInstancedBound_ = true;
+        }
+        PushConstants pc;
+        std::memcpy(pc.mvp, lightVP_.m, sizeof(pc.mvp));
+        std::memcpy(pc.model, Mat4::Identity().m, sizeof(pc.model));
+        list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
+        DrawInstancedMesh(meshes_[id], ib, 0, count);
+        ++counts_.shadowDraws;
+        counts_.shadowTriangles += (uint64_t)(meshes_[id].count / 3) * count;
+    }
+
+    // The bake's two pipelines and the volumes' one (CreatePipelines; `layout` / `instancedLayout` are its vertex layouts).
+    bool CreateChunkPipelines(const D3D12_INPUT_ELEMENT_DESC* layout, const D3D12_INPUT_ELEMENT_DESC* instancedLayout, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& scene) {
+        ComPtr<ID3DBlob> bakeVs, bakePs, volVs, volPs;
+        if (!CompileShader(L"mesh.hlsl", "ChunkBakeVS", "vs_5_1", bakeVs) || !CompileShader(L"mesh.hlsl", "ChunkBakePS", "ps_5_1", bakePs) ||
+            !CompileShader(L"mesh.hlsl", "ChunkVolVS", "vs_5_1", volVs) || !CompileShader(L"mesh.hlsl", "ChunkVolPS", "ps_5_1", volPs))
+            return false;
+        for (int pass = 0; pass < 2; ++pass) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pd = {};
+            pd.pRootSignature = rootSig_.Get();
+            pd.VS = {bakeVs->GetBufferPointer(), bakeVs->GetBufferSize()};
+            pd.PS = {bakePs->GetBufferPointer(), bakePs->GetBufferSize()};
+            pd.BlendState.IndependentBlendEnable = TRUE;
+            for (int t = 0; t < 3; ++t) {
+                pd.RTVFormats[t] = kChunkFormats[t];
+                pd.BlendState.RenderTarget[t].RenderTargetWriteMask = (pass == 0) == (t < 2) ? D3D12_COLOR_WRITE_ENABLE_ALL : 0;
+            }
+            if (pass == 1) { // the relief: the nearest start and the farthest end over every surface, so MIN of (d, 1 - d)
+                D3D12_RENDER_TARGET_BLEND_DESC& b = pd.BlendState.RenderTarget[2];
+                b.BlendEnable = TRUE;
+                b.SrcBlend = b.DestBlend = D3D12_BLEND_ONE;
+                b.BlendOp = D3D12_BLEND_OP_MIN;
+                b.SrcBlendAlpha = b.DestBlendAlpha = D3D12_BLEND_ONE;
+                b.BlendOpAlpha = D3D12_BLEND_OP_MIN;
+                b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN;
+            }
+            pd.SampleMask = UINT_MAX;
+            pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+            pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            pd.RasterizerState.DepthClipEnable = TRUE;
+            pd.DepthStencilState.DepthEnable = pass == 0 ? TRUE : FALSE;
+            pd.DepthStencilState.DepthWriteMask = pass == 0 ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+            pd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+            pd.InputLayout = {instancedLayout, 7};
+            pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pd.NumRenderTargets = 3;
+            pd.DSVFormat = kTileDepthFormat;
+            pd.SampleDesc.Count = 1;
+            CHECK(device_->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&chunkBakePso_[pass])));
+        }
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC vd = scene;
+        vd.VS = {volVs->GetBufferPointer(), volVs->GetBufferSize()};
+        vd.PS = {volPs->GetBufferPointer(), volPs->GetBufferSize()};
+        vd.InputLayout = {layout, 4};
+        CHECK(device_->CreateGraphicsPipelineState(&vd, IID_PPV_ARGS(&chunkVolPso_)));
+        return true;
+    }
+
     // ------------------------------------------------------------------ impostor store
     // Three texture arrays (albedo, normal, depth; layer = slot * 6 + face). The bake renders into one layer of
     // each at a time; the impostor shader samples all of them through one descriptor table. At rest they sit in
@@ -3494,6 +3920,12 @@ private:
     ComPtr<ID3D12DescriptorHeap> storeRtvHeap_, storeSrvHeap_;
     ComPtr<ID3D12RootSignature> storeRootSig_;
     UINT storeLayers_ = 0, storeTile_ = 0;
+    ComPtr<ID3D12Resource> chunkStore_[3], chunkAtlas_[3], chunkDepth_; // the chunk bake's store (a layer per face) and its atlas
+    ComPtr<ID3D12DescriptorHeap> chunkRtvHeap_, chunkDsvHeap_;
+    ComPtr<ID3D12PipelineState> chunkBakePso_[2], chunkVolPso_; // bake: surface, relief; ChunkVolPS
+    TextureId chunkTex_[3] = {kNoTexture, kNoTexture, kNoTexture};
+    UINT chunkTile_ = 0, chunkW_ = 0, chunkH_ = 0, chunkLayer_ = 0;
+    bool chunkBaking_ = false;
     std::vector<Mesh> meshes_;
     std::vector<MeshId> freeSlots_;
     std::vector<StreamRetired> streamRetired_;

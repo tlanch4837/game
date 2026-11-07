@@ -74,12 +74,7 @@ inline bool ZoneToolbar(Context& g, ZoneToolState& z, float lift) {
     using namespace road_ui;
     const float s = g.Scale();
     if (!z.active) {
-        g.BeginPanel("##zones launcher", Anchor::BottomCenter, 150.0f, lift, 0.0f, 0.0f, 6.0f);
-        g.NextWidth(132);
-        const bool open = g.Button("Zoning", Icon::Zones);
-        g.EndPanel();
-        if (open) z.active = true;
-        return open;
+        return false; // the city HUD's toolbar (city_hud.h) opens it
     }
     const Theme& th = g.Style();
     Tip tip;

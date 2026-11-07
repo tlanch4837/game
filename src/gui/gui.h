@@ -173,7 +173,9 @@ enum class Icon {
     // transport (transport_toolbar.h; Rail is also the road tool's railway tab)
     Rail, Transport, Ship, Plane, RotateLeft, RotateRight, Marker, Waves,
     // utilities (utility_toolbar.h)
-    Bolt, Drop, Drain, Underground, Pole, Utilities
+    Bolt, Drop, Drain, Underground, Pole, Utilities,
+    // city HUD (city_hud.h)
+    Health, Fire, Police, Education, Park, Economy, Info, Citizens, Notes, Chat, MapTiles, Chart, Comms, Gear
 };
 
 inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size, float stroke, Color c);
@@ -386,11 +388,26 @@ inline void DrawRoadIcon(DrawList& dl, Icon icon, float cx, float cy, float size
         C(-0.55f, 0.15f, -0.45f, 0.35f, -0.3f, 0.55f, -0.3f, 0.7f); C(-0.3f, 0.7f, -0.3f, 0.9f, -0.45f, 0.97f, -0.55f, 0.97f);
         break;
     case Icon::Roads: L(-0.3f, -0.9f, -0.9f, 0.9f); L(0.3f, -0.9f, 0.9f, 0.9f); L(0, -0.8f, 0, -0.5f); L(0, -0.2f, 0, 0.15f); L(0, 0.5f, 0, 0.9f); break;
+    case Icon::Health: Ring(0.95f, 20); L(0, -0.55f, 0, 0.55f); L(-0.55f, 0, 0.55f, 0); break;
+    case Icon::Fire: Q(0, -0.95f, -0.85f, 0, -0.5f, 0.6f); Q(-0.5f, 0.6f, 0, 1.1f, 0.5f, 0.6f); Q(0.5f, 0.6f, 0.85f, 0, 0, -0.95f); break;
+    case Icon::Police: L(-0.7f, -0.8f, 0.7f, -0.8f); L(0.7f, -0.8f, 0.7f, 0.1f); Q(0.7f, 0.1f, 0.6f, 0.7f, 0, 0.95f); Q(0, 0.95f, -0.6f, 0.7f, -0.7f, 0.1f); L(-0.7f, 0.1f, -0.7f, -0.8f); break;
+    case Icon::Education: L(0, -0.7f, -0.95f, -0.2f); L(-0.95f, -0.2f, 0, 0.3f); L(0, 0.3f, 0.95f, -0.2f); L(0.95f, -0.2f, 0, -0.7f); L(-0.5f, 0.05f, -0.5f, 0.6f); L(0.5f, 0.05f, 0.5f, 0.6f); Q(-0.5f, 0.6f, 0, 0.95f, 0.5f, 0.6f); break;
+    case Icon::Park: L(0, -0.95f, -0.65f, 0.1f); L(-0.65f, 0.1f, 0.65f, 0.1f); L(0.65f, 0.1f, 0, -0.95f); L(0, 0.1f, 0, 0.9f); break;
+    case Icon::Economy: Ring(0.95f, 20); L(-0.3f, -0.4f, 0.3f, -0.4f); L(-0.3f, 0, 0.3f, 0); L(-0.3f, 0.4f, 0.3f, 0.4f); break;
+    case Icon::Info: Ring(0.95f, 20); L(0, -0.05f, 0, 0.55f); L(0, -0.5f, 0, -0.42f); break;
+    case Icon::Citizens: L(0, -0.9f, 0.35f, -0.55f); L(0.35f, -0.55f, 0, -0.2f); L(0, -0.2f, -0.35f, -0.55f); L(-0.35f, -0.55f, 0, -0.9f); Q(-0.8f, 0.9f, -0.8f, 0.1f, 0, 0.1f); Q(0, 0.1f, 0.8f, 0.1f, 0.8f, 0.9f); L(-0.8f, 0.9f, 0.8f, 0.9f); break;
+    case Icon::Notes: L(-0.6f, -0.9f, 0.6f, -0.9f); L(0.6f, -0.9f, 0.6f, 0.9f); L(0.6f, 0.9f, -0.6f, 0.9f); L(-0.6f, 0.9f, -0.6f, -0.9f); L(-0.3f, -0.4f, 0.3f, -0.4f); L(-0.3f, 0, 0.3f, 0); L(-0.3f, 0.4f, 0.1f, 0.4f); break;
+    case Icon::Chat: L(-0.9f, -0.7f, 0.9f, -0.7f); L(0.9f, -0.7f, 0.9f, 0.3f); L(0.9f, 0.3f, -0.1f, 0.3f); L(-0.1f, 0.3f, -0.5f, 0.85f); L(-0.5f, 0.85f, -0.5f, 0.3f); L(-0.5f, 0.3f, -0.9f, 0.3f); L(-0.9f, 0.3f, -0.9f, -0.7f); break;
+    case Icon::MapTiles: L(-0.9f, -0.9f, 0.9f, -0.9f); L(0.9f, -0.9f, 0.9f, 0.9f); L(0.9f, 0.9f, -0.9f, 0.9f); L(-0.9f, 0.9f, -0.9f, -0.9f); L(0, -0.9f, 0, 0.9f); L(-0.9f, 0, 0.9f, 0); break;
+    case Icon::Chart: L(-0.7f, 0.9f, -0.7f, 0.1f); L(0, 0.9f, 0, -0.5f); L(0.7f, 0.9f, 0.7f, -0.9f); L(-0.95f, 0.95f, 0.95f, 0.95f); break;
+    case Icon::Gear: Ring(0.55f, 14); for (int i = 0; i < 8; ++i) { const float a = i * 0.7853982f; L(std::cos(a) * 0.55f, std::sin(a) * 0.55f, std::cos(a) * 0.95f, std::sin(a) * 0.95f); } break;
+    case Icon::Comms: L(0, -0.2f, 0, 0.9f); Ring(0.18f, 8); Q(-0.55f, -0.75f, 0, -1.0f, 0.55f, -0.75f); Q(-0.9f, -0.2f, 0, -0.65f, 0.9f, -0.2f); break;
     default: break;
     }
 }
 
 class Context {
+    bool offscreen_ = false;
 public:
     Theme& BaseTheme() { return base_; }     // unscaled; change it between frames
     const Theme& Style() const { return t_; } // this frame's scaled copy
@@ -398,6 +415,7 @@ public:
     // Classic output (flat quads + pixel font for DrawTransient) instead of smooth UiVertex primitives. Takes effect at
     // the next BeginFrame. The host sets it when the UI pipeline is unavailable or TBD_GUI_CLASSIC=1.
     void SetClassic(bool classic) { classic_ = classic; }
+    void AllowOffscreen(bool on) { offscreen_ = on; } // for the next BeginPanel calls: slide-in panels may sit past the edge
     bool Classic() const { return classic_; }
 
     // Areas the host keeps for itself (iOS safe area, the engine's stats text), in pixels. Panels are pushed inside.
@@ -515,8 +533,10 @@ public:
         const int col = (int)anchor % 3, row = (int)anchor / 3;
         float x = col == 0 ? L + ox : col == 2 ? R - ox - w : (L + R - w) * 0.5f + ox;
         float y = row == 0 ? T + oy : row == 2 ? B - oy - h : (T + B - h) * 0.5f + oy;
-        x = std::max(L, std::min(x, R - w)); // keep it on screen; the top-left edge wins when it cannot fit
-        y = std::max(T, std::min(y, B - h));
+        if (!offscreen_) { // keep it on screen; the top-left edge wins when it cannot fit
+            x = std::max(L, std::min(x, R - w));
+            y = std::max(T, std::min(y, B - h));
+        }
         panel_ = {std::round(x), std::round(y), w, h};
         panelId_ = id;
         bg_ = dl_.Reserve(kBgPrims); // shadow, body, title rule, accent: filled in by EndPanel once the size is known

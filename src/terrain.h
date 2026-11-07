@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "render/renderer.h"
+#include "city_map.h"
 #include "island_map.h"
 #include "render/mesh_weld.h"
 #include "terrain_field.h"
@@ -24,7 +25,7 @@ struct TerrainParams {
     float frequency = 1.0f / 260.0f;
     int radius = 8;            // chunks loaded around the camera
     bool flatStart = true;     // keep the ground around the origin flat; a terrain sandbox turns this off so all of it is hills
-    int mapKind = 0;           // 0: endless procedural hills; 1: the hand-shaped island with sea and river (island_map.h)
+    int mapKind = 0;           // 0: endless procedural hills; 1: the hand-shaped island with sea and river (island_map.h); 2: the random city map, north land / south sea (city_map.h)
 };
 
 class Terrain {
@@ -48,6 +49,7 @@ public:
     // default scene (a ground plane and a box) sits on it.
     float BaseHeightAt(float x, float z) const {
         if (params.mapKind == 1) return IslandMap::Height(x, z);
+        if (params.mapKind == 2) return CityMap::Height(x, z, params.seed);
         const float d = std::sqrt(x * x + z * z);
         const float mask = params.flatStart ? Smooth((d - 30.0f) / 70.0f) : 1.0f;
         float sum = 0, amp = 1, total = 0, freq = params.frequency;
@@ -402,7 +404,12 @@ private:
 
     // The island's sea and river: flat lit meshes made once. They do not follow terrain edits (a dug lake stays dry for now).
     void UpdateWater(Renderer& r) {
-        const bool want = params.mapKind == 1;
+        const bool want = params.mapKind >= 1;
+        if (want && seaMesh_ != kInvalidMesh && seaKind_ != params.mapKind) {
+            r.DestroyMesh(seaMesh_);
+            if (riverMesh_ != kInvalidMesh) r.DestroyMesh(riverMesh_);
+            seaMesh_ = riverMesh_ = kInvalidMesh;
+        }
         if (!want) {
             if (seaMesh_ != kInvalidMesh) r.DestroyMesh(seaMesh_);
             if (riverMesh_ != kInvalidMesh) r.DestroyMesh(riverMesh_);
@@ -411,12 +418,15 @@ private:
         }
         if (seaMesh_ != kInvalidMesh) return;
         std::vector<Vertex> sea, river;
-        IslandMap::BuildWater(sea, river);
+        if (params.mapKind == 2) CityMap::BuildWater(sea);
+        else IslandMap::BuildWater(sea, river);
+        seaKind_ = params.mapKind;
         seaMesh_ = r.CreateMesh(sea.data(), (uint32_t)sea.size(), Topology::Triangles);
         if (!river.empty()) riverMesh_ = r.CreateMesh(river.data(), (uint32_t)river.size(), Topology::Triangles);
     }
 
     MeshId seaMesh_ = kInvalidMesh, riverMesh_ = kInvalidMesh;
+    int seaKind_ = 0;
     std::unordered_map<uint64_t, Chunk> chunks_;
     FarLevel far_[kFarLevels];
     int triangles_ = 0;

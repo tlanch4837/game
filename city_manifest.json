@@ -604,12 +604,25 @@
   "assets/buildings/education/glb/ED_3x4_high_urban_L2.glb",
   "assets/buildings/education/glb/ED_4x4_college_L3.glb"
  ],
+ "harbor": [
+  "assets/buildings/transport/harbor/glb/HB_12x8_ferry_port_L1.glb",
+  "assets/buildings/transport/harbor/glb/HB_24x14_cargo_port_L1.glb"
+ ],
+ "deathcare": [
+  "assets/buildings/deathcare/glb/CM_4x4_small_cemetery_L1.glb",
+  "assets/buildings/deathcare/glb/CM_6x6_cemetery_L2.glb",
+  "assets/buildings/deathcare/glb/CR_4x4_crematorium_L1.glb",
+  "assets/buildings/deathcare/glb/CR_5x5_large_crematorium_L2.glb",
+  "assets/buildings/deathcare/glb/CR_8x12_crematorium_campus_L3.glb",
+  "assets/buildings/deathcare/glb/CM_13x12_memorial_cemetery_L3.glb"
+ ],
  "fire": [
   "assets/buildings/fire/glb/FS_2x2_firehouse_L1.glb",
   "assets/buildings/fire/glb/FS_2x3_volunteer_L1.glb",
   "assets/buildings/fire/glb/FS_3x3_station_L2.glb",
   "assets/buildings/fire/glb/FS_3x4_modern_L2.glb",
-  "assets/buildings/fire/glb/FS_4x4_hq_L3.glb"
+  "assets/buildings/fire/glb/FS_4x4_hq_L3.glb",
+  "assets/buildings/fire/glb/FS_4x5_regional_L3.glb"
  ],
  "health": [
   "assets/buildings/health/glb/HC_2x2_clinic_L1.glb",

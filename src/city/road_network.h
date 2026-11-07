@@ -513,7 +513,7 @@ struct SegTrim {
     V2 leftA, leftB;                           // the cut's left vector, already scaled so the width stays true
     // lane attachments (highway exits / on-ramps that start or end on a lane, src/city/road_tool.h lane snapping):
     int host = -1;                             // this road's free end sits on that road: no edges while over it
-    struct Cut { float t0, t1, side; };        // on the host: where a ramp peels off; side +1 left, -1 right
+    struct Cut { float t0, t1, side; int own; }; // own: the ramp that peels off (its lanes decide what is covered)        // on the host: where a ramp peels off; side +1 left, -1 right
     std::vector<Cut> cuts;                     // no verge / barrier / edge walls on that side over [t0, t1]
 };
 
@@ -693,10 +693,25 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
     int firstLane = -1, lastLane = -1;
     for (size_t k = 0; k < p.strips.size(); ++k)
         if (p.strips[k].kind == Kind::Lane) lastLane = (int)k, firstLane = firstLane < 0 ? (int)k : firstLane;
-    auto cutSide = [&](const Sample& A, const Sample& B) { // +1 / -1: that side is open for a ramp; 0: none
+    auto cutAt = [&](const Sample& A, const Sample& B) -> const SegTrim::Cut* { // the ramp attachment over this span, if any
         for (const SegTrim::Cut& ct : trim.cuts)
-            if (std::max(A.t, B.t) >= ct.t0 && std::min(A.t, B.t) <= ct.t1) return ct.side;
-        return 0.0f;
+            if (std::max(A.t, B.t) >= ct.t0 && std::min(A.t, B.t) <= ct.t1) return &ct;
+        return nullptr;
+    };
+    auto laneHalf = [](const Profile& pr) { // half the width of the lane strips alone (what physically meets at a ramp)
+        float w = 0;
+        for (const Strip& st : pr.strips)
+            if (st.kind == Kind::Lane) w += st.w;
+        return w * 0.5f;
+    };
+    auto sideBand = [](const Profile& pr) { return std::max(pr.sideL, pr.sideR); };
+    const bool hostAlive = trim.host >= 0 && net.segs[trim.host].alive;
+    const float hostHalf = hostAlive ? net.Prof(trim.host).Half() : 0.0f;
+    const float hostLane = hostAlive ? std::max(0.5f, hostHalf - sideBand(net.Prof(trim.host))) : 0.0f;
+    auto hostDist = [&](V2 q) { // distance from the host's centre line
+        float t, d;
+        net.Nearest(trim.host, q, t, d);
+        return d;
     };
     auto overHost = [&](const Sample& A) {
         if (trim.host < 0 || !net.segs[trim.host].alive) return false;
@@ -708,25 +723,57 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
     for (int i = 1; i <= n; ++i) {
         const Sample &A = sm[i - 1], &B = sm[i];
         if (A.tunnel && B.tunnel) continue;
-        const float cut = cutSide(A, B);
+        const SegTrim::Cut* cr = cutAt(A, B);
+        const float cut = cr ? cr->side : 0.0f;
+        const float rampLane = cr && cr->own >= 0 && net.segs[cr->own].alive ? laneHalf(net.Prof(cr->own)) : 0.0f;
         const bool onHost = overHost(A) || overHost(B);
+        float openSide = 0; // +1 / -1: a host edge strip was cut away here (the ramp's lanes cover it)
+        auto covered = [&](V2 q) { // a ramp lane lies over this point of the host
+            float t, d;
+            net.Nearest(cr->own, q, t, d);
+            return d < rampLane + 0.25f;
+        };
+        bool fillBand = false; // set by skip(): the strip is paved with lane asphalt instead of dropped (no gap beside the ramp)
         auto skip = [&](int k) {
-            if (onHost) return p.strips[k].kind != Kind::Lane; // the ramp's lanes only, laid over the host's surface
-            if (cut > 0) return firstLane >= 0 && k < firstLane;
-            if (cut < 0) return lastLane >= 0 && k > lastLane;
+            fillBand = false;
+            if (hostAlive && p.strips[k].kind != Kind::Lane) { // the ramp's edge strips end where they meet the host's surface
+                const float e0 = (edge[k] + edge[k + 1]) * 0.5f;
+                const float lim = onHost ? hostHalf : hostLane;
+                if (hostDist(at(i - 1, e0)) < lim && hostDist(at(i, e0)) < lim) return true;
+            }
+            if (cut != 0 && cr->own >= 0 && rampLane > 0) { // the host's edge strips go only where the ramp's lanes cover them
+                const bool side = cut > 0 ? (firstLane >= 0 && k < firstLane) : (lastLane >= 0 && k > lastLane);
+                if (side) {
+                    const float e0 = edge[k], e1 = edge[k + 1], em = (e0 + e1) * 0.5f;
+                    for (float e : {e0, em, e1})
+                        if (covered(at(i - 1, e)) || covered(at(i, e))) {
+                            openSide = cut;
+                            fillBand = true; // the ramp covers only part of it: pave the rest so the road has no hole
+                            return true;
+                        }
+                }
+            }
             return false;
         };
-        const float lift = onHost ? 0.03f : 0.0f;
+        float lift = 0.0f;
         for (size_t k = 0; k < p.strips.size(); ++k) {
-            if (skip((int)k)) continue;
-            const Strip& st = p.strips[k];
+            const bool skipped = skip((int)k);
+            const bool fill = skipped && fillBand && firstLane >= 0;
+            if (skipped && !fill) continue;
+            const Strip& st = fill ? p.strips[firstLane] : p.strips[k]; // a paved band takes the lane's material and height
+            lift = 0.0f;
+            if (hostAlive && st.kind == Kind::Lane) { // a lane over the host's surface rides a little above it
+                const float e0 = (edge[k] + edge[k + 1]) * 0.5f;
+                if (hostDist(at(i - 1, e0)) < hostHalf || hostDist(at(i, e0)) < hostHalf) lift = 0.03f;
+            }
             // on a bridge there is no greenery: verges become bare deck (headroom beside the parapet walls)
             const Mat mat = (A.elevated || B.elevated) && st.mat == Mat::Grass ? Mat::Concrete : st.mat;
             auto& o = out.byMat[(int)mat];
             const float tile = kMatTile[(int)mat], h = kRoadLift + st.h + lift;
             const float uv[8] = {edge[k] / tile, A.dist / tile, edge[k + 1] / tile, A.dist / tile, edge[k + 1] / tile, B.dist / tile, edge[k] / tile, B.dist / tile};
             Quad(o, V(at(i - 1, edge[k]), A.y + h), V(at(i - 1, edge[k + 1]), A.y + h), V(at(i, edge[k + 1]), B.y + h), V(at(i, edge[k]), B.y + h), white, uv);
-            if (k + 1 < p.strips.size() && !skip((int)k + 1) && std::fabs(p.strips[k + 1].h - st.h) > 0.01f) { // curb face
+            const bool nextDrawn = k + 1 < p.strips.size() && !skip((int)k + 1);
+            if (!fill && nextDrawn && !fillBand && std::fabs(p.strips[k + 1].h - st.h) > 0.01f) { // curb face
                 const float hi = std::max(st.h, p.strips[k + 1].h) + kRoadLift, lo = std::min(st.h, p.strips[k + 1].h) + kRoadLift;
                 const bool leftHigher = st.h > p.strips[k + 1].h;
                 const V2 ln = A.l * (leftHigher ? -1.0f : 1.0f);
@@ -739,14 +786,14 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         const float downL = quayL ? 14.0f : kDeck, downR = quayR ? 14.0f : kDeck;
         auto& conc = out.byMat[(int)Mat::Concrete];
         if (onHost) continue; // the host's deck carries it here
-        if (cut <= 0) Wall(conc, V(at(i - 1, edge.front()), 0), V(at(i, edge.front()), 0), A.y + hL, B.y + hL, A.y - downL, B.y - downL, {A.l.x, 0, A.l.z}, white, 3);
-        if (cut >= 0) Wall(conc, V(at(i - 1, edge.back()), 0), V(at(i, edge.back()), 0), A.y + hR, B.y + hR, A.y - downR, B.y - downR, {-A.l.x, 0, -A.l.z}, white, 3);
+        if (openSide <= 0) Wall(conc, V(at(i - 1, edge.front()), 0), V(at(i, edge.front()), 0), A.y + hL, B.y + hL, A.y - downL, B.y - downL, {A.l.x, 0, A.l.z}, white, 3);
+        if (openSide >= 0) Wall(conc, V(at(i - 1, edge.back()), 0), V(at(i, edge.back()), 0), A.y + hR, B.y + hR, A.y - downR, B.y - downR, {-A.l.x, 0, -A.l.z}, white, 3);
         if (A.elevated || B.elevated) { // bridge: underside and parapets
             const float uv[8] = {0, 0, 1, 0, 1, 1, 0, 1};
             Quad(conc, V(at(i - 1, edge.front()), A.y - kDeck), V(at(i - 1, edge.back()), A.y - kDeck), V(at(i, edge.back()), B.y - kDeck),
                  V(at(i, edge.front()), B.y - kDeck), {0.8f, 0.8f, 0.8f}, uv, {0, -1, 0});
             for (int side = 0; side < 2; ++side) {
-                if ((side == 0 && cut > 0) || (side == 1 && cut < 0)) continue; // open where the ramp leaves
+                if ((side == 0 && openSide > 0) || (side == 1 && openSide < 0)) continue; // open where the ramp leaves
                 const float off = side ? edge.back() + 0.15f : edge.front() - 0.15f, hh = side ? hR : hL;
                 Wall(conc, V(at(i - 1, off), 0), V(at(i, off), 0), A.y + hh + 1.0f, B.y + hh + 1.0f, A.y + hh, B.y + hh, {A.l.x * (side ? -1.f : 1.f), 0, A.l.z * (side ? -1.f : 1.f)}, white, 3);
                 Wall(conc, V(at(i - 1, off), 0), V(at(i, off), 0), A.y + hh + 1.0f, B.y + hh + 1.0f, A.y + hh, B.y + hh, {A.l.x * (side ? 1.f : -1.f), 0, A.l.z * (side ? 1.f : -1.f)}, white, 3);
@@ -1069,14 +1116,14 @@ inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& ou
         const Cubic hc = net.Curve(host), oc = net.Curve(own);
         const float side = Dot2(np - hc.At(ht), LeftOf(hc.Tan(ht))) >= 0 ? 1.0f : -1.0f;
         float t0 = ht, t1 = ht;
-        const float reach = net.Prof(host).Half() + net.Prof(own).Half();
+        const float reach = net.Prof(host).Half() + net.Prof(own).Half() + 1.0f; // a generous range; BuildSegment cuts only what the ramp's lanes cover
         for (int k = 0; k <= 32; ++k) {
             const V2 q = oc.At(k / 32.0f);
             float t, d;
             net.Nearest(host, q, t, d);
             if (d < reach) t0 = std::min(t0, t), t1 = std::max(t1, t);
         }
-        trims[host].cuts.push_back({t0, t1, side});
+        trims[host].cuts.push_back({t0, t1, side, own});
     }
     for (size_t s = 0; s < net.segs.size(); ++s)
         if (net.segs[s].alive) BuildSegment(net, (int)s, trims[s], ground, out);
