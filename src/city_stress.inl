@@ -42,7 +42,7 @@ inline std::string DenseObj() {
     fs::create_directories(dir, ec);
     const fs::path file = dir / L"dense.obj";
     if (!fs::exists(file, ec)) {
-        FILE* f = tbd::platform::WOpen(file.c_str(), L"wb");
+        FILE* f = tbd::platform::WOpen(file.wstring().c_str(), L"wb");
         if (!f) return "";
         constexpr int kU = 1000, kV = 1000; // 2 M triangles
         const float R = 12.0f;
