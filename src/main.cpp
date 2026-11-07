@@ -4614,23 +4614,6 @@ tbd::Ray MouseRayAt(int x, int y) {
     return g_engine.camera.ScreenRay((float)x, (float)y, (float)g_engine.vpW, (float)g_engine.vpH);
 }
 
-// ---- Windows side of the above: message decoding, focus and capture
-int ButtonOf(UINT msg) {
-    return msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP || msg == WM_RBUTTONDBLCLK ? 1
-         : msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP || msg == WM_MBUTTONDBLCLK ? 2 : 0;
-}
-
-void BeginDrag(HWND hwnd, Drag mode, UINT msg, LPARAM lparam) {
-    if (g_engine.drag != Drag::None) return;
-    SetFocus(hwnd); // so shortcuts work after clicking in a text field
-    if (BeginDragAt(mode, ButtonOf(msg), GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) SetCapture(hwnd);
-}
-
-void EndDrag(UINT msg) {
-    if (EndDragAt(ButtonOf(msg))) ReleaseCapture();
-}
-
-tbd::Ray MouseRay(LPARAM lparam) { return MouseRayAt(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)); }
 
 // Left click with a non-view tool: a Create tool places a new entity; otherwise grab a gizmo handle if one
 // is under the cursor, or select whatever entity is under the cursor (or nothing).
@@ -4654,10 +4637,6 @@ bool LeftClickAt(int x, int y, int button) {
     }
     g_engine.scene.selected = g_engine.scene.Pick(ray);
     return false;
-}
-
-void LeftClickInViewport(HWND hwnd, UINT msg, LPARAM lparam) {
-    if (LeftClickAt(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), ButtonOf(msg))) SetCapture(hwnd);
 }
 
 void ContinueDrag(int x, int y) {
@@ -4939,149 +4918,221 @@ bool GuiMouse(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     return used;
 }
 
-LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    if (GuiMouse(hwnd, msg, wparam, lparam)) return 0; // in-game GUI first: it eats clicks, drags and wheel over its panels
-    if ((msg == WM_LBUTTONDOWN || msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && !tbd::platform::KeyDownSync(tbd::platform::Key::Alt) && !g_play.active &&
-        tbd::character::ViewportMouse(hwnd, msg, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) return 0; // Character Creator hair brush
+// ---- Viewport input (portable): the game's handling of pointer and key events over the 3D view.
+// The host is the platform's pointer: Focus / Capture / Release are called exactly where the game needs them.
+enum class VpEv { Char, KeyDown, LeftDown, RightDown, MiddleDown, LeftUp, RightUp, MiddleUp, OtherButton, CaptureLost, Move, Wheel };
+struct VpEvent {
+    VpEv type = VpEv::Move;
+    int x = 0, y = 0;     // viewport coordinates (pixels)
+    int key = 0;          // KeyDown: a tbd::platform::Key value
+    bool repeat = false;  // KeyDown: auto-repeat
+    uint32_t ch = 0;      // Char: the character
+    float wheel = 0.0f;   // Wheel: notches, positive away from the user
+};
+struct PointerHost {
+    virtual void Focus() = 0;   // keyboard focus to the view (shortcuts work after clicking a text field)
+    virtual void Capture() = 0; // keep pointer events coming while a drag leaves the view
+    virtual void Release() = 0;
+};
+
+void BeginDragHost(PointerHost& host, Drag mode, int button, int x, int y) {
+    if (g_engine.drag != Drag::None) return;
+    host.Focus(); // so shortcuts work after clicking in a text field
+    if (BeginDragAt(mode, button, x, y)) host.Capture();
+}
+
+// True when the event was used.
+bool ViewportInput(const VpEvent& e, PointerHost& host) {
     if (g_play.active) { // Play: the mouse is polled by PlayMode::Update; clicks must not select, drag or place anything
-        if (msg == WM_MOUSEWHEEL) {
-            g_play.Wheel((float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA);
-            return 0;
+        if (e.type == VpEv::Wheel) {
+            g_play.Wheel(e.wheel);
+            return true;
         }
-        if ((msg >= WM_LBUTTONDOWN && msg <= WM_MBUTTONDBLCLK) || msg == WM_MOUSEMOVE) return 0;
+        if (e.type != VpEv::Char && e.type != VpEv::KeyDown && e.type != VpEv::CaptureLost) return true;
     }
-    switch (msg) {
-    case WM_ERASEBKGND: return 1;
-    case WM_PAINT: // the render loop owns this window's contents
-        ValidateRect(hwnd, nullptr);
-        return 0;
-    case WM_CHAR:
+    switch (e.type) {
+    case VpEv::Char:
         if (g_roadRename.active) {
-            RoadRenameChar((uint32_t)wparam);
-            return 0;
+            RoadRenameChar(e.ch);
+            return true;
         }
         break;
-    case WM_KEYDOWN:
-        if (HandleKey((int)wparam, (lparam & (1 << 30)) != 0)) return 0;
+    case VpEv::KeyDown:
+        if (HandleKey(e.key, e.repeat)) return true;
         break;
-    case WM_LBUTTONDOWN:
+    case VpEv::LeftDown:
         if (tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) {
-            BeginDrag(hwnd, Drag::Orbit, msg, lparam);
+            BeginDragHost(host, Drag::Orbit, 0, e.x, e.y);
         } else if (g_roads.active && g_engine.drag == Drag::None && !g_play.active) {
-            SetFocus(hwnd);
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Focus();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             RoadsCursor();
             g_roads.Click();
-            if (g_roads.Dragging()) SetCapture(hwnd); // Swap: keep tracking the drag until release
+            if (g_roads.Dragging()) host.Capture(); // Swap: keep tracking the drag until release
             if (!g_roads.error.empty()) Toast(RoadsUpper(g_roads.error));
         } else if (g_utilTool.active && g_engine.drag == Drag::None && !g_play.active) {
-            SetFocus(hwnd);
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Focus();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             UtilClick();
         } else if (g_transportTool.active && g_engine.drag == Drag::None && !g_play.active) {
-            SetFocus(hwnd);
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Focus();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             TransportClick();
         } else if (g_zoneTool.active && g_engine.drag == Drag::None && !g_play.active) {
-            SetFocus(hwnd);
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Focus();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             ZonesPress();
-            if (g_zoneIn.held) SetCapture(hwnd);
+            if (g_zoneIn.held) host.Capture();
         } else if (g_indTool.active && g_engine.drag == Drag::None && !g_play.active) {
-            SetFocus(hwnd);
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Focus();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             IndustryPress();
-            if (g_indTool.dragIdx >= 0) SetCapture(hwnd);
+            if (g_indTool.dragIdx >= 0) host.Capture();
         } else if (g_terrainEdit.on && g_engine.drag == Drag::None && !g_play.active) {
             tbd::Vec3 hit;
-            if (GroundHit(MouseRay(lparam), hit)) g_terrainEdit.flattenTarget = hit.y;
-            BeginDrag(hwnd, Drag::Terrain, msg, lparam);
+            if (GroundHit(MouseRayAt(e.x, e.y), hit)) g_terrainEdit.flattenTarget = hit.y;
+            BeginDragHost(host, Drag::Terrain, 0, e.x, e.y);
         } else if (DragForTool(g_engine.tools.Active()) != Drag::None) {
-            BeginDrag(hwnd, DragForTool(g_engine.tools.Active()), msg, lparam);
+            BeginDragHost(host, DragForTool(g_engine.tools.Active()), 0, e.x, e.y);
         } else if (g_engine.drag == Drag::None) {
-            SetFocus(hwnd);
-            LeftClickInViewport(hwnd, msg, lparam);
+            host.Focus();
+            if (LeftClickAt(e.x, e.y, 0)) host.Capture();
         }
-        return 0;
-    case WM_RBUTTONDOWN:
-        if (g_indTool.active && g_indTool.mode != IndustryTool::Pick && g_engine.drag == Drag::None) { IndustryRightClick(); return 0; }
-        if (g_roads.active && g_roads.Pending() && g_engine.drag == Drag::None) { g_roads.Cancel(); return 0; } // CS2: right click cancels
+        return true;
+    case VpEv::RightDown:
+        if (g_indTool.active && g_indTool.mode != IndustryTool::Pick && g_engine.drag == Drag::None) { IndustryRightClick(); return true; }
+        if (g_roads.active && g_roads.Pending() && g_engine.drag == Drag::None) { g_roads.Cancel(); return true; } // CS2: right click cancels
         if (g_utilTool.active && (g_utilIn.laying || g_utilTool.def >= 0 || g_utilTool.Laying() || g_utilTool.bulldoze) && g_engine.drag == Drag::None) { // right click ends the line, then drops the item
             if (g_utilIn.laying) g_utilIn.laying = false;
             else g_utilTool.def = -1, g_utilTool.line = -1, g_utilTool.bulldoze = false;
-            return 0;
+            return true;
         }
         if (g_transportTool.active && g_transportTool.lines && (g_transportTool.lineStops > 0 || g_transportTool.outKind >= 0 || g_transportTool.lineBulldoze) && g_engine.drag == Drag::None) { // right click drops the line in progress / the connection tool
             g_transportTool.Escape();
-            return 0;
+            return true;
         }
         if (g_transportTool.active && (g_transportTool.def >= 0 || g_transportTool.bulldoze) && g_engine.drag == Drag::None) { // right click drops the chosen building
             g_transportTool.def = -1;
             g_transportTool.bulldoze = false;
-            return 0;
+            return true;
         }
-        BeginDrag(hwnd, Drag::Fly, msg, lparam);
-        return 0;
-    case WM_MBUTTONDOWN: BeginDrag(hwnd, Drag::Pan, msg, lparam); return 0;
-    case WM_LBUTTONUP:
+        BeginDragHost(host, Drag::Fly, 1, e.x, e.y);
+        return true;
+    case VpEv::MiddleDown: BeginDragHost(host, Drag::Pan, 2, e.x, e.y); return true;
+    case VpEv::LeftUp:
         if (g_indTool.dragIdx >= 0) {
-            ReleaseCapture();
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Release();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             IndustryRelease();
-            return 0;
+            return true;
         }
         if (g_zoneIn.held) { // zoning: the brush stops, the box is painted
-            ReleaseCapture();
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Release();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             ZonesRelease();
-            return 0;
+            return true;
         }
         if (g_roads.active && g_roads.Dragging()) { // Swap: the release sets the direction
-            ReleaseCapture();
-            g_terrainEdit.mouseX = GET_X_LPARAM(lparam), g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+            host.Release();
+            g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
             RoadsCursor();
             g_roads.Release();
-            return 0;
+            return true;
         }
-        EndDrag(WM_LBUTTONDOWN);
-        return 0;
-    case WM_RBUTTONUP: EndDrag(WM_RBUTTONDOWN); return 0;
-    case WM_MBUTTONUP: EndDrag(WM_MBUTTONDOWN); return 0;
-    case WM_CAPTURECHANGED:
+        if (EndDragAt(0)) host.Release();
+        return true;
+    case VpEv::RightUp: if (EndDragAt(1)) host.Release(); return true;
+    case VpEv::MiddleUp: if (EndDragAt(2)) host.Release(); return true;
+    case VpEv::CaptureLost:
         g_engine.drag = Drag::None;
         g_engine.gizmo.End();
-        return 0;
-    case WM_MOUSEMOVE:
-        g_terrainEdit.mouseX = GET_X_LPARAM(lparam);
-        g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
+        return true;
+    case VpEv::Move:
+        g_terrainEdit.mouseX = e.x;
+        g_terrainEdit.mouseY = e.y;
         if (g_engine.drag != Drag::None) {
-            ContinueDrag(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+            ContinueDrag(e.x, e.y);
         } else {
             // Highlight the handle under the cursor.
             const tbd::Entity* sel = g_engine.scene.Selected();
             g_engine.gizmo.mode = tbd::GizmoModeForTool(g_engine.tools.Active());
-            g_engine.gizmo.hover = sel ? g_engine.gizmo.HitTest(MouseRay(lparam), g_engine.camera, *sel,
+            g_engine.gizmo.hover = sel ? g_engine.gizmo.HitTest(MouseRayAt(e.x, e.y), g_engine.camera, *sel,
                                                                   (float)g_engine.vpH, DpiScale())
                                        : -1;
         }
-        return 0;
-    case WM_MOUSEWHEEL: {
-        const float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+        return true;
+    case VpEv::Wheel: {
+        const float notches = e.wheel;
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
             const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::character::CameraScale();
             const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
             g_camSmooth.goal = std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
             g_camSmooth.lastSet = g_engine.camera.distance;
-            POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            ScreenToClient(hwnd, &pt);
-            tbd::Vec3 hit;
+            tbd::Vec3 hit; // e.x / e.y: the cursor in viewport coordinates
             g_camSmooth.anchored = !g_play.active &&
-                GroundHit(g_engine.camera.ScreenRay((float)pt.x, (float)pt.y, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+                GroundHit(g_engine.camera.ScreenRay((float)e.x, (float)e.y, (float)g_engine.vpW, (float)g_engine.vpH), hit);
             if (g_camSmooth.anchored) g_camSmooth.anchor = hit;
         }
+        return true;
+    }
+    }
+    return false;
+}
+
+// ---- Windows: the viewport window's procedure turns messages into VpEvents.
+struct WinPointerHost : PointerHost {
+    HWND hwnd;
+    explicit WinPointerHost(HWND h) : hwnd(h) {}
+    void Focus() override { SetFocus(hwnd); }
+    void Capture() override { SetCapture(hwnd); }
+    void Release() override { ReleaseCapture(); }
+};
+
+bool TranslateViewportMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, VpEvent& e) {
+    e.x = GET_X_LPARAM(lparam);
+    e.y = GET_Y_LPARAM(lparam);
+    switch (msg) {
+    case WM_CHAR: e.type = VpEv::Char; e.ch = (uint32_t)wparam; return true;
+    case WM_KEYDOWN: e.type = VpEv::KeyDown; e.key = (int)wparam; e.repeat = (lparam & (1 << 30)) != 0; return true;
+    case WM_LBUTTONDOWN: e.type = VpEv::LeftDown; return true;
+    case WM_RBUTTONDOWN: e.type = VpEv::RightDown; return true;
+    case WM_MBUTTONDOWN: e.type = VpEv::MiddleDown; return true;
+    case WM_LBUTTONUP: e.type = VpEv::LeftUp; return true;
+    case WM_RBUTTONUP: e.type = VpEv::RightUp; return true;
+    case WM_MBUTTONUP: e.type = VpEv::MiddleUp; return true;
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDBLCLK: e.type = VpEv::OtherButton; return true; // only Play uses these (swallows them)
+    case WM_CAPTURECHANGED: e.type = VpEv::CaptureLost; return true;
+    case WM_MOUSEMOVE: e.type = VpEv::Move; return true;
+    case WM_MOUSEWHEEL: { // wheel messages carry screen coordinates
+        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(hwnd, &pt);
+        e.x = pt.x;
+        e.y = pt.y;
+        e.type = VpEv::Wheel;
+        e.wheel = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+        return true;
+    }
+    }
+    return false;
+}
+
+LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (GuiMouse(hwnd, msg, wparam, lparam)) return 0; // in-game GUI first: it eats clicks, drags and wheel over its panels
+    if ((msg == WM_LBUTTONDOWN || msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && !tbd::platform::KeyDownSync(tbd::platform::Key::Alt) && !g_play.active &&
+        tbd::character::ViewportMouse(hwnd, msg, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) return 0; // Character Creator hair brush
+    switch (msg) {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: // the render loop owns this window's contents
+        ValidateRect(hwnd, nullptr);
         return 0;
     }
+    VpEvent e;
+    if (TranslateViewportMessage(hwnd, msg, wparam, lparam, e)) {
+        WinPointerHost host(hwnd);
+        if (ViewportInput(e, host)) return 0;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
