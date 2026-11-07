@@ -4,6 +4,11 @@
 
 using namespace metal;
 
+struct type_PushConstant_UiConstants
+{
+    float4x4 ortho;
+};
+
 struct ui_ps_out
 {
     float4 out_var_SV_Target [[color(0)]];
@@ -17,65 +22,116 @@ struct ui_ps_in
     float2 in_var_TEXCOORD3 [[user(locn3), flat]];
     float4 in_var_COLOR0 [[user(locn4)]];
     float4 in_var_COLOR1 [[user(locn5), flat]];
+    float2 in_var_TEXCOORD4 [[user(locn6)]];
 };
 
-fragment ui_ps_out ui_ps(ui_ps_in in [[stage_in]], texture2d<float> gAtlas [[texture(0)]], sampler gAtlasSampler [[sampler(1)]])
+fragment ui_ps_out ui_ps(ui_ps_in in [[stage_in]], constant type_PushConstant_UiConstants& pc [[buffer(29)]], texture2d<float> gAtlas [[texture(0)]], texture2d<float> gImages [[texture(2)]], texture2d<float> gBackdrop [[texture(3)]], sampler gAtlasSampler [[sampler(1)]])
 {
     ui_ps_out out = {};
-    float4 _185;
+    float4 _601;
     do
     {
-        uint _54 = uint(in.in_var_TEXCOORD3.x + 0.5);
-        if (_54 == 2u)
+        uint _112 = uint(in.in_var_TEXCOORD3.x + 0.5);
+        if (_112 == 4u)
         {
-            float4 _61 = gAtlas.sample(gAtlasSampler, in.in_var_TEXCOORD0);
-            float _62 = _61.x;
-            float _63 = dfdx(_62);
-            float _65 = dfdy(_62);
-            float _72 = precise::max(((abs(_63) + abs(_65)) * 0.5) * in.in_var_TEXCOORD3.y, 9.9999997473787516355514526367188e-05);
-            float _75 = smoothstep(0.5 - _72, 0.5 + _72, _62);
+            _601 = gImages.sample(gAtlasSampler, in.in_var_TEXCOORD0) * in.in_var_COLOR0;
+            break;
+        }
+        if (_112 == 2u)
+        {
+            float4 _127 = gAtlas.sample(gAtlasSampler, in.in_var_TEXCOORD0);
+            float _128 = _127.x;
+            float _129 = dfdx(_128);
+            float _131 = dfdy(_128);
+            float _138 = precise::max(((abs(_129) + abs(_131)) * 0.5) * in.in_var_TEXCOORD3.y, 9.9999997473787516355514526367188e-05);
+            float _141 = smoothstep(0.5 - _138, 0.5 + _138, _128);
             if (in.in_var_TEXCOORD2.y > 0.0)
             {
-                float _81 = 0.5 - in.in_var_TEXCOORD2.y;
-                _185 = mix(float4(in.in_var_COLOR1.xyz, in.in_var_COLOR1.w * smoothstep(_81 - _72, _81 + _72, _62)), in.in_var_COLOR0, float4(_75));
+                float _147 = 0.5 - in.in_var_TEXCOORD2.y;
+                _601 = mix(float4(in.in_var_COLOR1.xyz, in.in_var_COLOR1.w * smoothstep(_147 - _138, _147 + _138, _128)), in.in_var_COLOR0, float4(_141));
                 break;
             }
-            _185 = float4(in.in_var_COLOR0.xyz, in.in_var_COLOR0.w * _75);
+            _601 = float4(in.in_var_COLOR0.xyz, in.in_var_COLOR0.w * _141);
             break;
         }
-        float _136;
-        if (_54 == 3u)
+        float _202;
+        if (_112 == 3u)
         {
-            _136 = length(in.in_var_TEXCOORD0 - (in.in_var_TEXCOORD1 * fast::clamp(dot(in.in_var_TEXCOORD0, in.in_var_TEXCOORD1) / precise::max(dot(in.in_var_TEXCOORD1, in.in_var_TEXCOORD1), 9.9999999747524270787835121154785e-07), 0.0, 1.0))) - in.in_var_TEXCOORD2.x;
+            _202 = length(in.in_var_TEXCOORD0 - (in.in_var_TEXCOORD1 * fast::clamp(dot(in.in_var_TEXCOORD0, in.in_var_TEXCOORD1) / precise::max(dot(in.in_var_TEXCOORD1, in.in_var_TEXCOORD1), 9.9999999747524270787835121154785e-07), 0.0, 1.0))) - in.in_var_TEXCOORD2.x;
         }
         else
         {
-            float _123 = precise::min(in.in_var_TEXCOORD2.x, precise::min(in.in_var_TEXCOORD1.x, in.in_var_TEXCOORD1.y));
-            float2 _127 = (abs(in.in_var_TEXCOORD0) - in.in_var_TEXCOORD1) + float2(_123);
-            _136 = (length(precise::max(_127, float2(0.0))) + precise::min(precise::max(_127.x, _127.y), 0.0)) - _123;
+            float _189 = precise::min(in.in_var_TEXCOORD2.x, precise::min(in.in_var_TEXCOORD1.x, in.in_var_TEXCOORD1.y));
+            float2 _193 = (abs(in.in_var_TEXCOORD0) - in.in_var_TEXCOORD1) + float2(_189);
+            _202 = (length(precise::max(_193, float2(0.0))) + precise::min(precise::max(_193.x, _193.y), 0.0)) - _189;
         }
-        if (_54 == 1u)
+        if (_112 == 1u)
         {
-            float _146 = fast::clamp(0.5 - (_136 / (2.0 * precise::max(in.in_var_TEXCOORD3.y, 1.0))), 0.0, 1.0);
-            _185 = float4(in.in_var_COLOR0.xyz, ((in.in_var_COLOR0.w * _146) * _146) * (3.0 - (2.0 * _146)));
+            float _212 = fast::clamp(0.5 - (_202 / (2.0 * precise::max(in.in_var_TEXCOORD3.y, 1.0))), 0.0, 1.0);
+            _601 = float4(in.in_var_COLOR0.xyz, ((in.in_var_COLOR0.w * _212) * _212) * (3.0 - (2.0 * _212)));
             break;
         }
-        float _158 = dfdx(_136);
-        float _160 = dfdy(_136);
-        float _163 = precise::max(abs(_158) + abs(_160), 9.9999997473787516355514526367188e-05);
-        float4 _178;
+        float _224 = dfdx(_202);
+        float _226 = dfdy(_202);
+        float _229 = precise::max(abs(_224) + abs(_226), 9.9999997473787516355514526367188e-05);
+        float _232 = fast::clamp(0.5 - (_202 / _229), 0.0, 1.0);
+        if (_112 == 5u)
+        {
+            float _239 = floor(in.in_var_TEXCOORD3.y * 0.001000000047497451305389404296875);
+            bool _251 = uint2(gBackdrop.get_width(), gBackdrop.get_height()).x > 1u;
+            float4 _533;
+            if (_251)
+            {
+                uint2 _256 = uint2(gBackdrop.get_width(), gBackdrop.get_height());
+                float _259 = float(_256.x);
+                float2 _262 = float2(1.0) / float2(_259, float(_256.y));
+                float _267 = precise::max(((in.in_var_TEXCOORD3.y - (_239 * 1000.0)) * _259) / precise::max(2.0 / precise::max(abs(pc.ortho[0u][0u]), 9.9999999747524270787835121154785e-07), 1.0), 0.5) * 0.66670000553131103515625;
+                float3 _366 = (((((((((gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-2.0) * _267) * _262)), level(0.0)).xyz * 0.169043362140655517578125) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-1.0, -2.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(0.0, -2.0) * _267) * _262)), level(0.0)).xyz * 0.4111488163471221923828125)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(1.0, -2.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(2.0, -2.0) * _267) * _262)), level(0.0)).xyz * 0.169043362140655517578125)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-2.0, -1.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-1.0) * _267) * _262)), level(0.0)).xyz * 0.6412088871002197265625)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(0.0, -1.0) * _267) * _262)), level(0.0)).xyz * 0.800755202770233154296875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(1.0, -1.0) * _267) * _262)), level(0.0)).xyz * 0.6412088871002197265625)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(2.0, -1.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875);
+                float3 _473 = ((((((((((_366 + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-2.0, 0.0) * _267) * _262)), level(0.0)).xyz * 0.4111488163471221923828125)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-1.0, 0.0) * _267) * _262)), level(0.0)).xyz * 0.800755202770233154296875)) + (gBackdrop.sample(gAtlasSampler, in.in_var_TEXCOORD4, level(0.0)).xyz * 1.0)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(1.0, 0.0) * _267) * _262)), level(0.0)).xyz * 0.800755202770233154296875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(2.0, 0.0) * _267) * _262)), level(0.0)).xyz * 0.4111488163471221923828125)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-2.0, 1.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-1.0, 1.0) * _267) * _262)), level(0.0)).xyz * 0.6412088871002197265625)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(0.0, 1.0) * _267) * _262)), level(0.0)).xyz * 0.800755202770233154296875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(1.0) * _267) * _262)), level(0.0)).xyz * 0.6412088871002197265625)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(2.0, 1.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-2.0, 2.0) * _267) * _262)), level(0.0)).xyz * 0.169043362140655517578125);
+                float3 _514 = ((((_473 + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(-1.0, 2.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(0.0, 2.0) * _267) * _262)), level(0.0)).xyz * 0.4111488163471221923828125)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(1.0, 2.0) * _267) * _262)), level(0.0)).xyz * 0.329229533672332763671875)) + (gBackdrop.sample(gAtlasSampler, (in.in_var_TEXCOORD4 + ((float2(2.0) * _267) * _262)), level(0.0)).xyz * 0.169043362140655517578125)) * float3(0.0853063166141510009765625);
+                _533 = float4(mix(fast::clamp(mix(float3(dot(_514, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875))), _514, float3(_239 * 0.00999999977648258209228515625)), float3(0.0), float3(1.0)), in.in_var_COLOR0.xyz, float3(in.in_var_COLOR0.w)), 1.0);
+            }
+            else
+            {
+                _533 = float4(in.in_var_COLOR0.xyz, 1.0);
+            }
+            float3 _553 = mix(_533.xyz, float3(1.0), float3((0.13300000131130218505859375 * fast::clamp(1.0 - abs(((in.in_var_TEXCOORD0.y + in.in_var_TEXCOORD1.y) - in.in_var_TEXCOORD2.y) - 0.5), 0.0, 1.0)) * fast::clamp((-_202) - in.in_var_TEXCOORD2.y, 0.0, 1.0)));
+            float4 _571;
+            if (in.in_var_TEXCOORD2.y > 0.0)
+            {
+                float3 _562 = _553.xyz;
+                float3 _569 = mix(mix(_562, in.in_var_COLOR1.xyz, float3(in.in_var_COLOR1.w)), _562, float3(fast::clamp(0.5 - ((_202 + in.in_var_TEXCOORD2.y) / _229), 0.0, 1.0)));
+                _571 = float4(_569.x, _569.y, _569.z, _533.w);
+            }
+            else
+            {
+                _571 = float4(_553.x, _553.y, _553.z, _533.w);
+            }
+            float _577;
+            if (_251)
+            {
+                _577 = 1.0;
+            }
+            else
+            {
+                _577 = in.in_var_COLOR0.w;
+            }
+            _601 = float4(_571.xyz, _232 * _577);
+            break;
+        }
+        float4 _594;
         if (in.in_var_TEXCOORD2.y > 0.0)
         {
-            _178 = mix(in.in_var_COLOR1, in.in_var_COLOR0, float4(fast::clamp(0.5 - ((_136 + in.in_var_TEXCOORD2.y) / _163), 0.0, 1.0)));
+            _594 = mix(in.in_var_COLOR1, in.in_var_COLOR0, float4(fast::clamp(0.5 - ((_202 + in.in_var_TEXCOORD2.y) / _229), 0.0, 1.0)));
         }
         else
         {
-            _178 = in.in_var_COLOR0;
+            _594 = in.in_var_COLOR0;
         }
-        _185 = float4(_178.xyz, _178.w * fast::clamp(0.5 - (_136 / _163), 0.0, 1.0));
+        _601 = float4(_594.xyz, _594.w * _232);
         break;
     } while(false);
-    out.out_var_SV_Target = _185;
+    out.out_var_SV_Target = _601;
     return out;
 }
 

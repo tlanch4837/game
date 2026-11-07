@@ -38,6 +38,7 @@
 #include "render/chunk_faces.h"
 #include "gui/gui.h"
 #include "gui/terrain_toolbar.h"
+#include "gui/glass_dock.h"    // Glass Dock+: the mobile / tablet GUI (game/glass_dock_host.inl)
 #include "gui/city_hud.h"
 #include "gui/city_overlays.h"
 #include "gui/zone_toolbar.h"

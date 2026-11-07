@@ -38,6 +38,8 @@ void UpdateFrame(const Vec3& eye, const Vec3& forward, const Vec3& up, bool play
 
 // A sound at a world position, heard with distance attenuation and panning. Silent beyond ~80 m or if the file is missing.
 void PlayOneShot(const char* name, const Vec3& position, float volume = 1.0f, float pitch = 1.0f, Bus bus = Bus::Sfx);
+// A sound not in the world (no distance, no panning): the GUI's ticks. pitch changes the speed too (no pitch keeping).
+void PlayUi(const char* name, float volume = 1.0f, float pitch = 1.0f);
 // A looping positioned sound. Returns an id for MoveSound / StopSound (never 0), also when the file turns out missing.
 unsigned PlayLoop(const char* name, const Vec3& position, float volume = 1.0f, Bus bus = Bus::Sfx);
 void MoveSound(unsigned id, const Vec3& position);

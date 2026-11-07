@@ -253,7 +253,7 @@ public:
         sd.Height = h_;
         sd.Format = kColorFormat;
         sd.SampleDesc.Count = 1;
-        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT; // the GUI backdrop pass samples it
         sd.BufferCount = kBackBuffers;
         sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         ComPtr<IDXGISwapChain1> sc1;
@@ -263,7 +263,7 @@ public:
 
         D3D12_DESCRIPTOR_HEAP_DESC hd = {};
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        hd.NumDescriptors = kBackBuffers + kPostTargets;
+        hd.NumDescriptors = kBackBuffers + kPostTargets + 1; // + the GUI backdrop (CaptureUiBackdrop)
         CHECK(device_->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&rtvHeap_)));
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         hd.NumDescriptors = 6; // the scene's depth buffer, the impostor bake's tile depth buffer, the shadow map, the overlays' depth buffer, the tight shadow map, the water pass's read-only view of the scene's
@@ -284,6 +284,7 @@ public:
         if (!CreateMaterialResources()) return false;
         if (!CreatePostPipelines() || !CreateCloudNoise() || !CreateCloudField() || !CreatePostTargets()) return false;
         CreateUiPipeline(); // optional: without it UiSupported() is false and the in-game GUI draws the classic way
+        CreateBackdrop();   // the Glass Dock GUI's backdrop (CaptureUiBackdrop)
         D3D12_RANGE noRead = {0, 0};
         for (Frame& frame : frames_) {
             if (!CreateUploadBuffer(kTransientBytes, frame.transient)) return false;
@@ -318,6 +319,7 @@ public:
         }
         CreateTargets();
         CreatePostTargets();
+        CreateBackdrop();
     }
 
     void SetRenderScale(float scale) override {
@@ -2714,7 +2716,7 @@ private:
 
         D3D12_DESCRIPTOR_HEAP_DESC hd = {};
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        hd.NumDescriptors = 1 + kMaterialTextures * kMaterialPairs * kFramesInFlight + 2 * kPostSrvs + 2 + 5 + 1; // shadow map (the tight one rides in the slot after it), per-frame material triples, post tables, the UI font atlas (UiAtlasSlot)
+        hd.NumDescriptors = 1 + kMaterialTextures * kMaterialPairs * kFramesInFlight + 2 * kPostSrvs + 2 + 5 + 3 + 3 * kBackBuffers; // shadow map (the tight one rides in the slot after it), per-frame material triples, post tables, the UI tables (UiAtlasSlot: font atlas, sprite atlas, backdrop; then the backdrop pass's source and the same two again)
         hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         CHECK(device_->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&shadowSrvHeap_)));
         D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
@@ -2844,11 +2846,11 @@ private:
         uiRootSig_.Reset();
         D3D12_DESCRIPTOR_RANGE range = {};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = 1;
+        range.NumDescriptors = 3; // t0 font atlas, t1 sprite atlas, t2 the GUI backdrop
         D3D12_ROOT_PARAMETER params[2] = {};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         params[0].Constants.Num32BitValues = 16;
-        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // the glass mode reads the viewport size from it
         params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[1].DescriptorTable = {1, &range};
         params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -2913,8 +2915,113 @@ private:
             uiPso_.Reset();
             return false;
         }
+        // the backdrop pass: a fullscreen triangle into the 1/16 target, no blending, no depth
+        ComPtr<ID3DBlob> bvs, bps;
+        backdropPso_.Reset();
+        if (CompileShader(L"ui.hlsl", "UiBackdropVS", "vs_5_1", bvs) && CompileShader(L"ui.hlsl", "UiBackdropPS", "ps_5_1", bps)) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC bd = pd;
+            bd.VS = {bvs->GetBufferPointer(), bvs->GetBufferSize()};
+            bd.PS = {bps->GetBufferPointer(), bps->GetBufferSize()};
+            bd.BlendState.RenderTarget[0].BlendEnable = FALSE;
+            bd.InputLayout = {nullptr, 0};
+            bd.DSVFormat = DXGI_FORMAT_UNKNOWN;
+            if (FAILED(device_->CreateGraphicsPipelineState(&bd, IID_PPV_ARGS(&backdropPso_)))) backdropPso_.Reset();
+        }
+        if (!backdropPso_) Log("D3D12: GUI backdrop pass unavailable; glass shows no blur");
         WriteUiAtlasSlot();
+        WriteUiImagesSlot();
         return true;
+    }
+
+    // ---- Glass Dock GUI: the sprite atlas (t1) and the shared backdrop (t2): the back buffer copied, then filtered to 1/16
+    TextureId uiImages_ = kNoTexture;
+    ComPtr<ID3D12PipelineState> backdropPso_;
+    ComPtr<ID3D12Resource> backdropSmall_;
+    UINT backdropW_ = 0, backdropH_ = 0;
+    D3D12_CPU_DESCRIPTOR_HANDLE BackdropRtv() const {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = rtvHeap_->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += (SIZE_T)(kBackBuffers + kPostTargets) * rtvSize_;
+        return h;
+    }
+    void WriteUiImagesSlot() {
+        const bool valid = uiImages_ < textures_.size() && textures_[uiImages_].resource;
+        for (UINT b = 0; b <= kBackBuffers; ++b) // A+1, then A+4+3i
+            device_->CopyDescriptorsSimple(1, ShaderCpu(b == 0 ? UiAtlasSlot() + 1 : UiAtlasSlot() + 1 + 3 * b), TexCpu(valid ? uiImages_ : kMaxTextures), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    }
+    // Window-sized copy + the 1/16 target; slots A+2 / A+5 the small one, A+3 the copy (the backdrop pass's t0).
+    // The 1/16 target; slot A+2 (the UI table) and, per back buffer i, the backdrop pass's table A+3+3i: the back buffer
+    // (written each capture), the sprite atlas, the 1/16 target.
+    void CreateBackdrop() {
+        backdropSmall_.Reset();
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        backdropW_ = std::max(1u, w_ / 16), backdropH_ = std::max(1u, h_ / 16);
+        rd.Width = backdropW_;
+        rd.Height = backdropH_;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.Format = kColorFormat;
+        rd.SampleDesc.Count = 1;
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        if (FAILED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&backdropSmall_)))) return;
+        device_->CreateRenderTargetView(backdropSmall_.Get(), nullptr, BackdropRtv());
+        D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.Format = kColorFormat;
+        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        sv.Texture2D.MipLevels = 1;
+        static const bool glass = !(GetEnvironmentVariableA("TBD_D3D_GLASS0", nullptr, 0) > 0);
+        if (glass) device_->CreateShaderResourceView(backdropSmall_.Get(), &sv, ShaderCpu(UiAtlasSlot() + 2));
+        else device_->CopyDescriptorsSimple(1, ShaderCpu(UiAtlasSlot() + 2), TexCpu(kMaxTextures), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV); // 1x1: plain tint
+        for (UINT b = 0; b < kBackBuffers; ++b) device_->CreateShaderResourceView(backdropSmall_.Get(), &sv, ShaderCpu(UiAtlasSlot() + 5 + 3 * b));
+    }
+
+    void SetUiImages(TextureId atlas) override {
+        if (!shadowSrvHeap_ || !texHeap_) return;
+        WaitIdle();
+        uiImages_ = atlas;
+        WriteUiImagesSlot();
+    }
+
+    void CaptureUiBackdrop() override {
+        static const bool off = GetEnvironmentVariableA("TBD_D3D_GLASS0", nullptr, 0) > 0; // TBD_D3D_GLASS0=1: glass is the plain tint
+        if (off) return;
+        if (!uiPso_ || !backdropPso_ || !resolved_ || !backdropSmall_) return;
+        ID3D12Resource* back = back_[frameIndex_].Get();
+        if (!back) return;
+        // the back buffer itself is the pass's source (the swapchain is made with shader input): no full-size copy
+        D3D12_SHADER_RESOURCE_VIEW_DESC sv = {};
+        sv.Format = kColorFormat;
+        sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        sv.Texture2D.MipLevels = 1;
+        device_->CreateShaderResourceView(back, &sv, ShaderCpu(UiAtlasSlot() + 3 + 3 * frameIndex_));
+        Transition(back, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(backdropSmall_.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtv = BackdropRtv();
+        list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        const D3D12_VIEWPORT vp = {0, 0, (float)backdropW_, (float)backdropH_, 0.0f, 1.0f};
+        const D3D12_RECT scissor = {0, 0, (LONG)backdropW_, (LONG)backdropH_};
+        list_->RSSetViewports(1, &vp);
+        list_->RSSetScissorRects(1, &scissor);
+        list_->SetGraphicsRootSignature(uiRootSig_.Get());
+        list_->SetPipelineState(backdropPso_.Get());
+        list_->SetGraphicsRootDescriptorTable(1, ShaderGpu(UiAtlasSlot() + 3 + 3 * frameIndex_));
+        list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list_->DrawInstanced(3, 1, 0, 0);
+        Transition(backdropSmall_.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        Transition(back, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // back to what ResolveScene left for the overlays: the back buffer, the overlay depth, the window viewport
+        const D3D12_CPU_DESCRIPTOR_HANDLE backRtv = ColorRtv();
+        const D3D12_CPU_DESCRIPTOR_HANDLE dsv = overlayDepth_ ? OverlayDsv() : dsvHeap_->GetCPUDescriptorHandleForHeapStart();
+        list_->OMSetRenderTargets(1, &backRtv, FALSE, &dsv);
+        const D3D12_VIEWPORT wvp = {0, 0, (float)w_, (float)h_, 0.0f, 1.0f};
+        const D3D12_RECT wsc = {0, 0, (LONG)w_, (LONG)h_};
+        list_->RSSetViewports(1, &wvp);
+        list_->RSSetScissorRects(1, &wsc);
+        BindMeshRoot();
     }
 
     bool UiSupported() const override { return uiPso_ != nullptr; }

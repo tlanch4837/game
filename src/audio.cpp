@@ -55,6 +55,7 @@ struct Cmd {
     Vec3 pos = {0, 0, 0};
     float volume = 1.0f, pitch = 1.0f, seconds = 0.0f;
     bool loop = false;
+    bool ui = false; // Play: not positioned (the GUI's ticks)
     int bus = 0;
 };
 
@@ -235,11 +236,11 @@ private:
     void Handle(const Cmd& c) {
         switch (c.type) {
         case Cmd::Play: {
-            if (OneShotCount() >= kMaxOneShots || Distance(c.pos) > kMaxDistance) return;
+            if (OneShotCount() >= kMaxOneShots || (!c.ui && Distance(c.pos) > kMaxDistance)) return;
             const std::wstring* path = Pick(c.name);
             if (!path) return;
             Voice v;
-            if (!Open(v, *path, false, c.bus, true, c.pos, c.volume, c.pitch, false)) return;
+            if (!Open(v, *path, false, c.bus, !c.ui, c.pos, c.volume, c.pitch, false)) return;
             v.gain = v.gainTarget = 1.0f;
             voices_[c.id] = std::move(v);
             break;
@@ -481,6 +482,19 @@ void PlayOneShot(const char* name, const Vec3& position, float volume, float pit
     c.volume = std::max(volume, 0.0f);
     c.pitch = std::clamp(pitch, 0.25f, 4.0f);
     c.bus = (int)bus;
+    Push(std::move(c));
+}
+
+void PlayUi(const char* name, float volume, float pitch) {
+    if (!Running() || !name) return;
+    Cmd c;
+    c.type = Cmd::Play;
+    c.id = g_nextId++;
+    c.name = name;
+    c.ui = true;
+    c.volume = std::max(volume, 0.0f);
+    c.pitch = std::clamp(pitch, 0.25f, 4.0f);
+    c.bus = (int)Bus::Sfx;
     Push(std::move(c));
 }
 

@@ -3230,14 +3230,16 @@ private:
     VkPipeline uiPipeline_ = VK_NULL_HANDLE;
 
     bool CreateUiPipeline() {
-        const VkDescriptorSetLayoutBinding bindings[2] = {
+        const VkDescriptorSetLayoutBinding bindings[4] = {
             {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &postSamplers_[0]}};
+            {1, VK_DESCRIPTOR_TYPE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, &postSamplers_[0]},
+            {2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},  // the sprite atlas (SetUiImages)
+            {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}; // the GUI backdrop: 1x1 here, glass is a plain tint
         VkDescriptorSetLayoutCreateInfo sl = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        sl.bindingCount = 2;
+        sl.bindingCount = 4;
         sl.pBindings = bindings;
         if (vkCreateDescriptorSetLayout(device_, &sl, nullptr, &uiSetLayout_) != VK_SUCCESS) return false;
-        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1}};
+        const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 3}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1}};
         VkDescriptorPoolCreateInfo dp = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         dp.maxSets = 1;
         dp.poolSizeCount = 2;
@@ -3249,7 +3251,9 @@ private:
         da.pSetLayouts = &uiSetLayout_;
         if (vkAllocateDescriptorSets(device_, &da, &uiSet_) != VK_SUCCESS) return false;
         WriteUiAtlas(defaults_[0]); // until SetUiAtlas: white, so the set is never incomplete
-        const VkPushConstantRange range = {VK_SHADER_STAGE_VERTEX_BIT, 0, 64};
+        WriteUiImage(2, defaults_[0]);
+        WriteUiImage(3, defaults_[0]);
+        const VkPushConstantRange range = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
         VkPipelineLayoutCreateInfo li = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         li.setLayoutCount = 1;
         li.pSetLayouts = &uiSetLayout_;
@@ -3332,13 +3336,19 @@ private:
         return made == VK_SUCCESS;
     }
 
-    void WriteUiAtlas(TextureId atlas) {
+    void WriteUiAtlas(TextureId atlas) { WriteUiImage(0, atlas); }
+    void SetUiImages(TextureId atlas) override {
+        if (!uiSet_) return;
+        vkDeviceWaitIdle(device_);
+        WriteUiImage(2, atlas);
+    }
+    void WriteUiImage(uint32_t binding, TextureId atlas) {
         if (atlas >= textures_.size() || !textures_[atlas].image) atlas = defaults_[0];
         if (atlas >= textures_.size() || !uiSet_) return;
         const VkDescriptorImageInfo image = {VK_NULL_HANDLE, textures_[atlas].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         w.dstSet = uiSet_;
-        w.dstBinding = 0;
+        w.dstBinding = binding;
         w.descriptorCount = 1;
         w.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         w.pImageInfo = &image;
@@ -3374,7 +3384,7 @@ private:
         const VkDeviceSize vbOffset = offset;
         vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, uiPipeline_);
         vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, uiLayout_, 0, 1, &uiSet_, 0, nullptr);
-        vkCmdPushConstants(cmd_, uiLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, ortho.m);
+        vkCmdPushConstants(cmd_, uiLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64, ortho.m);
         vkCmdBindVertexBuffers(cmd_, 0, 1, &frame_->transient.buffer, &vbOffset);
         vkCmdDraw(cmd_, count, 1, 0, 0);
         BindMeshSets(); // later overlay draws (DrawTransient) use the mesh layout's sets again

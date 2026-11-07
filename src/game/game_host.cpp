@@ -36,6 +36,7 @@
 #include "render/chunk_faces.h"
 #include "gui/gui.h"
 #include "gui/terrain_toolbar.h"
+#include "gui/glass_dock.h"    // Glass Dock+: the mobile / tablet GUI (game/glass_dock_host.inl)
 #include "gui/city_hud.h"
 #include "gui/city_overlays.h"
 #include "gui/zone_toolbar.h"
@@ -193,6 +194,10 @@ void tbd::host::PointerCancel() {
         if (g_buttonsDown & (1 << b)) tbd::platform::SetKeyDown(ButtonKey((Button)b), false);
     g_buttonsDown = 0;
 }
+
+bool tbd::host::TouchBuilds(float x, float y) { return g_gui.WantsMouseAt(x, y) || gdock::ToolActive(); }
+
+void tbd::host::Twist(float radians) { g_engine.camera.yaw -= radians; }
 
 void tbd::host::Zoom(float notches, float x, float y) {
     GuiPtrEffect fx;

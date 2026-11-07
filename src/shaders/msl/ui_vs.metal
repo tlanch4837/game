@@ -17,6 +17,7 @@ struct ui_vs_out
     float2 out_var_TEXCOORD3 [[user(locn3)]];
     float4 out_var_COLOR0 [[user(locn4)]];
     float4 out_var_COLOR1 [[user(locn5)]];
+    float2 out_var_TEXCOORD4 [[user(locn6)]];
     float4 gl_Position [[position]];
 };
 
@@ -34,13 +35,15 @@ struct ui_vs_in
 vertex ui_vs_out ui_vs(ui_vs_in in [[stage_in]], constant type_PushConstant_UiConstants& pc [[buffer(29)]])
 {
     ui_vs_out out = {};
-    out.gl_Position = pc.ortho * float4(in.in_var_POSITION, 0.0, 1.0);
+    float4 _49 = pc.ortho * float4(in.in_var_POSITION, 0.0, 1.0);
+    out.gl_Position = _49;
     out.out_var_TEXCOORD0 = in.in_var_TEXCOORD0;
     out.out_var_TEXCOORD1 = in.in_var_TEXCOORD1;
     out.out_var_TEXCOORD2 = in.in_var_TEXCOORD2;
     out.out_var_TEXCOORD3 = in.in_var_TEXCOORD3;
     out.out_var_COLOR0 = in.in_var_COLOR0;
     out.out_var_COLOR1 = in.in_var_COLOR1;
+    out.out_var_TEXCOORD4 = float2((_49.x * 0.5) + 0.5, 0.5 - (_49.y * 0.5));
     return out;
 }
 

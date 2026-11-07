@@ -508,6 +508,8 @@ public:
         return clicked;
     }
     float Ease(const char* id, int channel, float target) { return Anim(GetId(id), channel, target); }
+    // Marks a rectangle as GUI for this frame (WantsMouseAt / the engine's clicks), for widgets drawn outside panels.
+    void Block(const Rect& r) { panels_.push_back(r); }
     void TextIn(const Rect& box, const char* text, Color color, float alignX, float size, bool bold = false) {
         DrawText(box, text, TextLen(text), color, alignX, size, bold ? FontFace::Bold : FontFace::Regular, 0.0f);
     }

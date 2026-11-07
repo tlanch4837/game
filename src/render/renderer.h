@@ -390,6 +390,12 @@ public:
     virtual void SetUiAtlas(TextureId atlas) { (void)atlas; }
     // Overlay phase only (after ResolveScene), like DrawTransient. ortho = OrthoPixels(width, height).
     virtual void DrawUi(const UiVertex* vertices, uint32_t count, const Mat4& ortho) { (void)vertices; (void)count; (void)ortho; }
+    // The RGBA sprite atlas UiMode::Image samples (icons, tile previews; a texture from CreateTexture). kNoTexture = none.
+    virtual void SetUiImages(TextureId atlas) { (void)atlas; }
+    // Overlay phase, before the DrawUi calls that use UiMode::Glass: copies what is on screen now into the shared backdrop,
+    // box-filtered down to 1/16 of the viewport, which Glass quads blur and tint (one copy and a tiny texture per frame,
+    // whatever the number of glass panels). Without a call this frame, glass samples last frame's (or a black) backdrop.
+    virtual void CaptureUiBackdrop() {}
 
     virtual void SetFrameView(const FrameView& view) = 0;
     virtual void ResolveScene() = 0;

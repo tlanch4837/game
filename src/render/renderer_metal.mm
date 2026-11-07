@@ -77,7 +77,7 @@ constexpr NS::UInteger kWaterPost = 0, kWaterLight = 1, kWaterWaves = 7, kWaterR
 constexpr NS::UInteger kWaterDepth = 2, kWaterRefract = 3, kWaterShadow = 4, kWaterProbes = 10, kWaterCloudShadow = 11;
 constexpr NS::UInteger kWaterClamp = 5, kWaterCmp = 6;
 // UI (ui.hlsl)
-constexpr NS::UInteger kUiAtlas = 0, kUiSampler = 1;
+constexpr NS::UInteger kUiAtlas = 0, kUiSampler = 1, kUiImages = 2, kUiBackdrop = 3;
 } // namespace slot
 
 struct MeshPush { // mesh.hlsl PushConstants under VULKAN: both stages read the same 144 bytes
@@ -161,7 +161,7 @@ public:
         h_ = (uint32_t)std::max(1, height);
         layer_->setDevice(device_);
         layer_->setPixelFormat(kDrawableFormat);
-        layer_->setFramebufferOnly(true);
+        layer_->setFramebufferOnly(false); // CaptureUiBackdrop and the frame capture copy from the drawable
         layer_->setMaximumDrawableCount(3);
         layer_->setDrawableSize(CGSizeMake(w_, h_));
         sceneW_ = (uint32_t)ScaledSize((int)w_, scale_);
@@ -704,10 +704,45 @@ public:
         UsePipe(uiPipe_, -1, dsOff_);
         const TextureId atlas = uiAtlas_ < textures_.size() && textures_[uiAtlas_].tex ? uiAtlas_ : defaults_[0];
         rce_->setFragmentTexture(textures_[atlas].tex, slot::kUiAtlas);
+        const TextureId images = uiImages_ < textures_.size() && textures_[uiImages_].tex ? uiImages_ : defaults_[0];
+        rce_->setFragmentTexture(textures_[images].tex, slot::kUiImages);
+        rce_->setFragmentTexture(backdropSmall_ ? backdropSmall_ : textures_[defaults_[0]].tex, slot::kUiBackdrop);
         rce_->setFragmentSamplerState(clampSampler_, slot::kUiSampler);
         rce_->setVertexBytes(ortho.m, 64, slot::kPush);
+        rce_->setFragmentBytes(ortho.m, 64, slot::kPush); // the glass mode reads the viewport size
         rce_->setVertexBuffer(frame_->transient, offset, slot::kStream0);
         rce_->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)count);
+    }
+
+    void SetUiImages(TextureId atlas) override { uiImages_ = atlas; }
+
+    // The Glass Dock GUI's backdrop: the overlay pass ends, the drawable is copied into a mip-mapped texture, the mips are
+    // generated (a box filter chain) and level 4 (1/16) is kept; then the overlay pass resumes on the same drawable.
+    void CaptureUiBackdrop() override {
+        if (!frameActive_ || !resolved_ || !drawable_ || pass_ != Pass::Overlay) return;
+        if (!backdropMip_ || backdropMip_->width() != w_ || backdropMip_->height() != h_) {
+            Release(backdropMip_);
+            Release(backdropSmall_);
+            backdropMip_ = NewTexture(MTL::TextureType2D, kDrawableFormat, w_, h_, 1, 5, MTL::TextureUsageShaderRead, MTL::StorageModePrivate);
+            backdropSmall_ = NewTexture(MTL::TextureType2D, kDrawableFormat, std::max(1u, w_ >> 4), std::max(1u, h_ >> 4), 1, 1, MTL::TextureUsageShaderRead,
+                                        MTL::StorageModePrivate);
+            if (!backdropMip_ || !backdropSmall_) return;
+        }
+        MTL::BlitCommandEncoder* b = BlitEncoder();
+        b->copyFromTexture(drawable_->texture(), 0, 0, MTL::Origin::Make(0, 0, 0), MTL::Size(w_, h_, 1), backdropMip_, 0, 0, MTL::Origin::Make(0, 0, 0));
+        b->generateMipmaps(backdropMip_);
+        b->copyFromTexture(backdropMip_, 0, 4, MTL::Origin::Make(0, 0, 0), MTL::Size(backdropSmall_->width(), backdropSmall_->height(), 1), backdropSmall_, 0, 0,
+                           MTL::Origin::Make(0, 0, 0));
+        Att color, depth;
+        color.tex = drawable_->texture();
+        color.load = MTL::LoadActionLoad;
+        depth.tex = overlayDepth_ ? overlayDepth_ : depth_;
+        depth.load = MTL::LoadActionClear; // the GUI draws without depth; what follows it gets a cleared one
+        depth.store = MTL::StoreActionDontCare;
+        depth.clearDepth = 0.0;
+        BeginRender({color}, &depth, w_, h_, Pass::Overlay);
+        boundPipe_ = nullptr;
+        BindMeshResources(true);
     }
 
     void SetFrameView(const FrameView& view) override { view_ = view; }
@@ -833,7 +868,7 @@ public:
     void SetFrameCapture(bool on) override {
         capture_ = on;
         captureNew_ = false;
-        if (layer_) layer_->setFramebufferOnly(!on); // the blit reads the drawable
+        // the drawable stays readable: the capture blit and the GUI backdrop (CaptureUiBackdrop) copy from it
         if (!on) RetireObject(captureBuffer_);
     }
 
@@ -1715,6 +1750,8 @@ private:
             Release(*t);
         Release(captureBuffer_);
         for (MTL::SamplerState** s : {&clampSampler_, &wrapSampler_, &shadowSampler_, &materialSampler_, &storeSampler_}) Release(*s);
+        Release(backdropMip_);
+        Release(backdropSmall_);
         for (MTL::DepthStencilState** s : {&dsScene_, &dsEqual_, &dsWater_, &dsOff_, &dsShadow_}) Release(*s);
         Release(queue_);
         Release(device_);
@@ -1782,7 +1819,8 @@ private:
     std::vector<TextureId> freeTextures_, extraOf_;
     TextureId defaults_[4] = {kNoTexture, kNoTexture, kNoTexture, kNoTexture};
     TextureId curMat_[3] = {kNoTexture, kNoTexture, kNoTexture};
-    TextureId uiAtlas_ = kNoTexture;
+    TextureId uiAtlas_ = kNoTexture, uiImages_ = kNoTexture;
+    MTL::Texture *backdropMip_ = nullptr, *backdropSmall_ = nullptr; // CaptureUiBackdrop
     std::unordered_map<uint64_t, Material> materials_;
     MTL::ArgumentEncoder* matEncoder_[2] = {};
     NS::UInteger matStride_ = 256, matNext_ = 0;

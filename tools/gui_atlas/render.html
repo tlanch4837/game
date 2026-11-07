@@ -1,0 +1,149 @@
+<!doctype html><meta charset="utf-8"><title>Glass Dock previews</title>
+<!-- Renders a transparent isometric preview of every Glass Dock build item that has none in pv/roads or pv/buildings, with
+     the camera and lights of Assets/buildings/thumbs.html (roads: Assets/roads/thumbs.html), into pv/items/<slug>.png.
+     The list is the engine's own catalogue (catalog.json from dump_catalog.cpp) plus the tool tiles (lines, connections,
+     terrain). Procedural meshes come from the engine: gui_models.js (TBD_GUI_PREVIEW_DUMP) and industry_models_data.js. -->
+<style>body{margin:0;background:#2a2d36;color:#ddd;font:12px system-ui}#g{display:flex;flex-wrap:wrap;gap:8px;padding:10px}
+.c{width:200px;text-align:center}.c img{width:200px;height:150px;background:repeating-conic-gradient(#3a3d46 0 25%,#2f323a 0 50%) 0 0/16px 16px}</style>
+<p id="log">loading…</p><div id="g"></div>
+<script src="/industry_models_data.js"></script><script src="gui_models.js"></script>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {PROFILES, Network, buildGpuRoads} from '/Assets/roads/roadlib.js';
+const W=400,H=300,log=document.getElementById('log'),g=document.getElementById('g');
+const r=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
+r.setSize(W,H);r.setClearColor(0x000000,0);r.outputColorSpace=THREE.SRGBColorSpace;r.toneMapping=THREE.ACESFilmicToneMapping;
+const slug=n=>n.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+const gltf=new GLTFLoader(),texL=new THREE.TextureLoader();
+const only=new URLSearchParams(location.search).get('only');
+const force=new URLSearchParams(location.search).has('all');
+
+// ---- the two lightings of the existing renders
+function buildingScene(){const s=new THREE.Scene();s.add(new THREE.HemisphereLight(0xdfe9f5,0x4a5a3a,1.3));
+ const sun=new THREE.DirectionalLight(0xfff1dc,2.6);sun.position.set(-120,200,90);s.add(sun);return s}
+function roadScene(){const s=new THREE.Scene();s.add(new THREE.HemisphereLight(0xdfe9f5,0x4a5a3a,1.1));
+ const sun=new THREE.DirectionalLight(0xfff1dc,2.6);sun.position.set(-200,300,150);s.add(sun);return s}
+function fitCam(obj){ // Assets/buildings/thumbs.html
+ const box=new THREE.Box3().setFromObject(obj),c=box.getCenter(new THREE.Vector3()),s=box.getSize(new THREE.Vector3());
+ const rad=Math.max(s.x,s.z,s.y*1.15)*0.78;
+ const cam=new THREE.OrthographicCamera(-rad*1.3,rad*1.3,rad*1.3*H/W,-rad*1.3*H/W,-2000,2000);
+ cam.position.set(c.x-60,c.y+60,c.z+60);cam.lookAt(c.x,c.y-s.y*0.05,c.z);return cam}
+function roadCam(half){const cam=new THREE.OrthographicCamera(-half*1.7,half*1.7,half*1.7*H/W,-half*1.7*H/W,1,1000);
+ cam.position.set(-40,48,40);cam.lookAt(0,0,0);return cam}
+
+// ---- engine triangle dumps (industry_dump format)
+const texCache={};
+async function tex(url){if(!texCache[url])texCache[url]=texL.loadAsync(url).then(t=>{t.wrapS=THREE.RepeatWrapping;t.wrapT=THREE.ClampToEdgeWrapping;t.colorSpace=THREE.SRGBColorSpace;return t}).catch(()=>{console.warn('missing texture',url);return null});return texCache[url]}
+function plainMesh(a){const n=a.length/6,pos=new Float32Array(n*3),col=new Float32Array(n*3);
+ for(let i=0;i<n;i++){pos.set(a.slice(i*6,i*6+3),i*3);col.set(a.slice(i*6+3,i*6+6).map(c=>Math.pow(c,2.2)),i*3)}
+ const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('color',new THREE.BufferAttribute(col,3));geo.computeVertexNormals();
+ return new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.8,metalness:.05,flatShading:true,side:THREE.DoubleSide}))}
+function slabMesh(a,map){const n=a.length/5,pos=new Float32Array(n*3),uv=new Float32Array(n*2);
+ for(let i=0;i<n;i++){pos.set(a.slice(i*5,i*5+3),i*3);uv.set(a.slice(i*5+3,i*5+5),i*2)}
+ const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));geo.computeVertexNormals();
+ return new THREE.Mesh(geo,new THREE.MeshStandardMaterial({map,color:map?0xffffff:0xb8b2a6,roughness:.85,flatShading:true,side:THREE.DoubleSide}))}
+// SPOM relief (SpomPS, as industry_models.html ports it)
+const SPOM_VS=`attribute vec3 vN; attribute vec3 vWHZ; attribute vec2 vUVm; varying vec3 fN; varying vec3 fWHZ; varying vec2 fUV; varying vec3 fW;
+void main(){fN=vN;fWHZ=vWHZ;fUV=vUVm;vec4 w=modelMatrix*vec4(position,1.0);fW=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`;
+const SPOM_FS=`uniform sampler2D alb; uniform sampler2D nor; uniform sampler2D colr; uniform vec2 dim; uniform vec3 sunDir;
+varying vec3 fN; varying vec3 fWHZ; varying vec2 fUV; varying vec3 fW; const float D=1.2; vec2 size;
+vec2 range(vec2 m){vec2 uv=(floor(vec2(m.x/size.x,m.y/size.y)*dim)+0.5)/dim;return vec2(texture2D(nor,uv).a,texture2D(alb,uv).a)*D;}
+bool solid(vec3 q){vec2 r=range(q.xy);return r.y>r.x+0.004&&q.z>=r.x&&q.z<=r.y;}
+void main(){vec3 N=normalize(fN),T=normalize(cross(vec3(0.0,1.0,0.0),N)),B=normalize(cross(N,T));size=max(fWHZ.xy,vec2(0.05));
+vec3 p0=vec3(fUV,fWHZ.z);vec3 vw=normalize(fW-cameraPosition);vec3 d=vec3(dot(vw,T),dot(vw,B),dot(vw,N));vec3 tf=vec3(1e9);
+if(abs(d.x)>1e-5)tf.x=d.x>0.0?(size.x-p0.x)/d.x:-p0.x/d.x;if(abs(d.y)>1e-5)tf.y=d.y>0.0?(size.y-p0.y)/d.y:-p0.y/d.y;if(abs(d.z)>1e-5)tf.z=d.z>0.0?(D-p0.z)/d.z:-p0.z/d.z;
+float tExit=max(min(tf.x,min(tf.y,tf.z)),0.0);if(tExit<1e-4)discard;float dt=tExit/192.0,tLo=0.0,tHi=0.0;bool hit=false;
+for(int k=0;k<=192;++k){tHi=dt*float(k);if(solid(p0+d*tHi)){hit=true;break;}tLo=tHi;}if(!hit)discard;
+for(int r=0;r<6;++r){float tm=0.5*(tLo+tHi);if(solid(p0+d*tm))tHi=tm;else tLo=tm;}vec3 q=p0+d*tHi;vec2 uv=vec2(q.x/size.x,q.y/size.y);
+vec3 albedo=texture2D(colr,(floor(uv*dim)+0.5)/dim).rgb;vec2 e=3.5/dim*size;vec2 rC=range(q.xy);bool back=abs(q.z-rC.x)<abs(q.z-rC.y)&&rC.y>rC.x+0.004&&rC.x>0.02;
+vec2 rx=range(q.xy+vec2(e.x,0.0))-range(q.xy-vec2(e.x,0.0));vec2 ry=range(q.xy+vec2(0.0,e.y))-range(q.xy-vec2(0.0,e.y));
+float gx=(back?rx.x:rx.y)/(2.0*e.x),gy=(back?ry.x:ry.y)/(2.0*e.y);vec3 nl=normalize(vec3(-gx,-gy,1.0)*(back?-1.0:1.0));vec3 n=normalize(T*nl.x+B*nl.y+N*nl.z);
+vec3 lin=pow(albedo,vec3(2.2));float sun=max(dot(n,normalize(sunDir)),0.0);
+vec3 col=lin*(vec3(1.0,0.95,0.86)*1.5*sun+mix(vec3(0.24,0.21,0.17),vec3(0.42,0.46,0.52),n.y*0.5+0.5)*0.9);gl_FragColor=vec4(pow(col,vec3(1.0/2.2)),1.0);}`;
+async function loadTex(url,nearest){const t=await texL.loadAsync(url);if(nearest){t.minFilter=t.magFilter=THREE.NearestFilter;t.generateMipmaps=false}return t}
+async function spomMesh(key,a){
+ const [al,nr,cl]=await Promise.all(['a','n','c'].map(k=>loadTex(`/Assets/industry/spom/${key}_${k}.png`,true)));
+ const n=a.length/11,pos=new Float32Array(n*3),nrm=new Float32Array(n*3),whz=new Float32Array(n*3),uvm=new Float32Array(n*2);
+ for(let i=0;i<n;i++){pos.set(a.slice(i*11,i*11+3),i*3);nrm.set(a.slice(i*11+3,i*11+6),i*3);whz.set(a.slice(i*11+6,i*11+9),i*3);uvm.set(a.slice(i*11+9,i*11+11),i*2)}
+ const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('vN',new THREE.BufferAttribute(nrm,3));
+ geo.setAttribute('vWHZ',new THREE.BufferAttribute(whz,3));geo.setAttribute('vUVm',new THREE.BufferAttribute(uvm,2));
+ return new THREE.Mesh(geo,new THREE.ShaderMaterial({uniforms:{alb:{value:al},nor:{value:nr},colr:{value:cl},dim:{value:new THREE.Vector2(al.image.width,al.image.height)},sunDir:{value:new THREE.Vector3(.45,.8,.35)}},
+  vertexShader:SPOM_VS,fragmentShader:SPOM_FS,side:THREE.DoubleSide}))}
+async function dumpGroup(m,slabUrl){const grp=new THREE.Group();
+ if(m.plain&&m.plain.length)grp.add(plainMesh(m.plain));
+ const slabs=Array.isArray(m.slab)?m.slab.map((a,s)=>[s,a]):Object.entries(m.slab||{});
+ for(const [k,a] of slabs)if(a.length)grp.add(slabMesh(a,await tex(slabUrl(k))));
+ for(const [k,a] of Object.entries(m.spom||{}))try{grp.add(await spomMesh(k,a))}catch(e){console.warn('spom skipped',k)}
+ return grp}
+
+// ---- the item list
+const catalog=await (await fetch('catalog.json')).json();
+const have=new Set();for(const d of ['roads','buildings'])for(const k of await (await fetch(`pv/${d}/index.json`)).json())have.add(k);
+const hasPng=n=>{const s=slug(n);return [s,s+'_road',s+'_highway'].some(k=>have.has(k))};
+async function listDir(url){const t=await (await fetch(url)).text();return [...t.matchAll(/href="([^"]+\.glb)"/g)].map(m=>decodeURIComponent(m[1]))}
+const jobs=[]; // {name, make: async () => {scene, cam, exposure}}
+const glbJob=(name,file,yaw=0)=>jobs.push({name,make:async()=>{const gl=await gltf.loadAsync(file);const s=buildingScene();gl.scene.rotation.y=yaw;s.add(gl.scene);return {s,cam:fitCam(gl.scene),exp:1.5}}});
+const objJob=(name,build)=>jobs.push({name,make:async()=>{const o=await build();const s=buildingScene();s.add(o);return {s,cam:fitCam(o),exp:1.5}}});
+const prof=n=>PROFILES.find(p=>p.name===n);
+function roadNetJob(name,build,half){jobs.push({name,make:async()=>{const s=roadScene(),net=new Network();build(net);await buildGpuRoads(net,s);
+ s.traverse(o=>{if(o.isMesh&&o.material&&o.material.color&&o.material.color.getHex()===0xffd400)o.visible=false});
+ await new Promise(r=>setTimeout(r,600));return {s,cam:roadCam(half),exp:2.1}}})}
+const GM=Object.fromEntries((window.GUI_MODELS||[]).map(m=>[m.name,m]));
+const IND=Object.fromEntries((window.IND_MODELS||[]).filter(m=>m.group==='Hubs').map(m=>[m.name,m]));
+const indHub={'Grain Farm':'Grain Farm hub','Livestock Farm':'Livestock Farm hub','Forestry':'Forestry sawmill hub','Oil Drilling':'Oil Drilling hub','Ore Mining':'Ore Mine hub','Landfill':'Landfill hub'};
+const zonePick={LD:/_2x3_L2\.glb$/,RH:/_1x3_L2\.glb$/,MD:/_2x3_L2\.glb$/,HD:/_2x2_L3\.glb$/,CL:/_2x2_.*_L2\.glb$/,OL:/_2x3_L2\.glb$/,IN:/_3x3_L2\.glb$/};
+for(const it of catalog){
+ const n=it.name;if(!force&&hasPng(n))continue;
+ if(it.kind==='road'&&it.tab===6){glbJob(n,'/Assets/rail/track/glb/TRACK_straight_30m.glb');continue} // railways: the track asset
+ if(it.kind==='road'){const p=prof(it.profile);if(p)roadNetJob(n,net=>net.segment(net.node(-12,0),net.node(12,0),p),Math.max(p.width*0.42,9));continue}
+ if(it.kind==='intersection'){const p=prof(it.profile);if(!p)continue;const L=Math.max(18,p.width*1.6);
+  roadNetJob(n,net=>{const c=net.node(0,0);for(const a of it.arms){const r=a*Math.PI/180;net.segment(c,net.node(Math.cos(r)*L,-Math.sin(r)*L),p)}},L*0.62);continue}
+ if(it.kind==='roundabout'){const p=prof(it.profile);if(!p)continue;const R=Math.max(12,it.radius||16),k=R*0.5523,L=R+18;
+  roadNetJob(n,net=>{const q=[net.node(R,0),net.node(0,-R),net.node(-R,0),net.node(0,R)],V=(x,z)=>new THREE.Vector2(x,z);
+   net.segment(q[0],q[1],p,V(R,-k),V(k,-R));net.segment(q[1],q[2],p,V(-k,-R),V(-R,-k));net.segment(q[2],q[3],p,V(-R,k),V(-k,R));net.segment(q[3],q[0],p,V(k,R),V(R,k));
+   net.segment(q[0],net.node(L,0),p);net.segment(q[2],net.node(-L,0),p);net.segment(q[1],net.node(0,-L),p);net.segment(q[3],net.node(0,L),p)},L*0.75);continue}
+ if((it.kind==='transport'||it.kind==='utility')&&it.glb){glbJob(n,'/'+it.glb.replace(/^assets\//,'Assets/'));continue}
+ if(it.kind==='transport'&&GM[n]){objJob(n,()=>dumpGroup(GM[n],k=>`/Assets/rail/depot/tex/${k}.png`));continue}
+ if(it.kind==='zone'){jobs.push({name:n,make:async()=>{const files=await listDir(`/Assets/buildings/${it.dir}/glb/`);
+  const f=files.find(f=>zonePick[it.prefix]&&zonePick[it.prefix].test(f))||files[0];const gl=await gltf.loadAsync(`/Assets/buildings/${it.dir}/glb/${f}`);
+  const s=buildingScene();s.add(gl.scene);return {s,cam:fitCam(gl.scene),exp:1.5}}});continue}
+ if(it.kind==='industry'&&IND[indHub[n]]){const m=IND[indHub[n]];objJob(n,()=>dumpGroup(m,s=>`/Assets/industry/tex/${m.tex}_${s}.png`));continue}
+ console.warn('no source for',it.kind,n);
+}
+// tool tiles that are not catalogue entries
+if(GM['Electricity Line']){const m=GM['Electricity Line'],p=[];for(let i=0;i<m.plain.length;i+=18){const x=[m.plain[i],m.plain[i+6],m.plain[i+12]];if(x.every(v=>v>=-62&&v<=-20))p.push(...m.plain.slice(i,i+18))}m.plain=p}
+for(const k of ['Electricity Line','Water Pipe','Sewage Pipe','Plane Line','Boat Line','Cargo Line','Tram Line'])if(GM[k])objJob(k,()=>dumpGroup(GM[k],()=>''));
+glbJob('Incineration Plant','/Assets/buildings/waste/glb/incinerator.glb');
+glbJob('Recycling Center','/Assets/buildings/waste/glb/recycling_center.glb');
+glbJob('Industrial Waste Site','/Assets/buildings/waste/glb/hazardous_waste.glb');
+glbJob('Bus Line','/Assets/vehicles/transit/glb/TRANSIT_citybus_blue.glb');
+glbJob('Train Line','/Assets/vehicles/train/glb/TRAIN_loco_blue_silver.glb');
+glbJob('Subway Line','/Assets/vehicles/subway/glb/SUBWAY_car_silver_blue.glb');
+glbJob('Cargo Train Line','/Assets/vehicles/train/glb/FREIGHT_engine_orange.glb');
+glbJob('Road Connection','/Assets/vehicles/transit/glb/TRANSIT_coach_white.glb');
+glbJob('Rail Connection','/Assets/vehicles/train/glb/FREIGHT_boxcar_red.glb');
+if(GM['Boat Line'])objJob('Sea Connection',()=>dumpGroup(GM['Cargo Line'],()=>''));
+if(GM['Plane Line'])objJob('Air Connection',()=>dumpGroup(GM['Plane Line'],()=>''));
+// terrain brushes: a 40 m grass patch raised, dug or levelled
+function terrain(kind){const geo=new THREE.PlaneGeometry(40,40,48,48);geo.rotateX(-Math.PI/2);const p=geo.attributes.position;
+ for(let i=0;i<p.count;i++){const x=p.getX(i),z=p.getZ(i),d=Math.hypot(x,z)/16,b=Math.max(0,1-d*d);
+  const n=Math.sin(x*.35)*Math.cos(z*.3)*0.6;p.setY(i,kind==='Raise'?b*b*9+n*.3:kind==='Dig'?-b*b*7+n*.3:(d<0.8?0.2:n*(Math.min(1,(d-0.8)*3))+0.2))}
+ geo.computeVertexNormals();const c=new Float32Array(p.count*3);for(let i=0;i<p.count;i++){const y=p.getY(i),t=Math.min(1,Math.abs(y)/8);
+  const col=new THREE.Color(0x6f9a52).lerp(new THREE.Color(kind==='Dig'?0x7a5c3e:0x8a8f6a),t);c.set([col.r,col.g,col.b],i*3)}
+ geo.setAttribute('color',new THREE.BufferAttribute(c,3));return new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.95,flatShading:true}))}
+for(const k of ['Raise','Dig','Flatten'])objJob(k,async()=>terrain(k));
+
+// ---- render and post
+const done=[];
+for(const j of jobs){if(only&&slug(j.name)!==only)continue;
+ log.textContent=`rendering ${done.length+1}/${jobs.length}: ${j.name}`;
+ try{const {s,cam,exp}=await j.make();r.toneMappingExposure=exp;r.render(s,cam);
+  const url=r.domElement.toDataURL('image/png'),k=slug(j.name);
+  await fetch(`/save?path=tools/gui_atlas/pv/items/${k}.png`,{method:'POST',body:await (await fetch(url)).blob()});
+  done.push(k);const e=document.createElement('div');e.className='c';e.innerHTML=`<img src="${url}"><div>${j.name}</div>`;g.appendChild(e);
+ }catch(e){console.error(j.name,e)}}
+if(!only)await fetch('/save?path=tools/gui_atlas/pv/items/index.json',{method:'POST',body:JSON.stringify(done.sort())});
+log.textContent=`done: ${done.length} of ${jobs.length}`;window.DONE=true;
+</script>

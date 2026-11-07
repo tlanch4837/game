@@ -33,7 +33,7 @@ $shaders = @(
     'water_vs WaterVS vert', 'water_ps WaterPS frag',
     'mesh_motion_ps PSMainMotion frag', 'mesh_skinned_motion_vs VSSkinnedMotion vert',
     'mesh_veg_depth_vs VSVegetationDepth vert', 'mesh_veg_depth_ps PSVegetationDepth frag', 'mesh_veg_shade_ps PSVegetationShade frag',
-    'ui_vs UiVS vert', 'ui_ps UiPS frag')
+    'ui_vs UiVS vert', 'ui_ps UiPS frag', 'ui_backdrop_vs UiBackdropVS vert', 'ui_backdrop_ps UiBackdropPS frag')
 
 $failed = 0
 foreach ($line in $shaders) {

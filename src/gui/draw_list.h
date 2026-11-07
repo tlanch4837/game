@@ -39,6 +39,39 @@ public:
         classic_ = classic;
         ui_.clear();
         flat_.clear();
+        clipOn_ = false;
+    }
+
+    // ---------------------------------------------------------------- clipping (smooth mode): primitives added while a clip
+    // rectangle is set are cut to it (every primitive is an axis-aligned quad whose attributes are linear in x and y, so the
+    // quad shrinks and its attributes are interpolated: shapes, text and images stay exact). Classic mode ignores it.
+    void SetClip(float x0, float y0, float x1, float y1) { clipOn_ = true, clip_[0] = x0, clip_[1] = y0, clip_[2] = x1, clip_[3] = y1; }
+    void ClearClip() { clipOn_ = false; }
+
+    // A rectangle of the image atlas (Renderer::SetUiImages), uv in 0..1, multiplied by `tint`.
+    void Image(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, Color tint = 0xFFFFFFFFu) {
+        if (classic_) return;
+        ui_.resize(ui_.size() + 6);
+        UiVertex* q = ui_.data() + ui_.size() - 6;
+        const float p[4][4] = {{x0, y0, u0, v0}, {x1, y0, u1, v0}, {x1, y1, u1, v1}, {x0, y1, u0, v1}};
+        const int order[6] = {0, 1, 2, 0, 2, 3};
+        for (int k = 0; k < 6; ++k) {
+            const float* v = p[order[k]];
+            q[k] = {v[0], v[1], v[2], v[3], 0, 0, 0, 0, (float)UiMode::Image, 0, tint, 0};
+        }
+        Clip(q);
+    }
+
+    // Frosted glass (UiMode::Glass): the blurred backdrop, saturated by `saturation`, under `tint`, with an inside border
+    // and the one pixel top highlight. `blur` = the CSS blur radius in pixels (the Gaussian's sigma).
+    void Glass(float x0, float y0, float x1, float y1, float radius, Color tint, float blur, float saturation, float border, Color borderColor) {
+        if (classic_) { Rect(x0, y0, x1, y1, tint, tint, radius, border, borderColor); return; }
+        ui_.resize(ui_.size() + 6);
+        const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f, m = 1.0f;
+        const float soft = std::round(std::clamp(saturation, 0.0f, 9.99f) * 100.0f) * 1000.0f + std::clamp(blur, 0.0f, 999.0f);
+        Quad(ui_.data() + ui_.size() - 6, x0 - m, y0 - m, x1 + m, y1 + m, cx, cy, (x1 - x0) * 0.5f, (y1 - y0) * 0.5f, radius, border, UiMode::Glass, soft,
+             tint, tint, borderColor);
+        Clip(ui_.data() + ui_.size() - 6);
     }
     bool Classic() const { return classic_; }
     const std::vector<UiVertex>& Ui() const { return ui_; }
@@ -68,6 +101,7 @@ public:
         } else {
             ui_.resize(ui_.size() + 6);
             SmoothRect(ui_.data() + ui_.size() - 6, x0, y0, x1, y1, top, bottom, radius, border, borderColor);
+            Clip(ui_.data() + ui_.size() - 6);
         }
     }
     void Rect(float x0, float y0, float x1, float y1, Color fill, float radius) { Rect(x0, y0, x1, y1, fill, fill, radius); }
@@ -77,6 +111,7 @@ public:
         if (classic_) return;
         ui_.resize(ui_.size() + 6);
         SmoothShadow(ui_.data() + ui_.size() - 6, x0, y0, x1, y1, radius, blur, color);
+        Clip(ui_.data() + ui_.size() - 6);
     }
 
     void Circle(float cx, float cy, float r, Color fill, float border = 0.0f, Color borderColor = 0) {
@@ -98,6 +133,7 @@ public:
         ui_.resize(ui_.size() + 6);
         Quad(ui_.data() + ui_.size() - 6, std::min(x0, x1) - m, std::min(y0, y1) - m, std::max(x0, x1) + m, std::max(y0, y1) + m,
              x0, y0, x1 - x0, y1 - y0, r, 0.0f, UiMode::Line, 0.0f, color, color, 0);
+        Clip(ui_.data() + ui_.size() - 6);
     }
 
     // A run of text with its pen starting at x on the baseline. Snapped to whole pixels so it stays crisp.
@@ -124,6 +160,7 @@ public:
                     const float* v = p[order[k]];
                     q[k] = {v[0], v[1], v[2], v[3], 0.0f, 0.0f, 0.0f, 0.0f, (float)UiMode::Text, 1.0f, color, 0};
                 }
+                Clip(q);
             }
             pen += (g ? g->advance : SdfAdvance(face, ' ')) * size;
             if (i + 1 < n) pen += SdfKerning(face, s[i], s[i + 1]) * size;
@@ -150,6 +187,27 @@ public:
     }
 
 private:
+    // Cuts the quad q (vertex order 0 1 2 0 2 3 over corners top-left, top-right, bottom-right, bottom-left) to the clip.
+    void Clip(UiVertex* q) const {
+        if (!clipOn_) return;
+        const UiVertex tl = q[0], br = q[2];
+        const float x0 = tl.x, y0 = tl.y, x1 = br.x, y1 = br.y;
+        const float cx0 = std::max(x0, clip_[0]), cy0 = std::max(y0, clip_[1]), cx1 = std::min(x1, clip_[2]), cy1 = std::min(y1, clip_[3]);
+        if (cx0 >= cx1 || cy0 >= cy1) { for (int k = 0; k < 6; ++k) q[k].x = q[k].y = -1e5f; return; }
+        if (cx0 == x0 && cy0 == y0 && cx1 == x1 && cy1 == y1) return;
+        const float sx = x1 > x0 ? 1.0f / (x1 - x0) : 0.0f, sy = y1 > y0 ? 1.0f / (y1 - y0) : 0.0f;
+        const float lx0 = tl.localX, lx1 = br.localX, ly0 = tl.localY, ly1 = br.localY;
+        const Color top = tl.fill, bottom = br.fill;
+        for (int k = 0; k < 6; ++k) {
+            UiVertex& v = q[k];
+            const bool right = v.x > x0 + (x1 - x0) * 0.5f, low = v.y > y0 + (y1 - y0) * 0.5f;
+            v.x = right ? cx1 : cx0, v.y = low ? cy1 : cy0;
+            const float tx = (v.x - x0) * sx, ty = (v.y - y0) * sy;
+            v.localX = lx0 + (lx1 - lx0) * tx, v.localY = ly0 + (ly1 - ly0) * ty;
+            v.fill = Mix(top, bottom, ty);
+        }
+    }
+
     static Vec3 ToVec3(Color c) { return {Channel(c, 0) / 255.0f, Channel(c, 1) / 255.0f, Channel(c, 2) / 255.0f}; }
 
     // One quad (x0..x1, y0..y1); local coordinates are the position minus (ox, oy). Top two vertices get `top`, bottom two `bottom`.
@@ -191,6 +249,8 @@ private:
     }
 
     bool classic_ = false;
+    bool clipOn_ = false;
+    float clip_[4] = {};
     std::vector<UiVertex> ui_;
     std::vector<Vertex> flat_;
 };

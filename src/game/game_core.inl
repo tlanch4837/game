@@ -1333,6 +1333,8 @@ void UpdateDynamicResolution(tbd::Renderer& r, float dt) {
 // After every renderer start (F1 / F2 make a new one): the SDF font atlas (assets\ui\ui_font_sdf.png beside bin; made by
 // tools\bake_ui_font.py) goes into the new renderer for its DrawUi path. Without the UI pipeline (shader missing or failed),
 // without the atlas, or with TBD_GUI_CLASSIC=1, the GUI draws the classic way (flat quads and the pixel font, DrawTransient).
+namespace gdock { void LoadAtlas(tbd::Renderer& r); } // game/glass_dock_host.inl
+
 void UploadUiFont() {
     static const bool forceClassic = [] {
         char v[8] = {};
@@ -1350,6 +1352,7 @@ void UploadUiFont() {
         const tbd::TextureId atlas = smooth ? r.CreateTexture(rgba.data(), w, h) : tbd::kNoTexture;
         smooth = atlas != tbd::kNoTexture;
         if (smooth) r.SetUiAtlas(atlas);
+        if (smooth) gdock::LoadAtlas(r); // the Glass Dock's icons and previews: between frames (a texture upload)
     }
     g_gui.SetClassic(!smooth);
     g_roadGpu.Forget();
@@ -1886,6 +1889,7 @@ void RoadsWorldLabels() {
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
+#include "gui_preview_dump.inl" // TBD_GUI_PREVIEW_DUMP: the procedural build items as triangles for tools/gui_atlas/render.html
 
 // Which HUD button the open transport panel belongs to: Transportation, or the service tab's own (Fire, Healthcare, Police, ...).
 int HudForTransportTab() {
@@ -1939,6 +1943,7 @@ void HudOpenTool(int tool) {
 }
 
 float g_guiScaleSel = 1.0f; // the HUD Options menu: interface size multiplier
+#include "glass_dock_host.inl" // the Glass Dock+ GUI (src/gui/glass_dock.h) on the city game
 
 // ------------------------------------------------------------------- in-game GUI, per frame
 // Runs the GUI frame (input queued by GuiMouse since the last frame), the terrain toolbar, and draws it over everything.
@@ -1978,7 +1983,19 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     now = tbd::platform::Ticks();
     const float guiDt = last ? (float)((now - last) / (double)g_engine.tickFreq) : 1.0f / 60.0f; // eases transitions
     last = now;
-    g_gui.BeginFrame(g_guiInput.Take((float)g_engine.vpW, (float)g_engine.vpH, DpiScale() * g_guiScaleSel, guiDt));
+    static bool previewDumped = false; // TBD_GUI_PREVIEW_DUMP=<file.js> (gui_preview_dump.inl), once the world is up
+    if (!previewDumped) {
+        previewDumped = true;
+        char dumpPath[512] = {};
+        if (tbd::platform::GetEnvA("TBD_GUI_PREVIEW_DUMP", dumpPath, sizeof(dumpPath)) > 0) {
+            std::string msg;
+            GuiPreviewDump(dumpPath, msg);
+            tbd::Log("GUI preview dump: %s", msg.c_str());
+        }
+    }
+    float guiScale = DpiScale() * g_guiScaleSel;
+    if (!gdock::Legacy()) gdock::DeviceAndScale(guiScale); // the dock's point sizes: the device's scale
+    g_gui.BeginFrame(g_guiInput.Take((float)g_engine.vpW, (float)g_engine.vpH, guiScale, guiDt));
     tbd::gui::TerrainStatus status;
     status.tiles = g_engine.terrain.field.TileCount();
     tbd::Vec3 hit;
@@ -1995,7 +2012,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     terrainSlide += ((terrainPanelOpen && g_engine.terrain.params.enabled ? 1.0f : 0.0f) - terrainSlide) * std::min(1.0f, guiDt * 12.0f);
     if (std::fabs(terrainSlide - (terrainPanelOpen ? 1.0f : 0.0f)) < 0.003f) terrainSlide = terrainPanelOpen ? 1.0f : 0.0f;
     const float ease = terrainSlide * terrainSlide * (3.0f - 2.0f * terrainSlide); // smoothstep
-    const tbd::gui::TerrainAction action = tbd::gui::TerrainToolbar(g_gui, state, status, 4.0f + 106.0f, ease);
+    const tbd::gui::TerrainAction action = gdock::Legacy() ? tbd::gui::TerrainToolbar(g_gui, state, status, 4.0f + 106.0f, ease) : tbd::gui::TerrainAction::None;
     const bool roadsWereOpen = g_roads.active;
     if (g_roads.active) RoadsWorldLabels(); // under the panels
     if (g_transportTool.active) TransportWorldLabels();
@@ -2010,6 +2027,19 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     hud.terrainOpen = terrainPanelOpen;
     SimHudFill(hud);
     if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
+    if (!gdock::Legacy()) { // Glass Dock+: its bar, panels and placement bar replace the HUD and the tools' panels
+        gdock::Frame(r, hud);
+        SimHudRead(hud);
+        g_gui.EndFrame();
+        const tbd::Mat4 ortho = tbd::OrthoPixels((float)g_engine.vpW, (float)g_engine.vpH);
+        const std::vector<tbd::UiVertex>& v = g_gui.UiVertices();
+        if (!g_gui.Classic() && !v.empty()) {
+            r.CaptureUiBackdrop(); // the one shared blur source of every glass panel
+            r.DrawUi(v.data(), (uint32_t)v.size(), ortho);
+        } else if (g_gui.Classic() && !g_gui.Vertices().empty())
+            r.DrawTransient(g_gui.Vertices().data(), (uint32_t)g_gui.Vertices().size(), tbd::Topology::Triangles, ortho, tbd::Mat4::Identity(), false);
+        return;
+    }
     g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
     const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
     SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim

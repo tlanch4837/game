@@ -53,5 +53,8 @@ rem City chunk bakes and volumes (Track R): the bake pass and ChunkVolPS (src\ci
 rem The smooth in-game UI (Renderer::DrawUi): rounded boxes, shadows, capsules and SDF text.
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E UiVS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_vs.spv" "%SRC%\ui.hlsl" || exit /b 1
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E UiPS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_ps.spv" "%SRC%\ui.hlsl" || exit /b 1
+rem The Glass Dock GUI's backdrop pass (Direct3D 12 runs it; Vulkan and Metal filter with blits / mips).
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T vs_6_0 -E UiBackdropVS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_backdrop_vs.spv" "%SRC%\ui.hlsl" || exit /b 1
+"%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_0 -E UiBackdropPS -DVULKAN -I "%SRC%" -Fo "%OUT%\ui_backdrop_ps.spv" "%SRC%\ui.hlsl" || exit /b 1
 rem The ray traced ambient occlusion (VK_KHR_ray_query), used when the device has it.
 "%VULKAN_SDK%\Bin\dxc.exe" -spirv -fspv-target-env=vulkan1.3 -T ps_6_5 -E AoPS -DVULKAN -DRT_AO -I "%SRC%" -Fo "%OUT%\post_ao_rt_ps.spv" "%SRC%\post.hlsl" || exit /b 1

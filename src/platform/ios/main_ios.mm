@@ -1,7 +1,8 @@
 // iOS shell: a UIKit scene with a CAMetalLayer view, driving the game without the editor (src/game/game_host.h).
-// The display link runs the frames while the scene is active; touches become the game's pointer input:
-// one finger is the left button (tools, GUI), two fingers pan the camera (the middle button) and pinch zooms
-// (wheel notches at the pinch centre).
+// The display link runs the frames while the scene is active; touches become the game's pointer input, SimCity style:
+//   one finger on the GUI or with a build tool out   the left button (press, draw, place);
+//   one finger on the city otherwise                 a drag pans the camera (the middle button), a tap selects (a click);
+//   two fingers                                      pan (their centre), pinch zooms (wheel notches), twist turns the camera.
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
 
@@ -30,8 +31,12 @@
     BOOL _started;
     BOOL _failed;
     // touches
-    UITouch* _first;      // the finger that is the left button
+    UITouch* _first;      // the finger that is the left button (or, _camera, the one-finger pan)
     BOOL _leftDown;
+    BOOL _camera;         // the first finger landed on the city with no tool: it pans once it moves, else it was a tap
+    BOOL _panning;        // ... and it has moved: the middle button is down
+    CGPoint _start;       // where it landed, device pixels
+    CGFloat _twistAngle;  // the two fingers' angle last move
     BOOL _twoFinger;      // two fingers: camera pan (middle button) and pinch
     CGPoint _panCentre;   // device pixels
     CGFloat _pinchDistance;
@@ -116,9 +121,15 @@
         tbd::host::PointerCancel();
         _leftDown = NO;
     }
+    if (_panning) { // the one-finger pan hands over to the two-finger one
+        tbd::host::PointerUp(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
+        _panning = NO;
+    }
+    _camera = NO;
     const CGPoint a = [self pixels:[touches[0] locationInView:self.view]], b = [self pixels:[touches[1] locationInView:self.view]];
     _panCentre = CGPointMake((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
     _pinchDistance = std::hypot(a.x - b.x, a.y - b.y);
+    _twistAngle = std::atan2(b.y - a.y, b.x - a.x);
     _twoFinger = YES;
     tbd::host::PointerDown(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
 }
@@ -141,6 +152,12 @@
     _first = t;
     const CGPoint p = [self pixels:[t locationInView:self.view]];
     tbd::host::PointerMove((float)p.x, (float)p.y); // hover first, as a mouse would arrive
+    if (!tbd::host::TouchBuilds((float)p.x, (float)p.y)) { // the city, no tool: wait and see whether it is a tap or a pan
+        _camera = YES;
+        _panning = NO;
+        _start = p;
+        return;
+    }
     tbd::host::PointerDown(tbd::host::Button::Left, (float)p.x, (float)p.y);
     _leftDown = YES;
 }
@@ -160,6 +177,23 @@
             if (std::fabs(notches) > 0.01f) tbd::host::Zoom(notches, (float)_panCentre.x, (float)_panCentre.y);
         }
         _pinchDistance = d;
+        const CGFloat ang = std::atan2(b.y - a.y, b.x - a.x);
+        CGFloat da = ang - _twistAngle;
+        if (da > M_PI) da -= 2 * M_PI;
+        if (da < -M_PI) da += 2 * M_PI;
+        if (std::fabs(da) > 0.002) tbd::host::Twist((float)da);
+        _twistAngle = ang;
+        return;
+    }
+    if (_camera && [touches containsObject:_first]) {
+        const CGPoint p = [self pixels:[_first locationInView:self.view]];
+        const CGFloat slop = 10.0 * self.view.contentScaleFactor; // 10 pt before a tap becomes a pan
+        if (!_panning && std::hypot(p.x - _start.x, p.y - _start.y) > slop) {
+            _panning = YES;
+            _panCentre = _start;
+            tbd::host::PointerDown(tbd::host::Button::Middle, (float)_start.x, (float)_start.y);
+        }
+        if (_panning) _panCentre = p, tbd::host::PointerMove((float)p.x, (float)p.y);
         return;
     }
     if (_leftDown && [touches containsObject:_first]) {
@@ -172,6 +206,17 @@
     if (!_started) return;
     if (_twoFinger) {
         if ([self activeTouches:event].count < 2) [self endTwoFinger];
+        return;
+    }
+    if (_camera && [touches containsObject:_first]) {
+        const CGPoint p = [self pixels:[_first locationInView:self.view]];
+        if (_panning) tbd::host::PointerUp(tbd::host::Button::Middle, (float)p.x, (float)p.y);
+        else { // a tap: a click where it landed (selects a building, a road, a citizen)
+            tbd::host::PointerDown(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
+            tbd::host::PointerUp(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
+        }
+        _camera = _panning = NO;
+        _first = nil;
         return;
     }
     if (_leftDown && [touches containsObject:_first]) {
@@ -187,6 +232,7 @@
     tbd::host::PointerCancel();
     _leftDown = NO;
     _twoFinger = NO;
+    _camera = _panning = NO;
     _first = nil;
 }
 

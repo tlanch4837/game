@@ -32,6 +32,11 @@ void PointerUp(Button b, float x, float y);
 void PointerCancel(); // the system took the touch (a gesture, a call): drags end
 // Zoom in notches at a point (a mouse wheel's unit; pinch converts to it). Positive = closer.
 void Zoom(float notches, float x, float y);
+// Touch, SimCity style: does a finger landing at (x, y) belong to the GUI or a build tool (true: it is the left button)
+// or to the camera (false: one-finger drag pans, a tap selects)?
+bool TouchBuilds(float x, float y);
+// Turns the camera about its target by `radians` (a two-finger twist).
+void Twist(float radians);
 // Keys from a hardware keyboard: tbd::platform::Key values; ch is the character typed (0 if none).
 void KeyDown(int key, bool repeat, unsigned ch);
 void KeyUp(int key);

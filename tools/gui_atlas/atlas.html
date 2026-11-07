@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Glass Dock atlas</title></head>
+<body style="background:#222;color:#ddd;font:13px system-ui">
+<p id="log">building…</p>
+<canvas id="c" style="max-width:100%;background:#444"></canvas>
+<!-- Bakes the Glass Dock+ mockup's icons and item previews (gui_mockups: icons.js, icons_v2.js, previews.js, menu.js,
+     pv/*.png) into one RGBA atlas for the engine's UI image mode (src/gui/glass_dock.h). Serve this folder with
+     serve.py and open atlas.html: it posts glass_atlas.png and glass_atlas.txt back, into assets_src/gui/.
+     Cells:  i:<name>  icon, white (tinted by the engine), 64x64, the 24-unit viewBox scaled 64/24
+             n:<name>  icon in its own colours (ICON_COL / multi-colour), 64x64
+             g:<name>  the white icon's glow: drop-shadow(0 0 6px) of a 28 px icon, 96x96 with the icon centred at 64 px
+             p:<slug>  item preview, 208x156 (iPad 104x78 at 2x): a PNG render (contain + drop shadow) or the SVG stand-in -->
+<script src="icons.js"></script><script src="icons_v2.js"></script><script src="menu.js"></script><script src="previews.js"></script>
+<script>
+const P={pause:'M8 5v14M16 5v14',play:'M7 4l13 8-13 8z',ppl:'M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21c0-4 4-6 8-6s8 2 8 6',
+ heart:'M12 20s-8-5-8-11a4.5 4.5 0 0 1 8-2.5A4.5 4.5 0 0 1 20 9c0 6-8 11-8 11z',up:'M6 15l6-6 6 6',down:'M6 9l6 6 6-6',left:'M15 6l-6 6 6 6',right:'M9 6l6 6-6 6',
+ ok:'M5 12l5 5 9-10',x:'M6 6l12 12M18 6 6 18',undo:'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3',srch:'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',
+ clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',alert:'M12 3 2 20h20zM12 9v5m0 3v.5',save:'M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7',
+ gear:'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1',
+ cam:'M4 7h4l2-3h4l2 3h4v13H4zM12 10a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z',exit:'M14 4h6v16h-6M10 8l-4 4 4 4M6 12h10',folder:'M3 6h6l2 2h10v11H3z',
+ star:'M12 3l2.8 5.8 6.2.9-4.5 4.4 1 6.3L12 17.5 6.5 20.4l1-6.3L3 9.7l6.2-.9z'};
+// index.html: Object.assign(P, ICONS) then ic = icon(); the main page's own glyphs fill the names ICONS lacks
+for(const k in P)if(!(k in ICONS))ICONS[k]=P[k];
+const CSS=`.ic{fill:var(--ic,currentColor);fill-opacity:.2;stroke:var(--ic,currentColor);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.ic.nf{fill:none}.ic path[style]{stroke:var(--ic);fill:var(--ic)}`;
+const MONO=`.ic path{stroke:#fff!important}.ic:not(.nf) path{fill:#fff!important}.ic.nf path{fill:none!important}`;
+function svgDoc(inner,w,h,extra){ // inner = an <svg ...> string from icon() / preview(); make it standalone
+ let s=inner.replace('<svg ',`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" `);
+ return s.replace(/(<svg[^>]*>)/,`$1<style>svg{color:#fff}${CSS}${extra||''}</style>`);
+}
+function load(src){return new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>no(src);im.src=src})}
+const svgUrl=s=>'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);
+const CAT_ICONS=new Set(['road','zone','terr','util','serv','bus','factory','city','info','layers']); // the PC bar's glowing ones
+const slug=n=>n.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+async function main(){
+ const log=document.getElementById('log');
+ const cells=[]; // {key,w,h,draw(ctx,x,y)}
+ const names=Object.keys(ICONS);
+ for(const n of names){
+  const mono=await load(svgUrl(svgDoc(icon(n),64,64,MONO)));
+  const nat=await load(svgUrl(svgDoc(icon(n),64,64)));
+  cells.push({key:'i:'+n,w:64,h:64,draw:(c,x,y)=>c.drawImage(mono,x,y)});
+  if(ICON_COL[n]||Array.isArray(ICONS[n]))cells.push({key:'n:'+n,w:64,h:64,draw:(c,x,y)=>c.drawImage(nat,x,y)}); // else = the white one
+  // glow: CSS drop-shadow(0 0 6px) on a 28 px icon = a 6*64/28 px gaussian (std dev = radius/2) at this scale
+  if(CAT_ICONS.has(n))cells.push({key:'g:'+n,w:96,h:96,draw:(c,x,y)=>{c.save();c.filter=`drop-shadow(0 0 ${(6*64/28).toFixed(2)}px #fff)`;c.drawImage(mono,x+16,y+16);c.restore();
+   c.save();c.globalCompositeOperation='destination-out';c.drawImage(mono,x+16,y+16);c.restore()}}); // glow only: the icon is drawn over it
+ }
+ // previews: PNG renders first (pv/<dir>/index.json), then the SVG stand-ins for every MENU item and one per icon
+ const have=new Set();
+ for(const d of ['roads','buildings','items']){
+  const list=await (await fetch(`pv/${d}/index.json`)).json();
+  for(const k of list){const im=await load(`pv/${d}/${k}.png`);have.add(k);
+   cells.push({key:'p:'+k,w:208,h:156,draw:(c,x,y)=>{c.save();c.beginPath();c.rect(x,y,208,156);c.clip();
+    c.filter='drop-shadow(0 6px 3px rgba(0,0,0,.4))';const s=Math.min(208/im.width,156/im.height),w=im.width*s,h=im.height*s;
+    c.drawImage(im,x+(208-w)/2,y+(156-h)/2,w,h);c.restore()}});}
+ }
+ const pvSvg=async(key,ic,name,cost)=>{const im=await load(svgUrl(svgDoc(preview(ic,name,cost),156,156)));
+  cells.push({key,w:208,h:156,draw:(c,x,y)=>c.drawImage(im,x+26,y)})};
+ const items=[];for(const c of MENU)for(const g of c.groups)for(const it of (g.subs?g.subs.flatMap(s=>s.items):g.items))items.push(it);
+ for(const v of VIEWS)items.push([v[0],'',v[1]]);
+ const seen=new Set();
+ // every engine item has a real render (render.html); tiles without one (views, panels) show their icon
+ // shelf pack, widest-first by height class
+ const W=4096;let x=0,y=0,row=0;cells.sort((a,b)=>b.h-a.h);
+ for(const c of cells){if(x+c.w>W){x=0;y+=row;row=0}c.x=x;c.y=y;x+=c.w+2;row=Math.max(row,c.h+2)}
+ const H=y+row;const cv=document.getElementById('c');cv.width=W;cv.height=H;const ctx=cv.getContext('2d');
+ for(const c of cells)c.draw(ctx,c.x,c.y);
+ const txt=`# glass_atlas.png ${W}x${H}: key x y w h (tools/gui_atlas/atlas.html)\n`+cells.map(c=>`${c.key} ${c.x} ${c.y} ${c.w} ${c.h}`).join('\n')+'\n';
+ const png=await new Promise(r=>cv.toBlob(r,'image/png'));
+ await fetch('/save?path=assets_src/gui/glass_atlas.png',{method:'POST',body:png});
+ await fetch('/save?path=assets_src/gui/glass_atlas.txt',{method:'POST',body:txt});
+ log.textContent=`done: ${cells.length} cells, ${W}x${H}`;
+}
+main().catch(e=>{document.getElementById('log').textContent='error '+e});
+</script></body></html>

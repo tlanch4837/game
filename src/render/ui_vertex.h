@@ -14,6 +14,9 @@ enum class UiMode : uint32_t {
     Shadow = 1, // soft rounded rectangle: as Rect, softness = blur radius in pixels (border unused)
     Text = 2,   // SDF glyph: local = atlas uv, softness = screen pixels per atlas pixel (sharpness), border = outline (0..0.5)
     Line = 3,   // capsule: local = pixel offset from the start point, a/b = end minus start, radius = half thickness
+    Image = 4,  // sprite: local = uv in the image atlas (Renderer::SetUiImages), fill = tint it is multiplied by
+    Glass = 5,  // frosted glass rounded rectangle: as Rect (fill = tint over the blurred backdrop, line = border), softness =
+                // saturation * 100 * 1000 + blur sigma in pixels (Renderer::CaptureUiBackdrop makes the backdrop)
 };
 
 struct UiVertex {
