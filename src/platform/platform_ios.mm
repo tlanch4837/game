@@ -10,6 +10,7 @@
 #include <time.h>
 #include <chrono>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 namespace tbd::platform {
@@ -103,6 +104,12 @@ bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rg
     if (cf) CFRelease(cf);
     return ok;
 }
+
+// Fed by the UIKit shell (touches as MouseLeft, hardware keyboard keys) on the main thread; read on the main thread.
+static std::atomic<bool> g_keys[256];
+bool KeyDownAsync(Key k) { return g_keys[(uint8_t)k].load(std::memory_order_relaxed); }
+bool KeyDownSync(Key k) { return KeyDownAsync(k); }
+void SetKeyDown(Key k, bool down) { g_keys[(uint8_t)k].store(down, std::memory_order_relaxed); }
 
 void LowerThreadPriority(std::thread& t) {
     // Lower the worker's scheduling priority a little; QoS classes can only be set on the calling thread.

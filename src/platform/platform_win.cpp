@@ -90,6 +90,16 @@ bool DecodeImage(const uint8_t* data, size_t size, std::vector<uint8_t>& rgba, i
     return ok;
 }
 
+// Key values are the virtual-key codes: KeyDownAsync / KeyDownSync are the exact calls the game made before.
+static_assert((int)Key::MouseLeft == VK_LBUTTON && (int)Key::MouseRight == VK_RBUTTON && (int)Key::MouseMiddle == VK_MBUTTON);
+static_assert((int)Key::Shift == VK_SHIFT && (int)Key::Control == VK_CONTROL && (int)Key::Alt == VK_MENU && (int)Key::Space == VK_SPACE);
+static_assert((int)Key::Left == VK_LEFT && (int)Key::Up == VK_UP && (int)Key::Right == VK_RIGHT && (int)Key::Down == VK_DOWN);
+static_assert((int)Key::A == 'A' && (int)Key::Q == 'Q' && (int)Key::W == 'W' && (int)Key::Z == 'Z');
+
+bool KeyDownAsync(Key k) { return (GetAsyncKeyState((int)k) & 0x8000) != 0; }
+bool KeyDownSync(Key k) { return (GetKeyState((int)k) & 0x8000) != 0; }
+void SetKeyDown(Key, bool) {}
+
 void LowerThreadPriority(std::thread& t) {
     SetThreadPriority((HANDLE)t.native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
 }

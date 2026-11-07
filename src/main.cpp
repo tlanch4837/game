@@ -410,8 +410,8 @@ struct TerrainEdit {
 
 // The mode a left drag paints with right now: Ctrl and Shift still override the toolbar, as they did before it existed.
 int TerrainBrushModeNow() {
-    if (GetKeyState(VK_CONTROL) & 0x8000) return (int)tbd::gui::TerrainBrushMode::Flatten;
-    if (GetKeyState(VK_SHIFT) & 0x8000) return (int)tbd::gui::TerrainBrushMode::Dig;
+    if (tbd::platform::KeyDownSync(tbd::platform::Key::Control)) return (int)tbd::gui::TerrainBrushMode::Flatten;
+    if (tbd::platform::KeyDownSync(tbd::platform::Key::Shift)) return (int)tbd::gui::TerrainBrushMode::Dig;
     return g_terrainEdit.mode;
 }
 
@@ -2343,11 +2343,11 @@ float FrameDelta() {
 // WASD + Q/E while the right mouse button is held (Shift = faster; the wheel changes the speed).
 void UpdateFly(float dt) {
     if (g_engine.drag != Drag::Fly) return;
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-    const float speed = g_engine.flySpeed * (down(VK_SHIFT) ? 4.0f : 1.0f) * dt * tbd::character::CameraScale() * tbd::character::CameraScale(); // creator open: ~1/10 fly speed
-    const float forward = (down('W') ? 1.0f : 0.0f) - (down('S') ? 1.0f : 0.0f);
-    const float right = (down('D') ? 1.0f : 0.0f) - (down('A') ? 1.0f : 0.0f);
-    const float up = ((down('E') || down(VK_SPACE)) ? 1.0f : 0.0f) - ((down('Q') || down('C')) ? 1.0f : 0.0f);
+    using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
+    const float speed = g_engine.flySpeed * (down(PK::Shift) ? 4.0f : 1.0f) * dt * tbd::character::CameraScale() * tbd::character::CameraScale(); // creator open: ~1/10 fly speed
+    const float forward = (down(PK::W) ? 1.0f : 0.0f) - (down(PK::S) ? 1.0f : 0.0f);
+    const float right = (down(PK::D) ? 1.0f : 0.0f) - (down(PK::A) ? 1.0f : 0.0f);
+    const float up = ((down(PK::E) || down(PK::Space)) ? 1.0f : 0.0f) - ((down(PK::Q) || down(PK::C)) ? 1.0f : 0.0f);
     g_engine.camera.Fly(forward * speed, right * speed, up * speed);
 }
 
@@ -2376,14 +2376,14 @@ void UpdateCityCam(float dt) {
         }
     }
     if (g_engine.drag == Drag::Fly || g_play.active || RoadRenameActive() || !AppHasFocus()) return;
-    auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-    if (down(VK_CONTROL) || down(VK_MENU)) return;
-    const float fw = ((down('W') || down(VK_UP)) ? 1.0f : 0.0f) - ((down('S') || down(VK_DOWN)) ? 1.0f : 0.0f);
-    const float rt = ((down('D') || down(VK_RIGHT)) ? 1.0f : 0.0f) - ((down('A') || down(VK_LEFT)) ? 1.0f : 0.0f);
-    const float turn = (down('E') ? 1.0f : 0.0f) - (down('Q') ? 1.0f : 0.0f);
-    const float tilt = (down('X') ? 1.0f : 0.0f) - (down('Z') ? 1.0f : 0.0f);
+    using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
+    if (down(PK::Control) || down(PK::Alt)) return;
+    const float fw = ((down(PK::W) || down(PK::Up)) ? 1.0f : 0.0f) - ((down(PK::S) || down(PK::Down)) ? 1.0f : 0.0f);
+    const float rt = ((down(PK::D) || down(PK::Right)) ? 1.0f : 0.0f) - ((down(PK::A) || down(PK::Left)) ? 1.0f : 0.0f);
+    const float turn = (down(PK::E) ? 1.0f : 0.0f) - (down(PK::Q) ? 1.0f : 0.0f);
+    const float tilt = (down(PK::X) ? 1.0f : 0.0f) - (down(PK::Z) ? 1.0f : 0.0f);
     if (fw == 0.0f && rt == 0.0f && turn == 0.0f && tilt == 0.0f) return;
-    const float fast = down(VK_SHIFT) ? 3.0f : 1.0f, k = tbd::character::CameraScale();
+    const float fast = down(PK::Shift) ? 3.0f : 1.0f, k = tbd::character::CameraScale();
     tbd::Vec3 f = cam.Forward(); f.y = 0.0f;
     const float fl = std::sqrt(f.x * f.x + f.z * f.z);
     if (fl > 1e-4f) f = f * (1.0f / fl);
@@ -3440,12 +3440,12 @@ void RenderFrame() {
                 g_engine.sun.hour = g_playtest.Hour();
             } else {
                 g_play.PollMouse(input.lookX, input.lookY);
-                auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-                input.forward = (down('W') ? 1.0f : 0.0f) - (down('S') ? 1.0f : 0.0f);
-                input.right = (down('D') ? 1.0f : 0.0f) - (down('A') ? 1.0f : 0.0f);
-                input.run = down(VK_SHIFT);
+                using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
+                input.forward = (down(PK::W) ? 1.0f : 0.0f) - (down(PK::S) ? 1.0f : 0.0f);
+                input.right = (down(PK::D) ? 1.0f : 0.0f) - (down(PK::A) ? 1.0f : 0.0f);
+                input.run = down(PK::Shift);
                 static bool spaceWas = false;
-                const bool space = down(VK_SPACE);
+                const bool space = down(PK::Space);
                 input.jump = space && !spaceWas;
                 spaceWas = space;
             }
@@ -4677,7 +4677,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         return true;
     }
     if (g_engine.drag == Drag::Fly) return true; // WASD belongs to the camera while flying
-    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0, alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const bool ctrl = tbd::platform::KeyDownSync(tbd::platform::Key::Control), alt = tbd::platform::KeyDownSync(tbd::platform::Key::Alt);
     const bool repeat = (lparam & (1 << 30)) != 0;
     if (wparam == VK_SPACE && !repeat && !ctrl && !alt) { // the game clock: pause / resume
         g_clock.paused = !g_clock.paused;
@@ -4739,7 +4739,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         return true;
     }
     if (!repeat && wparam == VK_F8) { SaveTerrainEdits(); return true; }
-    if (!repeat && ctrl && (GetKeyState(VK_SHIFT) & 0x8000) && wparam == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
+    if (!repeat && ctrl && tbd::platform::KeyDownSync(tbd::platform::Key::Shift) && wparam == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
     if (!repeat && wparam == VK_F11) { LoadTerrainEdits(); return true; }
     if (ctrl || alt) return false;
     if (!repeat && wparam == 'T') {
@@ -4850,7 +4850,7 @@ bool GuiMouse(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         return g_guiOwnsButton; // a slider drag: the engine must not hover gizmos or paint underneath
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK: {
-        const bool mine = g_engine.drag == Drag::None && !(GetKeyState(VK_MENU) & 0x8000) && g_gui.WantsMouseAt(x, y);
+        const bool mine = g_engine.drag == Drag::None && !tbd::platform::KeyDownSync(tbd::platform::Key::Alt) && g_gui.WantsMouseAt(x, y);
         g_guiInput.Down(x, y, mine);
         if (!mine) return false;
         g_guiOwnsButton = true;
@@ -4886,7 +4886,7 @@ bool GuiMouse(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
 LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (GuiMouse(hwnd, msg, wparam, lparam)) return 0; // in-game GUI first: it eats clicks, drags and wheel over its panels
-    if ((msg == WM_LBUTTONDOWN || msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && !(GetKeyState(VK_MENU) & 0x8000) && !g_play.active &&
+    if ((msg == WM_LBUTTONDOWN || msg == WM_MOUSEMOVE || msg == WM_LBUTTONUP) && !tbd::platform::KeyDownSync(tbd::platform::Key::Alt) && !g_play.active &&
         tbd::character::ViewportMouse(hwnd, msg, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) return 0; // Character Creator hair brush
     if (g_play.active) { // Play: the mouse is polled by PlayMode::Update; clicks must not select, drag or place anything
         if (msg == WM_MOUSEWHEEL) {
@@ -4910,7 +4910,7 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         if (HandleKey(wparam, lparam)) return 0;
         break;
     case WM_LBUTTONDOWN:
-        if (GetKeyState(VK_MENU) & 0x8000) {
+        if (tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) {
             BeginDrag(hwnd, Drag::Orbit, msg, lparam);
         } else if (g_roads.active && g_engine.drag == Drag::None && !g_play.active) {
             SetFocus(hwnd);
@@ -5014,7 +5014,7 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         const float notches = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
-            const float n = notches * ((GetKeyState(VK_SHIFT) & 0x8000) ? 0.12f : 0.5f) * tbd::character::CameraScale();
+            const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::character::CameraScale();
             const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
             g_camSmooth.goal = std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
             g_camSmooth.lastSet = g_engine.camera.distance;
@@ -5506,7 +5506,7 @@ const TbdGameHost& GameHost() {
             e.rotation = {q[0], q[1], q[2], q[3]};
             e.scale = {s[0], s[1], s[2]};
         };
-        h.keyDown = [](int vk) { return g_play.active && (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0; };
+        h.keyDown = [](int vk) { return g_play.active && tbd::platform::KeyDownAsync((tbd::platform::Key)vk) ? 1 : 0; };
         h.playerFeet = [](float p[3]) {
             if (!g_play.active || !g_player.Placed()) return 0;
             const tbd::Vec3 f = g_player.State().feet;

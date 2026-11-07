@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "camera.h"
+#include "platform/platform.h"
 #include "core/jobs.h"
 #include "render/renderer.h"
 #include "scene.h"
@@ -251,12 +252,12 @@ public:
         PollMouse(lookX, lookY);
         camera.Look(lookX, lookY);
 
-        auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-        const bool fast = down(VK_SHIFT);
-        const float forward = (down('W') ? 1.0f : 0.0f) - (down('S') ? 1.0f : 0.0f);
-        const float right = (down('D') ? 1.0f : 0.0f) - (down('A') ? 1.0f : 0.0f);
+        using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
+        const bool fast = down(PK::Shift);
+        const float forward = (down(PK::W) ? 1.0f : 0.0f) - (down(PK::S) ? 1.0f : 0.0f);
+        const float right = (down(PK::D) ? 1.0f : 0.0f) - (down(PK::A) ? 1.0f : 0.0f);
         if (!walking) {
-            const float up = (down(VK_SPACE) ? 1.0f : 0.0f) - (down(VK_CONTROL) ? 1.0f : 0.0f);
+            const float up = (down(PK::Space) ? 1.0f : 0.0f) - (down(PK::Control) ? 1.0f : 0.0f);
             const float step = flySpeed * (fast ? 4.0f : 1.0f) * dt;
             camera.Fly(forward * step, right * step, up * step);
             return;

@@ -109,7 +109,7 @@ inline double NowSeconds() { return (double)GetTickCount64() / 1000.0; }
 inline void Checkpoint() {
     State& s = S();
     if (g_play.active || SceneLoadActive()) { s.have = false; return; }
-    if (g_engine.drag != Drag::None || (GetAsyncKeyState(VK_LBUTTON) & 0x8000) || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) || (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) return;
+    if (g_engine.drag != Drag::None || tbd::platform::KeyDownAsync(tbd::platform::Key::MouseLeft) || tbd::platform::KeyDownAsync(tbd::platform::Key::MouseRight) || tbd::platform::KeyDownAsync(tbd::platform::Key::MouseMiddle)) return;
     const auto& cur = g_engine.scene.entities;
     if (!s.have) { s.base = cur; s.have = true; ::tbd::undo::S().absorb = 0; return; }
     if (Equal(s.base, cur)) { ::tbd::undo::S().absorb = 0; return; }
@@ -133,8 +133,8 @@ inline void Checkpoint() {
 // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z from any window of the engine, except a text field (it keeps its own undo) and Play.
 inline bool Key(const MSG& msg) {
     if (msg.message != WM_KEYDOWN || g_play.active) return false;
-    if (!(GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000)) return false;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (!tbd::platform::KeyDownSync(tbd::platform::Key::Control) || tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) return false;
+    const bool shift = tbd::platform::KeyDownSync(tbd::platform::Key::Shift);
     const bool undo = msg.wParam == 'Z' && !shift, redo = msg.wParam == 'Y' || (msg.wParam == 'Z' && shift);
     if (!undo && !redo) return false;
     wchar_t cls[32] = {};

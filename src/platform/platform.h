@@ -37,6 +37,20 @@ std::string WideToUtf8(const std::wstring& w);
 // PNG / JPEG in memory -> top-down RGBA8, straight alpha. False if it cannot be decoded.
 bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rgba, int& width, int& height);
 
+// Keys and mouse buttons the game polls. Values are the Windows virtual-key codes, so the Windows side is a plain cast.
+enum class Key : uint8_t {
+    MouseLeft = 0x01, MouseRight = 0x02, MouseMiddle = 0x04,
+    Shift = 0x10, Control = 0x11, Alt = 0x12, Space = 0x20,
+    Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
+    A = 'A', B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+};
+// Down right now, whatever the message queue says (Windows: GetAsyncKeyState). For per-frame movement.
+bool KeyDownAsync(Key k);
+// Down as of the input message being handled (Windows: GetKeyState). For modifiers inside input handlers.
+bool KeyDownSync(Key k);
+// Shells without a system key state (iOS) feed it here; Windows ignores it.
+void SetKeyDown(Key k, bool down);
+
 // Background worker threads (job system): below normal priority so the frame thread wins.
 void LowerThreadPriority(std::thread& t);
 
