@@ -1866,11 +1866,16 @@ ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
         const bool roof = a > 0.815;
         const float2 size = max(i.color.gb, 0.1);
         albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, roof ? i.uv.y / size.y : 1.0 - i.uv.y / size.y), 2.0).rgb;
+    } else if (abs(a - 0.83) < 0.004) { // SPOM railway track (TrackPS): uv metres across and along, g the box width
+        const float W = max(i.color.g, 0.1);
+        albedo = gAlbedo.SampleLevel(gTexSampler, float2((i.uv.x + 0.5 * W) / W, i.uv.y / 0.6), 1.0).rgb;
     } else if (abs(a - 0.8) < 0.004) { // silhouette POM volume (SpomPS): rg the volume's size
         const float2 size = max(i.color.rg, 0.05);
         albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, 1.0 - i.uv.y / size.y), 2.0).rgb;
-    } else if (abs(a - 0.665) < 0.003 || abs(a - 0.70) < 0.003 || abs(a - 0.645) < 0.003) { // windows: a dark pane
-        albedo = float3(0.16, 0.19, 0.23);
+    } else if (abs(a - 0.665) < 0.003) { // building windows (RoomGlassPS): its rooms' average under the sky's sheen, as they read from afar
+        albedo = lerp(gAlbedo.SampleLevel(gTexSampler, float2(0.5, 0.5), 12.0).rgb, float3(0.62, 0.68, 0.74), 0.45);
+    } else if (abs(a - 0.70) < 0.003 || abs(a - 0.645) < 0.003) { // other glass: the sky it reflects
+        albedo = float3(0.5, 0.56, 0.62);
     } else if (IsAtlasBuilding(a)) { // the shared building atlas (AtlasBuildingPS): the cell's tile at the far mip the others use
         albedo = gAlbedo.SampleLevel(gTexSampler, AtlasUv(i.uv, a), 2.0).rgb * saturate(i.color.rgb);
     } else {
@@ -1878,7 +1883,12 @@ ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
         clip(tex.a - 0.4);
         albedo = tex.rgb * saturate(i.color.rgb);
     }
-    const float3 n = dot(i.normal, i.normal) > 1e-8 ? normalize(i.normal) : float3(0, 1, 0);
+    float3 n = dot(i.normal, i.normal) > 1e-8 ? normalize(i.normal) : float3(0, 1, 0);
+    if (abs(a - 0.83) < 0.004) n = float3(0, 1, 0); // a track's vertex normal is its forward direction (TrackPS)
+    if (a > 0.806 && a < 0.824) { // a slab's vertex normal is its T, along the face (SlabPS): the face's own normal from it
+        const float3 T = normalize(float3(n.x, 0.0, n.z) + float3(1e-6, 0.0, 0.0));
+        n = a > 0.815 ? float3(0, 1, 0) : float3(-T.z, 0.0, T.x);
+    }
     o.albedo = float4(albedo, 1.0);
     o.normal = float4(n * 0.5 + 0.5, 1.0);
     o.relief = float2(i.pos.z, 1.0 - i.pos.z);
@@ -1918,6 +1928,8 @@ ChunkVSOut ChunkVolVS(VSIn v) {
 static float2 sChunkSlot = float2(0, 0);
 static float sChunkTile = 64.0;
 static float2 sChunkAtlas = float2(4096, 4096);
+static float sChunkCarveY = 0.0; // depth under the top's first surface (box units) above which nothing is carved: a road or a roof is
+                                 // edge-on or thin to the side faces; what hangs 2 m and more under an eave or a canopy is carved
 float2 ChunkTexel(int f, float2 uv) { // texel position (not normalized) of face f's (u, v), kept half a texel inside the tile
     const float2 t = clamp(uv, 0.5 / sChunkTile, 1.0 - 0.5 / sChunkTile) * sChunkTile;
     return sChunkSlot + float2(f * sChunkTile, 0.0) + t;
@@ -1926,10 +1938,35 @@ float2 ChunkRelief(int f, float2 uv) { // x: where the solid starts, y: where it
     const float2 r = gSurface.SampleLevel(gTexSampler, (floor(ChunkTexel(f, uv)) + 0.5) / sChunkAtlas, 0.0).rg; // the texel's own pair
     return float2(r.x, 1.0 - r.y);
 }
+// Solid below the top face's first surface, down to the box's floor: a height field. The relief's end is not used from above: walls
+// are edge-on to the top view, so under a tower's roof the deepest surface it sees is often a floor half way down, not the ground.
+// The top surface's start, bilinear between the texels around uv that hold something (one per 2 m texel would put a sloped road a few
+// centimetres under the terrain across half of every texel); the texel's own value where none of them does.
+float ChunkTopStartSmooth(float2 uv, float fallback) {
+    const float2 px = ChunkTexel(0, uv) - 0.5, b = floor(px), f = px - b;
+    const float2 lo = sChunkSlot, hi = sChunkSlot + sChunkTile - 1.0;
+    float sum = 0.0, wsum = 0.0;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        const float2 o = float2(k & 1, k >> 1);
+        const int2 c = int2(clamp(b + o, lo, hi));
+        const float2 r = gSurface.Load(int3(c, 0)).rg;
+        const float w = (o.x > 0.5 ? f.x : 1.0 - f.x) * (o.y > 0.5 ? f.y : 1.0 - f.y);
+        if (1.0 - r.y > r.x) sum += w * r.x, wsum += w;
+    }
+    return wsum > 1e-4 ? sum / wsum : fallback;
+}
+// Then carved by two side faces (one per horizontal axis): a point is solid only where both see something between their first and their
+// last surface there. Without it an eave, a canopy or a podium's edge seen from above fills down to the ground as a block skirt.
+bool ChunkSideSolid(int f, float3 q) {
+    const float3 t = ChunkFaceUVD(f, q);
+    const float2 r = ChunkRelief(f, t.xy);
+    const float e = 1.0 / sChunkTile;
+    return r.y > r.x && t.z >= r.x - e && t.z <= r.y + e;
+}
 bool ChunkSolid(float3 q) {
     const float3 t = ChunkFaceUVD(0, q);
     const float2 r = ChunkRelief(0, t.xy);
-    return r.y > r.x && t.z >= r.x - 0.002 && t.z <= r.y + 0.002;
+    return r.y > r.x && t.z >= r.x - 0.002 && (t.z - r.x < sChunkCarveY || (ChunkSideSolid(1, q) && ChunkSideSolid(3, q)));
 }
 struct ChunkVolOut {
     float4 color : SV_Target0;
@@ -1951,6 +1988,7 @@ ChunkVolOut ChunkVolPS(ChunkVSOut i, bool front : SV_IsFrontFace) {
     sChunkTile = max(MATERIAL_CONSTANTS.z, 4.0);
     gSurface.GetDimensions(sChunkAtlas.x, sChunkAtlas.y);
     const float3 eye = gLight.eye.xyz, lo = i.boxLo, size = i.boxSize;
+    sChunkCarveY = 2.0 / size.y;
     const float3 toP = i.worldPos - eye;
     const float lenP = length(toP);
     const float3 vw = toP / lenP;
@@ -1979,15 +2017,25 @@ ChunkVolOut ChunkVolPS(ChunkVSOut i, bool front : SV_IsFrontFace) {
         const float tm = 0.5 * (tLo + tHi);
         if (ChunkSolid(q0 + dq * tm)) tHi = tm; else tLo = tm;
     }
-    const float3 q = q0 + dq * tHi, qLo = q0 + dq * tLo;
-    // Which face sees the hit: the top when the ray came down onto the solid (the sample before it lay over the same column). Else a
-    // wall: it faces whichever neighbouring top texel toward the eye, along x or along z, is open at the hit's depth. That side face
-    // colours it, unless its first surface there is another building in front (then the other axis' side, if that one sees it).
-    const float3 tTop = ChunkFaceUVD(0, qLo);
-    const float2 rTop = ChunkRelief(0, tTop.xy);
+    float3 q = q0 + dq * tHi;
+    // Which face sees the hit: the top when the hit lies on the top surface of its column (its depth from above matches where the solid
+    // starts, within what the march can resolve). Else a wall: it faces whichever neighbouring top texel toward the eye, along x or
+    // along z, is open at the hit's depth. That side face colours it, unless its first surface there is another building in front
+    // (then the other axis' side, if that one sees it).
+    const float3 tq = ChunkFaceUVD(0, q);
+    const float2 rTop = ChunkRelief(0, tq.xy);
+    const float resolve = 0.012 + abs(dq.y) * dt / (float)(1u << (uint)kBisect) * 1.5; // the hit's height uncertainty, box units
     int face = 0;
-    if (!(rTop.y > rTop.x && tTop.z < rTop.x + 0.01)) {
-        const float3 tq = ChunkFaceUVD(0, q);
+    if (rTop.y > rTop.x && tq.z - rTop.x < resolve) {
+        // A top surface: the hit snapped onto it exactly (the march stops at the first sample inside, up to a bisection step below).
+        // Roads lie only centimetres over the terrain, which would otherwise win the depth test against them.
+        if (dq.y < -1e-5) {
+            const float start = ChunkTopStartSmooth(tq.xy, rTop.x) - 0.05 / size.y; // and 5 cm up: the bake's roads over the terrain
+            const float tExact = (1.0 - start - q0.y) / dq.y; // where the ray's depth from above (1 - y) reaches the surface's
+            tHi = clamp(tExact, max(tLo - dt, 0.0), tHi);
+            q = q0 + dq * tHi;
+        }
+    } else {
         const float e = 1.0 / sChunkTile;
         const float sx = dq.x < 0.0 ? 1.0 : -1.0, sz = dq.z < 0.0 ? 1.0 : -1.0; // toward the eye; the top face's u is x, v is z
         const float2 rx = ChunkRelief(0, tq.xy + float2(sx * e, 0.0)), rz = ChunkRelief(0, tq.xy + float2(0.0, sz * e));
@@ -2007,6 +2055,14 @@ ChunkVolOut ChunkVolPS(ChunkVSOut i, bool front : SV_IsFrontFace) {
     const float2 at = ChunkTexel(face, fuv) / sChunkAtlas;
     const float4 albedo = gAlbedo.SampleLevel(gTexSampler, at, 0.0);
     const float4 nTex = gNormalMap.SampleLevel(gTexSampler, at, 0.0);
+    if (MATERIAL_CONSTANTS.w > 1.5) { // TBD_CHUNK_DEBUG: the face that coloured the pixel (top grey, east red, west green, south blue, north yellow); dark = nothing baked there
+        const float3 kFace[5] = {float3(0.6, 0.6, 0.6), float3(1, 0, 0), float3(0, 1, 0), float3(0, 0.3, 1), float3(1, 1, 0)};
+        ChunkVolOut d;
+        d.color = float4(MATERIAL_CONSTANTS.w > 2.5 ? pow(saturate(albedo.rgb), 2.2) * 3.0 : kFace[face] * (albedo.a > 0.5 ? 4.0 : 0.3), 0.9); // 3: the albedo, unlit
+        const float4 dc = i.eyeClip + (i.clip - i.eyeClip) * ((tIn + tHi) / lenP);
+        d.depth = saturate(dc.z / dc.w);
+        return d;
+    }
     const float3 n = normalize(nTex.xyz * 2.0 - 1.0 + float3(0, 1e-4, 0));
     const float t = tIn + tHi;
     const float3 wp = eye + vw * t;
