@@ -3,10 +3,13 @@
 #include "platform.h"
 
 #import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
+#import <ImageIO/ImageIO.h>
 
 #include <pthread.h>
 #include <time.h>
 #include <chrono>
+#include <algorithm>
 #include <cstring>
 
 namespace tbd::platform {
@@ -62,6 +65,43 @@ std::string WideToUtf8(const std::wstring& w) {
         else { s += (char)(0xF0 | (cp >> 18)); s += (char)(0x80 | ((cp >> 12) & 0x3F)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
     }
     return s;
+}
+
+bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rgba, int& width, int& height) {
+    if (!data || !size) return false;
+    bool ok = false;
+    CFDataRef cf = CFDataCreate(nullptr, data, (CFIndex)size);
+    CGImageSourceRef src = cf ? CGImageSourceCreateWithData(cf, nullptr) : nullptr;
+    CGImageRef img = src ? CGImageSourceCreateImageAtIndex(src, 0, nullptr) : nullptr;
+    if (img) {
+        const size_t w = CGImageGetWidth(img), h = CGImageGetHeight(img);
+        if (w > 0 && h > 0) {
+            rgba.assign(w * h * 4, 0);
+            CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+            // Row 0 of a bitmap context's memory is the top of the image: top-down, like WIC.
+            CGContextRef ctx = CGBitmapContextCreate(rgba.data(), w, h, 8, w * 4, cs,
+                                                     kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+            if (ctx) {
+                CGContextSetBlendMode(ctx, kCGBlendModeCopy);
+                CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), img);
+                CGContextRelease(ctx);
+                // Core Graphics only draws premultiplied RGBA; WIC hands out straight alpha, so undo it.
+                for (size_t k = 0; k < rgba.size(); k += 4) {
+                    const unsigned a = rgba[k + 3];
+                    if (a && a < 255)
+                        for (int c = 0; c < 3; ++c) rgba[k + c] = (uint8_t)std::min(255u, (rgba[k + c] * 255u + a / 2) / a);
+                }
+                width = (int)w;
+                height = (int)h;
+                ok = true;
+            }
+            if (cs) CGColorSpaceRelease(cs);
+        }
+        CGImageRelease(img);
+    }
+    if (src) CFRelease(src);
+    if (cf) CFRelease(cf);
+    return ok;
 }
 
 void LowerThreadPriority(std::thread& t) {

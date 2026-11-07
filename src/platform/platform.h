@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include <thread>
 
 namespace tbd::platform {
@@ -32,6 +33,9 @@ FILE* OpenFile(const std::filesystem::path& path, const char* mode);
 // UTF-8 <-> wide strings (UTF-16 on Windows, UTF-32 on Apple).
 std::wstring Utf8ToWide(const std::string& s);
 std::string WideToUtf8(const std::wstring& w);
+
+// PNG / JPEG in memory -> top-down RGBA8, straight alpha. False if it cannot be decoded.
+bool DecodeImage(const uint8_t* data, std::size_t size, std::vector<uint8_t>& rgba, int& width, int& height);
 
 // Background worker threads (job system): below normal priority so the frame thread wins.
 void LowerThreadPriority(std::thread& t);
