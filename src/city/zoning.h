@@ -62,20 +62,49 @@ struct ZoneCell {
     float y[4] = {}; // ground at the corners (c -dir -out, c +dir -out, c +dir +out, c -dir +out)
     float yc = 0;
 };
+// An oriented rectangle other systems keep zoning out of (transport buildings: depots, harbours, airports).
+struct BlockRect {
+    V2 c, front;       // centre; the way its front faces
+    float hw = 0, hd = 0; // half sizes across (Side) and along the front
+    V2 Side() const { return {front.z, -front.x}; }
+    bool Contains(V2 p, float pad) const {
+        const V2 d = p - c;
+        return std::fabs(Dot2(d, Side())) <= hw + pad && std::fabs(Dot2(d, front)) <= hd + pad;
+    }
+};
 struct BuildingModel {
     int type, w, d, level;
     std::string path;
 };
+// Every building needs a road in front of it (a non highway road: those carry the utilities). A building left without one
+// for 10 game days is condemned and demolished 5 days later; a road back in front of it stops and resets the clock.
+constexpr float kDayMinutes = 1440.0f;
+constexpr float kNoRoadMinutes = 10.0f * kDayMinutes; // without a road this long: set for demolition
+constexpr float kDemolishMinutes = 5.0f * kDayMinutes; // then this long until it comes down
+
+// A road carries the utilities (power, water, sewage run under it) unless it is a highway, a path or a railway.
+inline bool CarriesUtilities(const Network& net, int s) {
+    if (s < 0 || s >= (int)net.segs.size() || !net.segs[s].alive) return false;
+    const Profile& p = net.Prof(s);
+    return p.cat != Cat::Highway && p.cat != Cat::Path && p.cat != Cat::Rail && p.fwd + p.back > 0;
+}
+
 struct Lot {
     uint64_t id = 0;
     std::vector<int> cells;
     V2 c, front; // front: the way the building's +Z (its street face) points, toward the road
     float y = 0;
     int w = 0, d = 0, type = 0;
+    int level = 1;             // the model's _L<level>; the sim levels lots up and down (Relevel)
     std::string path;
     float progress = 0, duration = 60; // game minutes
     bool alive = true;
+    bool hasRoad = true;       // a road that carries utilities runs along its front
+    int frontSeg = -1;         // that road's segment (the utilities reach the building through it)
+    float noRoadMinutes = 0;   // game minutes spent without one (resets when a road is back)
     bool Built() const { return progress >= 1.0f; }
+    bool Condemned() const { return !hasRoad && noRoadMinutes >= kNoRoadMinutes; }
+    float DemolishInMinutes() const { return std::max(0.0f, kNoRoadMinutes + kDemolishMinutes - noRoadMinutes); }
 };
 
 class ZoneGrid {
@@ -87,6 +116,11 @@ public:
     uint64_t builtFrom = ~0ull;     // the road network version the cells were made from
     std::vector<uint64_t> removed;  // lots demolished since the host last emptied this (it deletes their buildings)
     int maxConstructing = 8;
+    // Demand gate (the city sim, S2): when on, a spawn first picks a zone category with weight catWeight[cat] (0 = that
+    // category does not grow now), then a free front cell of it. Off: the original uniform pick over all front cells.
+    bool gateSpawns = false;
+    float catWeight[(int)ZoneCat::Count] = {1, 1, 1, 1};
+    std::vector<BlockRect> blockers; // no cell grows inside these (set the list, then force a Rebuild: builtFrom = ~0)
     std::mt19937 rng{20261106};
 
     // ---------------------------------------------------------------- cells from the road network
@@ -156,6 +190,8 @@ public:
             return a.roadW > b.roadW;
         });
         auto onRoad = [&](V2 q) {
+            for (const BlockRect& b : blockers)
+                if (b.Contains(q, 0.5f)) return true;
             for (size_t s = 0; s < net.segs.size(); ++s) {
                 const auto& b = boxes[s];
                 if (q.x < b[0] || q.z < b[1] || q.x > b[2] || q.z > b[3]) continue;
@@ -223,20 +259,42 @@ public:
         }
         for (Lot& l : lots) {
             if (!l.alive) continue;
-            bool keep = true;
+            const int li = (int)(&l - lots.data());
+            bool keep = l.hasRoad && !l.cells.empty();
             std::vector<int> moved;
-            for (int ci : l.cells) {
-                const int ni = ci >= 0 && ci < (int)map.size() ? map[ci] : -1;
-                if (ni < 0 || fresh[ni].lot >= 0 || fresh[ni].zone != l.type) { keep = false; break; }
-                moved.push_back(ni);
-            }
+            if (keep)
+                for (int ci : l.cells) {
+                    const int ni = ci >= 0 && ci < (int)map.size() ? map[ci] : -1;
+                    if (ni < 0 || fresh[ni].lot >= 0 || fresh[ni].zone != l.type) { keep = false; break; }
+                    moved.push_back(ni);
+                }
             if (keep) {
                 l.cells = moved;
-                for (int ni : moved) fresh[ni].lot = (int)(&l - lots.data());
-            } else {
+                for (int ni : moved) fresh[ni].lot = li;
+                l.frontSeg = fresh[moved.front()].seg;
+                continue;
+            }
+            // Its cells are gone. A road built over the plot takes the building with it; otherwise it simply lost its road:
+            // it stays, flagged, on the 10 + 5 day clock (see Tick) until a road runs along its front again.
+            if (FootprintOnRoad(net, l)) {
                 l.alive = false;
                 removed.push_back(l.id);
+                continue;
             }
+            l.cells.clear();
+            const V2 side{l.front.z, -l.front.x};
+            for (size_t i = 0; i < fresh.size(); ++i) { // the free cells under it stay taken: nothing grows on top of it
+                ZoneCell& z = fresh[i];
+                if (z.lot >= 0) continue;
+                const V2 d = z.c - l.c;
+                if (std::fabs(Dot2(d, side)) <= l.w * kCell * 0.5f - 1.0f && std::fabs(Dot2(d, l.front)) <= l.d * kCell * 0.5f - 1.0f) {
+                    z.lot = li;
+                    z.zone = (uint8_t)l.type;
+                    l.cells.push_back((int)i);
+                }
+            }
+            l.frontSeg = RoadFront(net, l);
+            l.hasRoad = l.frontSeg >= 0;
         }
         cells = std::move(fresh);
         hash_.clear();
@@ -247,6 +305,59 @@ public:
         }
         Compact();
         ++version;
+    }
+
+    // The terrain changed (a lot was levelled): the cells' heights follow.
+    void Reground(const GroundFn& ground) {
+        if (!ground) return;
+        for (ZoneCell& z : cells) RegroundCell(z, ground);
+        ++version;
+    }
+    // Only the cells within `radius` of p (a lot was levelled: the ground changed there and nowhere else).
+    void Reground(const GroundFn& ground, V2 p, float radius) {
+        if (!ground) return;
+        CellsNear(p, radius, [&](int j) { RegroundCell(cells[j], ground); });
+        ++version;
+    }
+    static void RegroundCell(ZoneCell& z, const GroundFn& ground) {
+        const float h = kCell * 0.5f;
+        const V2 q[4] = {z.c - z.dir * h - z.out * h, z.c + z.dir * h - z.out * h, z.c + z.dir * h + z.out * h, z.c - z.dir * h + z.out * h};
+        for (int k = 0; k < 4; ++k) z.y[k] = ground(q[k].x, q[k].z);
+        z.yc = ground(z.c.x, z.c.z);
+    }
+
+    // ---------------------------------------------------------------- roads in front of a lot
+    // Is any part of the plot on a road surface of any kind (highways too)?
+    static bool FootprintOnRoad(const Network& net, const Lot& l) {
+        const V2 side{l.front.z, -l.front.x};
+        const float hw = l.w * kCell * 0.5f - 0.5f, hd = l.d * kCell * 0.5f - 0.5f;
+        for (int iz = 0; iz <= 4; ++iz)
+            for (int ix = 0; ix <= 4; ++ix) {
+                const V2 q = l.c + side * (hw * (ix / 2.0f - 1.0f)) + l.front * (hd * (iz / 2.0f - 1.0f));
+                float t, d;
+                const int s = net.SegmentAt(q, 0.0f, t, d);
+                if (s >= 0) return true;
+            }
+        return false;
+    }
+    // The utility carrying road along the middle of the lot's front edge (it has to run along the lot), or -1.
+    static int RoadFront(const Network& net, const Lot& l) {
+        const V2 side{l.front.z, -l.front.x};
+        const V2 mid = l.c + l.front * (l.d * kCell * 0.5f);
+        int best = -1;
+        float bestGap = 1e30f;
+        for (size_t s = 0; s < net.segs.size(); ++s) {
+            if (!CarriesUtilities(net, (int)s)) continue;
+            float t, d;
+            net.Nearest((int)s, mid, t, d);
+            const float gap = d - net.Prof((int)s).Half();
+            if (gap > 5.0f || gap >= bestGap) continue;
+            V2 T = net.Curve((int)s).Tan(t);
+            const float tl = Len(T);
+            if (tl < 1e-5f || std::fabs(Dot2(T * (1.0f / tl), side)) < 0.7f) continue; // runs across the front, not away from it
+            bestGap = gap, best = (int)s;
+        }
+        return best;
     }
 
     // ---------------------------------------------------------------- queries
@@ -345,6 +456,18 @@ public:
     // ---------------------------------------------------------------- growth (dt in game minutes)
     void Tick(float minutes) {
         int building = 0;
+        for (size_t i = 0; i < lots.size(); ++i) { // the no-road clock: 10 days to condemned, 5 more to the wrecking ball
+            Lot& l = lots[i];
+            if (!l.alive) continue;
+            if (l.hasRoad) {
+                if (l.noRoadMinutes > 0) l.noRoadMinutes = 0, ++version; // reconnected: stopped and reset
+                continue;
+            }
+            const bool was = l.Condemned();
+            l.noRoadMinutes += minutes;
+            if (l.noRoadMinutes >= kNoRoadMinutes + kDemolishMinutes) Demolish((int)i);
+            else if (was != l.Condemned()) ++version;
+        }
         for (Lot& l : lots)
             if (l.alive && !l.Built()) {
                 const bool was = l.Built();
@@ -359,6 +482,58 @@ public:
             if (building < maxConstructing && TrySpawn()) ++building;
         }
         if (spawnTimer_ < 0) spawnTimer_ = 0;
+    }
+
+    // Dev / stress tools: one spawn attempt now, outside the clock and the construction cap.
+    bool SpawnNow() { return TrySpawn(); }
+
+    // A saved lot back on its cells (game load). False when a cell is missing, taken, or not zoned for it: that lot is
+    // dropped and the zone regrows.
+    bool AddLoadedLot(Lot l) {
+        if (l.cells.empty()) return false;
+        for (int ci : l.cells)
+            if (ci < 0 || ci >= (int)cells.size() || cells[ci].lot >= 0 || cells[ci].zone != (uint8_t)l.type) return false;
+        l.frontSeg = cells[l.cells.front()].seg;
+        l.alive = true;
+        const int li = (int)lots.size();
+        for (int ci : l.cells) cells[ci].lot = li;
+        nextLot_ = std::max(nextLot_, l.id + 1);
+        lots.push_back(std::move(l));
+        ++version;
+        return true;
+    }
+    // The cell whose centre is nearest p within `maxDist` (-1 none).
+    int NearestCell(V2 p, float maxDist) const {
+        int best = -1;
+        float bd = maxDist;
+        CellsNear(p, maxDist, [&](int j) {
+            const float d = Len(cells[j].c - p);
+            if (d < bd) bd = d, best = j;
+        });
+        return best;
+    }
+
+    // Swaps lot li to a model of the same type and footprint at `level` and starts its construction again. False (and
+    // nothing changes) when the catalog has no such model.
+    bool Relevel(int li, int level) {
+        if (li < 0 || li >= (int)lots.size() || !lots[li].alive) return false;
+        Lot& l = lots[li];
+        std::vector<const BuildingModel*> fit;
+        for (const BuildingModel& m : models)
+            if (m.type == l.type && m.w == l.w && m.d == l.d && m.level == level) fit.push_back(&m);
+        if (fit.empty()) return false;
+        const BuildingModel& m = *fit[rng() % fit.size()];
+        l.level = level;
+        l.path = m.path;
+        l.progress = 0;
+        l.duration = ConstructMinutes(m);
+        ++version;
+        return true;
+    }
+    bool HasModel(int type, int w, int d, int level) const {
+        for (const BuildingModel& m : models)
+            if (m.type == type && m.w == w && m.d == d && m.level == level) return true;
+        return false;
     }
 
     static float ConstructMinutes(const BuildingModel& m) { return ZoneTypes()[m.type].pitched ? 50.0f : 45.0f + 4.0f * m.w * m.d; }
@@ -404,6 +579,15 @@ private:
         for (size_t i = 0; i < cells.size(); ++i)
             if (cells[i].depth == 0 && cells[i].zone != kNoZone && cells[i].lot < 0) fronts.push_back((int)i);
         if (fronts.empty()) return false;
+        if (gateSpawns) { // demand first: a category by weight, then its front cells only
+            std::vector<int> byCat[(int)ZoneCat::Count];
+            for (int f : fronts) byCat[(int)ZoneTypes()[cells[f].zone].cat].push_back(f);
+            float w[(int)ZoneCat::Count], sum = 0;
+            for (int c = 0; c < (int)ZoneCat::Count; ++c) sum += (w[c] = byCat[c].empty() ? 0.0f : std::max(0.0f, catWeight[c]));
+            if (sum <= 0) return false;
+            std::discrete_distribution<int> pickCat(w, w + (int)ZoneCat::Count);
+            fronts = std::move(byCat[pickCat(rng)]);
+        }
         for (int attempt = 0; attempt < 6; ++attempt) {
             const ZoneCell& s = cells[fronts[rng() % fronts.size()]];
             const uint8_t zone = s.zone;
@@ -435,7 +619,7 @@ private:
             const BuildingModel& m = *fit[pick(rng)];
             Lot l;
             l.id = nextLot_++;
-            l.w = m.w, l.d = m.d, l.type = m.type, l.path = m.path;
+            l.w = m.w, l.d = m.d, l.type = m.type, l.path = m.path, l.level = m.level;
             l.duration = ConstructMinutes(m);
             V2 sum{};
             float ysum = 0;
@@ -450,6 +634,7 @@ private:
             l.c = sum * inv;
             l.y = ysum * inv;
             l.front = cells[l.cells.front()].out * -1.0f;
+            l.frontSeg = cells[l.cells.front()].seg;
             const int li = (int)lots.size();
             for (int ci : l.cells) cells[ci].lot = li;
             lots.push_back(std::move(l));

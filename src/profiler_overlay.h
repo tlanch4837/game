@@ -1,18 +1,17 @@
 // In-engine profiler overlay (F3, View > Profiler Overlay): a frame time graph of the last 240 frames with 8.33 ms (120 fps)
 // and 16.6 ms (60 fps) lines and the worst frame highlighted, CPU and cull time, draw/triangle/instance counts and the
 // streamer's numbers. Drawn through the renderer's transient 2D path like the other viewport overlays, in the editor theme's
-// palette (ui_theme.h). Header only; main.cpp feeds it a Sample per frame.
+// palette (ui_palette.h). Header only; main.cpp feeds it a Sample per frame.
 //
 // Costs nothing when off: BeginFrame() and Draw() return at once, and main.cpp only gathers the cull numbers while
 // Enabled() is true. It can never turn on during a TBD_SHOT or TBD_CAPTURE run (Blocked()), so captures stay clean.
 //
 // The pixel font has no '%', '=' or '>': labels are written around that.
 #pragma once
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -20,7 +19,7 @@
 #include <vector>
 
 #include "editor_draw.h"
-#include "ui_theme.h"
+#include "ui_palette.h"
 
 namespace tbd {
 namespace profiler {
@@ -37,6 +36,23 @@ struct Sample {
     uint64_t triangles = 0;
     uint32_t entities = 0, entitiesDrawn = 0, sceneDraws = 0;
     uint32_t instancesDrawn = 0, instancesTotal = 0, instanceRanges = 0, casterInstances = 0;
+    // Draws and triangles by kind (main.cpp's DrawCats, the last finished frame).
+    struct Cat {
+        const char* name = "";
+        uint32_t draws = 0;
+        uint64_t triangles = 0;
+    };
+    std::vector<Cat> cats;
+    // The city sim scheduler (city_sim.inl SimProfile): totals, then one row per registered system.
+    struct SimRow {
+        std::string name;
+        double ms = 0.0, avgMs = 0.0;
+    };
+    bool simActive = false;
+    double simMs = 0.0, simAvgMs = 0.0, simBudgetMs = 0.0, simBacklog = 0.0;
+    uint32_t simTicks = 0;
+    std::vector<SimRow> sim;
+    std::vector<std::pair<std::string, std::string>> simInfo; // label, value (demand, population, levels)
 };
 
 // The streamer's state (world_streaming.inl fills it in Streamer::Snapshot()).
@@ -60,7 +76,7 @@ struct GpuPasses {
 
 namespace detail {
 
-inline Vec3 Rgb(COLORREF c) { return {GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f}; }
+inline Vec3 Rgb(uint32_t c) { return {theme::RedOf(c) / 255.0f, theme::GreenOf(c) / 255.0f, theme::BlueOf(c) / 255.0f}; }
 
 inline std::string Grouped(uint64_t v) {
     std::string s = std::to_string(v);
@@ -80,7 +96,7 @@ class Overlay {
 public:
     // TBD_SHOT / TBD_CAPTURE runs are for clean captures and benchmarks: the profiler refuses to run in them.
     static bool Blocked() {
-        static const bool blocked = GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) > 0 || GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) > 0;
+        static const bool blocked = tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) > 0 || tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0) > 0;
         return blocked;
     }
 
@@ -99,15 +115,10 @@ public:
     // First thing in RenderFrame: closes the previous frame's wall time (frame to frame, so it includes the present wait).
     void BeginFrame() {
         if (!Enabled()) return;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        if (!freq_) {
-            LARGE_INTEGER f;
-            QueryPerformanceFrequency(&f);
-            freq_ = (double)f.QuadPart;
-        }
-        if (last_.QuadPart) {
-            const double ms = (double)(now.QuadPart - last_.QuadPart) * 1000.0 / freq_;
+        const int64_t now = tbd::platform::Ticks();
+        if (!freq_) freq_ = (double)tbd::platform::TickFrequency();
+        if (last_) {
+            const double ms = (double)(now - last_) * 1000.0 / freq_;
             if (ms < 1000.0) { // a longer gap is the window being idle or dragged, not a frame
                 frame_[head_] = (float)ms;
                 cpu_[head_] = (float)pendingCpu_;
@@ -126,9 +137,8 @@ public:
         using detail::Fmt;
         using detail::Grouped;
         using detail::Rgb;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        pendingCpu_ = start_.QuadPart ? (double)(now.QuadPart - start_.QuadPart) * 1000.0 / freq_ : 0.0;
+        const int64_t now = tbd::platform::Ticks();
+        pendingCpu_ = start_ ? (double)(now - start_) * 1000.0 / freq_ : 0.0;
 
         const float s = (float)dpi / 96.0f;
         const float cell = std::fmax(1.0f, std::round(1.5f * s * 2.0f) / 2.0f); // same tiny text as the stats
@@ -257,6 +267,26 @@ public:
         row("INSTANCE RANGES", Grouped(smp.instanceRanges), cText);
         row("SHADOW INSTANCES", Grouped(smp.casterInstances), cText);
 
+        if (!smp.cats.empty()) {
+            section("DRAWS BY KIND");
+            for (const Sample::Cat& c : smp.cats)
+                if (c.draws || c.triangles) row(c.name, Grouped(c.draws) + "   " + Grouped(c.triangles / 1000) + "K TRIS", cText);
+        }
+
+        if (smp.simActive) {
+            section("CITY SIM");
+            const Vec3 simColor = smp.simMs <= smp.simBudgetMs + 0.25 ? cText : cWarn;
+            row("SIM FRAME", Fmt("%.2f", smp.simMs) + " / " + Fmt("%.2f MS", smp.simBudgetMs), simColor);
+            row("SIM AVERAGE", Fmt("%.2f MS", smp.simAvgMs), cText);
+            row("TICKS", Grouped(smp.simTicks) + "   BEHIND " + Fmt("%.0f MIN", smp.simBacklog), smp.simBacklog >= 2.0 ? cWarn : cText);
+            for (const Sample::SimRow& sys : smp.sim) {
+                std::string label = sys.name;
+                for (char& ch : label) ch = (char)std::toupper((unsigned char)ch);
+                row(label.c_str(), Fmt("%.3f", sys.ms) + " / " + Fmt("%.3f MS", sys.avgMs), cText);
+            }
+            for (const auto& info : smp.simInfo) row(info.first.c_str(), info.second, cText);
+        }
+
         if (st.active) {
             section("STREAMING");
             row("LOADED", Grouped(st.loaded) + " OF " + Grouped(st.total), cText);
@@ -285,7 +315,7 @@ private:
     float frame_[kHistory] = {}, cpu_[kHistory] = {};
     int head_ = 0, count_ = 0;
     double freq_ = 0.0, pendingCpu_ = 0.0;
-    LARGE_INTEGER last_ = {}, start_ = {};
+    int64_t last_ = 0, start_ = 0;
 };
 
 } // namespace profiler

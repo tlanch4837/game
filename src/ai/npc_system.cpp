@@ -2,7 +2,7 @@
 #define NOMINMAX
 #include "ai/npc_system.h"
 
-#include <windows.h>
+#include "platform/platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -129,7 +129,7 @@ struct NpcSystem::Impl {
 
     // test report
     std::vector<double> frameMs, updateMs;
-    LARGE_INTEGER lastFrame = {};
+    int64_t lastFrame = 0;
     struct StuckEvent { int id; Vec3 at; float time; };
     std::vector<StuckEvent> stuckEvents;
     float tierTimeFull = 0.0f, tierTimeCheap = 0.0f;
@@ -627,11 +627,9 @@ void NpcSystem::ShiftWorld(Vec3 delta) { ai::ShiftWorld(delta); }
 void NpcSystem::Update(const NpcFrame& f) {
     Impl& w = *impl_;
     if (!w.active || !f.scene || !f.physics || !f.jobs) return;
-    LARGE_INTEGER t0, t1, freq;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
-    if (w.lastFrame.QuadPart && w.spawned && (int)w.frameMs.size() < kMaxFrameSamples)
-        w.frameMs.push_back((t0.QuadPart - w.lastFrame.QuadPart) * 1000.0 / freq.QuadPart);
+    const int64_t t0 = tbd::platform::Ticks();
+    if (w.lastFrame && w.spawned && (int)w.frameMs.size() < kMaxFrameSamples)
+        w.frameMs.push_back(tbd::platform::TicksToMs(t0 - w.lastFrame));
     w.lastFrame = t0;
 
     const float dt = std::min(f.dt, 0.1f);
@@ -676,8 +674,8 @@ void NpcSystem::Update(const NpcFrame& f) {
     }
     w.stats.full = full;
     w.stats.hidden = hidden;
-    QueryPerformanceCounter(&t1);
-    w.stats.updateMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
+    const int64_t t1 = tbd::platform::Ticks();
+    w.stats.updateMs = tbd::platform::TicksToMs(t1 - t0);
     if ((int)w.updateMs.size() < kMaxFrameSamples) w.updateMs.push_back(w.stats.updateMs);
 }
 

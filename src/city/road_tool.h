@@ -31,7 +31,7 @@ enum SnapBit : uint32_t {
     SnapZone = 1u << 5,
     SnapContour = 1u << 6,
 };
-enum class Tab : int { Small, Medium, Large, Highway, Quay, Path, Intersection, Roundabout, Count };
+enum class Tab : int { Small, Medium, Large, Highway, Quay, Path, Rail, Intersection, Roundabout, Count }; // the first seven follow city::Cat
 enum class AssetKind { Road, Intersection, Roundabout };
 struct Asset {
     AssetKind kind;
@@ -66,7 +66,7 @@ inline const std::vector<Asset>& Assets() {
 }
 
 inline const char* TabName(Tab t) {
-    static const char* const k[] = {"Small Roads", "Medium Roads", "Large Roads", "Highways", "Quays", "Paths", "Intersections", "Roundabouts"};
+    static const char* const k[] = {"Small Roads", "Medium Roads", "Large Roads", "Highways", "Quays", "Paths", "Railways", "Intersections", "Roundabouts"};
     return k[(int)t];
 }
 inline const char* ModeName(ToolMode m) {
@@ -79,6 +79,8 @@ struct Snap {
     int node = -1, seg = -1;
     float t = 0;
     const char* kind = "";
+    bool lane = false; // locked onto a highway lane's centre: the new road leaves / joins along that lane
+    V2 laneDir{};      // the lane's direction there (a -> b of its road)
 };
 struct PreviewCurve {
     Cubic c;
@@ -240,7 +242,7 @@ public:
         }
         if (mode == ToolMode::Replace || mode == ToolMode::Swap || mode == ToolMode::Bulldoze) {
             float t, d;
-            hoverSeg = net.SegmentAt(XZ(hit), 1.0f, t, d);
+            hoverSeg = net.SegmentAt(XZ(hit), 1.0f, t, d, mode == ToolMode::Bulldoze || as.kind != AssetKind::Road ? -1 : as.profile);
             cursor = {hit};
             return;
         }
@@ -268,6 +270,10 @@ public:
         }
         if (mode == ToolMode::Replace) {
             if (hoverSeg < 0 || as.kind != AssetKind::Road) return false;
+            if (net.IsRailSeg(hoverSeg) != (Profiles()[as.profile].cat == Cat::Rail)) {
+                error = "Rails and roads cannot be swapped";
+                return false;
+            }
             PushUndo();
             Segment& s = net.segs[hoverSeg];
             if (s.profile == as.profile) { // same road: flip its direction (one-way / asymmetric roads)
@@ -322,6 +328,10 @@ public:
         const int si = swapSeg_;
         swapSeg_ = -1;
         if (!net.segs[si].alive || Current().kind != AssetKind::Road) return false;
+        if (net.IsRailSeg(si) != (Profiles()[Current().profile].cat == Cat::Rail)) {
+            error = "Rails and roads cannot be swapped";
+            return false;
+        }
         const V2 drag = XZ(cursor.p) - XZ(swapStart_);
         bool flip = false;
         if (Len(drag) >= 1.0f) {
@@ -415,7 +425,18 @@ public:
         case ToolMode::Grid:
             if (pts.size() >= 2) return GridCurves(out);
             break;
-        default: break;
+        default:
+            if (mode == ToolMode::Straight && (pts.front().lane || cursor.lane)) { // ramps peel off / merge along the lane
+                const V2 ab = c - A;
+                const float L = Len(ab);
+                if (L > 1.0f) {
+                    V2 d0 = Norm(ab), d1 = Norm(ab);
+                    if (pts.front().lane) d0 = pts.front().laneDir * (Dot2(pts.front().laneDir, ab) >= 0 ? 1.0f : -1.0f);
+                    if (cursor.lane) d1 = cursor.laneDir * (Dot2(cursor.laneDir, ab) >= 0 ? 1.0f : -1.0f);
+                    curve = {A, A + d0 * (L * 0.4f), c - d1 * (L * 0.4f), c};
+                }
+            }
+            break;
         }
         out.push_back({curve, ya, yb, prof});
         if (parallel) {
@@ -553,7 +574,7 @@ private:
         for (int i = 1; i <= n && !outlineOnly; ++i)
             for (size_t k = 0; k < p.strips.size(); ++k) {
                 const Kind kd = p.strips[k].kind;
-                const float shade = kd == Kind::Lane || kd == Kind::Path || kd == Kind::Bike ? 0.75f : kd == Kind::Parking || kd == Kind::Shoulder ? 0.9f : 1.25f;
+                const float shade = kd == Kind::Lane || kd == Kind::Path || kd == Kind::Bike || kd == Kind::Track ? 0.75f : kd == Kind::Parking || kd == Kind::Shoulder ? 0.9f : 1.25f;
                 const Vec3 c = {std::min(1.0f, tint.x * shade), std::min(1.0f, tint.y * shade), std::min(1.0f, tint.z * shade)};
                 const Vec3 a = P(i - 1, edge[k]), b = P(i - 1, edge[k + 1]), d = P(i, edge[k]), e = P(i, edge[k + 1]);
                 for (const Vec3& v : {a, b, e, a, e, d}) tris.push_back({v.x, v.y, v.z, 0, 0, 0, c.x, c.y, c.z, 1});
@@ -624,13 +645,35 @@ private:
         if (!snapAll) return withY(s, p);
         // 1. existing geometry: nodes, then road surfaces (endpoints only)
         if (endpoint && On(SnapGeometry)) {
-            const int n = net.NearestNode(p, std::max(5.0f, hwNew + 3.0f));
+            const int n = net.NearestNode(p, std::max(5.0f, hwNew + 3.0f), -1, as.profile);
             if (n >= 0) {
                 s.p = net.NodePos(n), s.node = n, s.kind = "node";
                 return s;
             }
             float t, d;
-            const int seg = as.kind == AssetKind::Road ? net.SegmentAt(p, 1.5f, t, d) : net.SegmentAt(p, 0.0f, t, d);
+            const int seg = as.kind == AssetKind::Road ? net.SegmentAt(p, 1.5f, t, d, as.profile) : net.SegmentAt(p, 0.0f, t, d, as.profile);
+            if (seg >= 0 && net.Prof(seg).cat == Cat::Highway && net.Prof(seg).fwd + net.Prof(seg).back > 0) {
+                // highways: lock onto the nearest lane centre (exits and on-ramps), not the centre line
+                const Profile& hp = net.Prof(seg);
+                const Cubic hc = net.Curve(seg);
+                const V2 T = Norm(hc.Tan(t)), left = LeftOf(T), q = hc.At(t);
+                const float across = Dot2(p - q, left);
+                float cum = 0, best = 1e9f, off = 0, laneW = 3.75f, lo = 1e9f, hi = -1e9f;
+                for (const Strip& st : hp.strips) {
+                    const float o = hp.Half() - (cum + st.w * 0.5f);
+                    cum += st.w;
+                    if (st.kind != Kind::Lane) continue;
+                    lo = std::min(lo, o), hi = std::max(hi, o);
+                    if (std::fabs(o - across) < best) best = std::fabs(o - across), off = o, laneW = st.w;
+                }
+                // the outermost lane on either side: the ramp starts as an added lane right beside it (a 3rd lane that
+                // peels away), not on top of the lane itself
+                if (off == lo && across < off) off -= laneW;
+                else if (off == hi && across > off) off += laneW;
+                const V2 lp = q + left * off;
+                s.p = {lp.x, net.YAt(net.segs[seg], t), lp.z}, s.kind = "lane", s.lane = true, s.laneDir = T;
+                return s;
+            }
             if (seg >= 0) {
                 const V2 q = net.Curve(seg).At(t);
                 s.p = {q.x, net.YAt(net.segs[seg], t), q.z}, s.seg = seg, s.t = t, s.kind = "road";
@@ -755,6 +798,12 @@ private:
         for (const PreviewCurve& pc : curves) {
             const Profile& p = Profiles()[pc.profile];
             const float len = pc.c.Length();
+            if (p.cat == Cat::Rail) { // trains: gentle grades and wide curves (a 45 m minimum radius)
+                if (len < 8.0f) { error = "Track too short"; return false; }
+                if (std::fabs(pc.yb - pc.ya) / len > 0.06f) { error = "Grade too steep for rail"; return false; }
+                if (pc.c.MaxTurnPerMetre() > 1.0f / 45.0f) { error = "Curve too sharp for rail"; return false; }
+                continue;
+            }
             if (len < 4.0f) { error = "Road too short"; return false; }
             if (std::fabs(pc.yb - pc.ya) / len > 0.32f) { error = "Slope too steep"; return false; }
             if (pc.c.MaxTurnPerMetre() > 1.0f / std::max(4.0f, p.Half() * 0.9f)) { error = "Curve too sharp"; return false; }
@@ -781,12 +830,15 @@ private:
 
     // ------------------------------------------------------------------------------------------------ committing
     // The node at p: an existing node within 0.75 m, a split of a road passing within 0.6 m, or a new node.
-    int FindOrMake(Vec3 p) {
+    // profile >= 0: rail never joins a road's node or splits a road (and the other way round)
+    int FindOrMake(Vec3 p, int profile = -1) {
         const V2 q = XZ(p);
-        const int n = net.NearestNode(q, 0.75f);
+        const int n = net.NearestNode(q, 0.75f, -1, profile);
         if (n >= 0) return n;
+        const bool wantRail = profile >= 0 && Profiles()[profile].cat == Cat::Rail;
         for (size_t i = 0; i < net.segs.size(); ++i) {
             if (!net.segs[i].alive) continue;
+            if (profile >= 0 && net.IsRailSeg((int)i) != wantRail) continue;
             float t, d;
             net.Nearest((int)i, q, t, d);
             if (d > 0.6f) continue;
@@ -813,12 +865,14 @@ private:
             float y;
         };
         std::vector<X> xs;
+        const bool newRail = Profiles()[profile].cat == Cat::Rail;
         const int N = 64;
         std::vector<V2> pn(N + 1);
         for (int i = 0; i <= N; ++i) pn[i] = c.At((float)i / N);
         const size_t segCount = net.segs.size();
         for (size_t s = 0; s < segCount; ++s) {
             if (!net.segs[s].alive) continue;
+            if (net.IsRailSeg((int)s) != newRail) continue; // a road and a railway crossing at grade: a level crossing, no junction
             const Cubic e = net.Curve((int)s);
             std::vector<V2> pe(N + 1);
             for (int j = 0; j <= N; ++j) pe[j] = e.At((float)j / N);
@@ -846,7 +900,7 @@ private:
         Cubic rest = c;
         float used = 0;
         for (const X& x : keep) {
-            const int m = FindOrMake({x.p.x, x.y, x.p.z});
+            const int m = FindOrMake({x.p.x, x.y, x.p.z}, profile);
             if (m == prev || m == nb) continue;
             Cubic l, r;
             rest.Split((x.t - used) / (1 - used), l, r);
@@ -864,6 +918,9 @@ private:
 
     // Levels the terrain under ground roads (twice: the second pass settles the smoothing over the first pass's cut).
     // Off-ground roads (bridges, tunnels, ramps) leave it alone except where they actually touch the ground.
+public:
+    void Relevel(const std::vector<int>& segs) { Level(segs); } // after something else (a zoned lot) moved the terrain
+private:
     void Level(std::vector<int> segs) {
         if (!flatten) return;
         // the roads already at the touched nodes get re-levelled too, so the new bed does not tilt theirs
@@ -941,8 +998,8 @@ private:
     }
 
     void CommitCurve(const PreviewCurve& pc, const Snap* start, const Snap* end) {
-        const int na = FindOrMake(start ? start->p : Vec3{pc.c.p0.x, pc.ya, pc.c.p0.z});
-        const int nb = FindOrMake(end ? end->p : Vec3{pc.c.p3.x, pc.yb, pc.c.p3.z});
+        const int na = FindOrMake(start ? start->p : Vec3{pc.c.p0.x, pc.ya, pc.c.p0.z}, pc.profile);
+        const int nb = FindOrMake(end ? end->p : Vec3{pc.c.p3.x, pc.yb, pc.c.p3.z}, pc.profile);
         std::vector<int> made;
         AddWithCrossings(na, nb, pc.c, pc.profile, &made);
         Level(made);
@@ -950,10 +1007,10 @@ private:
 
     void CommitIntersection(const std::vector<PreviewCurve>& arms) {
         if (arms.empty()) return;
-        const int centre = FindOrMake({arms[0].c.p0.x, arms[0].ya, arms[0].c.p0.z});
+        const int centre = FindOrMake({arms[0].c.p0.x, arms[0].ya, arms[0].c.p0.z}, arms[0].profile);
         std::vector<int> made;
         for (const PreviewCurve& a : arms) {
-            const int e = FindOrMake({a.c.p3.x, a.yb, a.c.p3.z});
+            const int e = FindOrMake({a.c.p3.x, a.yb, a.c.p3.z}, a.profile);
             AddWithCrossings(centre, e, a.c, a.profile, &made);
         }
         Level(made);
@@ -961,13 +1018,13 @@ private:
 
     void CommitRoundabout(const std::vector<PreviewCurve>& ring, float radius) {
         std::vector<int> nodes;
-        for (const PreviewCurve& q : ring) nodes.push_back(FindOrMake({q.c.p0.x, q.ya, q.c.p0.z}));
+        for (const PreviewCurve& q : ring) nodes.push_back(FindOrMake({q.c.p0.x, q.ya, q.c.p0.z}, q.profile));
         std::vector<int> made;
         for (size_t i = 0; i < ring.size(); ++i) AddWithCrossings(nodes[i], nodes[(i + 1) % ring.size()], ring[i].c, ring[i].profile, &made);
         // roads that ran through the middle end at the ring
         const V2 c = (ring[0].c.p0 + ring[2].c.p0) * 0.5f;
         for (size_t s = 0; s < net.segs.size(); ++s) {
-            if (!net.segs[s].alive || std::find(made.begin(), made.end(), (int)s) != made.end()) continue;
+            if (!net.segs[s].alive || net.IsRailSeg((int)s) || std::find(made.begin(), made.end(), (int)s) != made.end()) continue;
             const Cubic k = net.Curve((int)s);
             if (Len(k.At(0.5f) - c) < radius * 0.8f && Len(k.p0 - c) < radius + 1.0f && Len(k.p3 - c) < radius + 1.0f) net.RemoveSeg((int)s);
         }

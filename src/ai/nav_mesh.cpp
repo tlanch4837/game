@@ -2,7 +2,9 @@
 #define NOMINMAX
 #include "ai/nav_mesh.h"
 
-#include <windows.h>
+#include "platform/platform.h"
+
+#include <filesystem>
 #undef min
 #undef max
 
@@ -44,13 +46,10 @@ struct Built {
 
 std::wstring CacheDir() {
     static const std::wstring dir = [] {
-        wchar_t path[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, path, MAX_PATH);
-        std::wstring p = path;
-        const size_t cut = p.find_last_of(L"\\/");
-        p = (cut == std::wstring::npos ? L"." : p.substr(0, cut)) + L"\\navcache";
-        CreateDirectoryW(p.c_str(), nullptr);
-        return p;
+        const std::filesystem::path p = tbd::platform::CacheRoot() / L"navcache";
+        std::error_code ec;
+        std::filesystem::create_directories(p, ec);
+        return p.wstring();
     }();
     return dir;
 }
@@ -71,8 +70,8 @@ uint64_t HashTriangles(const std::vector<float>& v, int tx, int tz) {
 }
 
 bool ReadCache(const std::wstring& path, unsigned char*& data, int& size) {
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, path.c_str(), L"rb") != 0 || !f) return false;
+    FILE* f = tbd::platform::OpenFile(path, "rb");
+    if (!f) return false;
     uint32_t head[2] = {};
     bool ok = fread(head, sizeof(head), 1, f) == 1 && head[0] == 0x56414e54u && head[1] > 0 && head[1] < (64u << 20);
     if (ok) {
@@ -86,13 +85,14 @@ bool ReadCache(const std::wstring& path, unsigned char*& data, int& size) {
 
 void WriteCache(const std::wstring& path, const unsigned char* data, int size) {
     const std::wstring temp = path + L".tmp";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, temp.c_str(), L"wb") != 0 || !f) return;
+    FILE* f = tbd::platform::OpenFile(temp, "wb");
+    if (!f) return;
     const uint32_t head[2] = {0x56414e54u, (uint32_t)size};
     const bool ok = fwrite(head, sizeof(head), 1, f) == 1 && fwrite(data, 1, (size_t)size, f) == (size_t)size;
     fclose(f);
-    if (ok) MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
-    else DeleteFileW(temp.c_str());
+    std::error_code ec;
+    if (ok) std::filesystem::rename(temp, path, ec); // replaces an existing file, like MoveFileExW(REPLACE_EXISTING)
+    else std::filesystem::remove(temp, ec);
 }
 
 // Rasterizes the triangles (AI space, nine floats each) into one tile's navmesh data. Returns false when there is nothing to walk on.
@@ -178,10 +178,7 @@ bool BuildTileData(const std::vector<float>& tris, int tx, int tz, unsigned char
 }
 
 double NowMs() {
-    LARGE_INTEGER t, f;
-    QueryPerformanceCounter(&t);
-    QueryPerformanceFrequency(&f);
-    return (double)t.QuadPart * 1000.0 / (double)f.QuadPart;
+    return tbd::platform::NowMs();
 }
 
 void AtomicMax(std::atomic<double>& a, double v) { double c = a.load(); while (v > c && !a.compare_exchange_weak(c, v)) {} }

@@ -6,6 +6,8 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include "ui_palette.h"
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -14,18 +16,7 @@
 namespace tbd {
 namespace theme {
 
-inline const COLORREF kWindow = RGB(0x1a, 0x1a, 0x1a);  // gaps between panels, tab strips, text fields
-inline const COLORREF kPanel = RGB(0x24, 0x24, 0x24);   // panel body
-inline const COLORREF kStripe = RGB(0x27, 0x27, 0x27);  // every other list row
-inline const COLORREF kRaised = RGB(0x30, 0x30, 0x30);  // toggled-on and pressed-in flat buttons
-inline const COLORREF kHover = RGB(0x3a, 0x3a, 0x3a);   // flat button / row under the cursor
-inline const COLORREF kLine = RGB(0x0f, 0x0f, 0x0f);    // panel edges
-inline const COLORREF kRule = RGB(0x3a, 0x3a, 0x3a);    // thin separators inside a panel
-inline const COLORREF kText = RGB(0xcc, 0xcc, 0xcc);
-inline const COLORREF kTextBright = RGB(0xf2, 0xf2, 0xf2);
-inline const COLORREF kMuted = RGB(0x8c, 0x8c, 0x8c);
-inline const COLORREF kDisabled = RGB(0x5c, 0x5c, 0x5c);
-inline const COLORREF kAccent = RGB(0x00, 0x70, 0xe0);  // the one accent: selection, active tool, focus
+// The palette (kWindow ... kAccent) is in ui_palette.h: 0x00BBGGRR, the same values as COLORREF.
 
 inline void Fill(HDC dc, const RECT& rc, COLORREF color) {
     HBRUSH b = CreateSolidBrush(color);

@@ -7,9 +7,9 @@ Goal: citizens who read as people, not traffic. Someone you walk up to at 3 pm i
 What exists (see `docs/ai_navigation.md`):
 - Detour crowd NPCs on a tiled navmesh, three LOD tiers in effect: full (crowd agent + Jolt capsule + skinned rig), cheap (stored path, no body), and hidden (indoors).
 - A routine table (`townsfolk, guard, loiterer, follower, skittish`), a day clock, reaction to the player. 256 NPC cap.
-- `NpcInfo` on entities, Luau scripting spec, character creator, face mocap, hair/clothes makers, impostor-card plan, road network that AI/traffic is meant to read.
+- `NpcInfo` on entities, Luau scripting spec, face mocap, impostor-card plan, road network that AI/traffic is meant to read.
 
-What is missing for "alive" (the doc's own known-gaps list): no interiors ("indoors" = vanish), no variety (every rig is a Wyatt clone), no identity, no memory, no relationships, no needs, 12 skinned rigs because skinning is on the CPU.
+What is missing for "alive" (the doc's own known-gaps list): no interiors ("indoors" = vanish), no variety (every NPC body is the same placeholder rig), no identity, no memory, no relationships, no needs, 12 skinned rigs because skinning is on the CPU.
 
 ## What CS2 does, and where it stops feeling alive
 
@@ -30,7 +30,7 @@ Promotion and demotion must reconcile: promoting derives position/pose/activity 
 
 ### 1. Identity you can recognise
 - Stable name, age, face, body, voice pitch, gait, clothing wardrobe, 3-5 personality axes (e.g. sociable, careful, thrifty, temper, curiosity), a short backstory seed.
-- Appearance drawn from the character creator as a parametric genome (face + body + hair + wardrobe), so families look related and neighbourhoods have a look. Children blend parents' genome.
+- Appearance comes from a parametric genome owned by the life system itself (body proportions, skin/hair tint, hair style, clothing set drawn from a small asset pool), so families look related and neighbourhoods have a look. Children blend parents' genome. No external character-creation tool is assumed.
 - Needs a rig-variety path: shared skeleton, per-citizen mesh/material parameters, impostor cards at distance (`docs/impostor_cards_plan.md`), GPU skinning to lift the 12-rig cap.
 
 ### 2. Needs and drives (utility AI, not state machine)
@@ -38,10 +38,10 @@ Promotion and demotion must reconcile: promoting derives position/pose/activity 
 - Each tick (statistical) or second (embodied) a citizen scores candidate activities by need urgency x personality weight x distance x time-of-day fit x who is involved. The current `Idle/Wander/Patrol` states become outputs of this, not inputs.
 - Mood is derived (needs + recent memories), and **readable on screen**: posture, walking pace, head-down vs. head-up, gesture frequency, what they carry.
 
-### 3. Places with real interiors and "smart objects"
-- Buildings expose **slots**: bed, stove, till, workbench, bar stool, bench, bus stop, desk, door, window, stairs. Each slot has an interaction point, an animation set, a capacity, and a duration.
-- Indoors stops meaning "disappear". Statistical tier: occupancy counts per building. Embodied: interior cells stream in when you open the door, and occupants are materialised from the occupancy record in the slots they would be using.
-- Windows with lit rooms and silhouettes at night are a cheap high-payoff cue even without full interiors.
+### 3. Places, outdoors only (no walkable interiors)
+- Decision: no interiors. A citizen entering a building walks to its door and goes inside (hidden), exactly like CS2. The building keeps an occupancy record (who is in it and since when) so state stays consistent.
+- Activities that stay visible happen outdoors at **outdoor slots**: bench, bus stop, stall, bar patio, well, doorstep, porch chair, queue spot. Each has an interaction point, animation, capacity and duration.
+- Cheap cue, optional: lit windows at night driven by occupancy.
 
 ### 4. Schedules with texture
 - Calendar (weekday, weekend, market day, holiday, season), shift work, sick days, late for work, long lunch, Friday drinks.
@@ -87,8 +87,8 @@ Promotion and demotion must reconcile: promoting derives position/pose/activity 
 |---|---|---|
 | `CitizenStore` (SoA, hot/cold split) | 100k+ records | Hot: id, cell, activity, state, needs (packed), next-event time. Cold: identity, memory, graph edges. Time-sliced buckets. |
 | World clock and calendar | Schedules | Today only `sun.hour`; add day, week, season, holidays, weather, and a speed multiplier decoupled from render. |
-| Building slots / smart objects | Interiors, activities | Authoring in the editor (like the N/P/I NPC keys, but a proper panel), saved in scenes. |
-| Interiors streaming and portals | Doors you can open | Occupancy record is the fallback when nothing is streamed. |
+| Outdoor slots / smart objects | Visible activities | Authoring in the editor (like the N/P/I NPC keys, but a proper panel), saved in scenes. |
+| Building occupancy records | Consistent indoors state | Replaces vanishing; no interior geometry. |
 | Rig variety + GPU skinning + impostors | Visible individuals | Current CPU skinning caps rigs at 12; shared skeleton, per-citizen params. |
 | Animation set and retargeting | Activities | See content list. |
 | Social layer (conversations, queues, groups) | Visible sociality | Group walking, personal space, formation steering on top of Detour crowd. |
@@ -105,15 +105,29 @@ Sit (chair, bench, stool, ground), eat/drink, sleep, talk (idle/gesture sets), l
 
 0. **Data and tick**: `CitizenStore`, world clock/calendar, spawn from a generator, 100k records ticking inside a frame budget. Test: no frame spikes, deterministic from seed.
 1. **Schedules + needs + places**: utility AI over a handful of building types (home, work, shop, bar). Statistical tier only plus the existing cheap/full tiers reading it. Test: a day graph of where people are.
-2. **Smart objects + interiors**: slots, occupancy, enter/exit without vanishing, lit windows. Test: follow one citizen through a full day.
+2. **Outdoor slots + occupancy**: benches, stops, stalls, queues, building occupancy records, optional lit windows. Test: follow one citizen through a full day.
 3. **Visible variety**: genome-driven appearance, rig variety, GPU skinning/impostors.
 4. **Social**: relationships, conversations, groups, greeting logic.
 5. **Memory + gossip + reputation**: events, propagation, inspector why-panel.
 6. **Life stages + economy**: ageing, households, money pressure, moves.
 7. **Chronicle and dialogue**.
 
+## Platform: iOS (decision: this runs on iPhone/iPad)
+
+This changes the plan from "as much as possible" to "inside a budget".
+- **Scale:** target a walkable-scale town, roughly 2k-10k citizen records, not 100k+. Hot record around 64 bytes; budget a few MB for the store, and keep memory records small and capped per citizen (for example 8-16).
+- **Compute:** the statistical tier runs time-sliced in small buckets with a fixed per-frame millisecond budget (about 1 ms at 60 fps, less on thermal pressure). No per-citizen per-frame work outside the embodied tier. Drop the sim rate when the device throttles.
+- **Embodied cap:** far fewer full NPCs than desktop (think 15-25 bodies, 8-12 crowd agents). CPU skinning is out; **GPU skinning and impostor cards are required**, not optional. Share meshes and materials, vary by per-instance parameters.
+- **Graphics API:** iOS means Metal. The engine has D3D12 and Vulkan backends only, so a Metal path (or MoltenVK) is a prerequisite for anything to run there. The life system itself must stay renderer-agnostic and talk to the renderer through instance data only.
+- **Scripting:** Luau runs interpreted on iOS (no JIT allowed), so keep hot paths in C++ and use scripts only for activities, traits and events.
+- **Libraries:** Recast/Detour and Jolt are plain C++ and portable; check build settings, and rebuild the navmesh cache offline or in the background to protect load times.
+- **Lifecycle:** the app can be backgrounded or killed at any time. Save = the citizen records plus the clock; embodiment is rebuilt on resume. Catch-up after a long absence is a coarse statistical fast-forward, capped, not a replay.
+- **Input and UI:** touch only. The "why" inspector is tap-to-select with a bottom sheet, not a desktop panel. No hover, no keyboard debug keys.
+- **Battery/heat:** the sim runs at a lower tick when the camera is idle or far from people; the chronicle and gossip features are cheap because they work on records.
+- This is another reason for the no-interiors decision.
+
 ## Open questions for you
-1. **Scale and camera**: walkable-scale town (Port Lazare / Perdition, hundreds to a few thousand people) or CS2-scale (100k+) with the player mostly in a builder camera? It changes how much goes into statistical vs. embodied.
+1. **Scale and camera**: with iOS as the target, I recommend a town of a few thousand citizens (Port Lazare / Perdition scale). Confirm, or tell me if you need more.
 2. **Setting and era**: Western frontier (current content) or modern? It decides the needs list, the economy, and the animation set.
 3. **Player role**: mayor/builder, on-foot character, or both? Reputation and conversation features only matter if you are on the ground.
 4. **LLM dialogue**: acceptable as an optional layer, or templates only?

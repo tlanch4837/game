@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Specialized Industry</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;color:#22302a;background:#bfdcef}
+canvas{display:block}
+.panel{position:absolute;background:rgba(255,255,255,.88);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:14px;box-shadow:0 6px 24px rgba(30,50,40,.18);z-index:2}
+#bar{top:14px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;gap:4px;padding:6px;max-width:calc(100% - 28px)}
+#bar button{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:8px 12px;border-radius:10px;font:inherit;font-weight:600;cursor:pointer;color:#22302a;white-space:nowrap}
+#bar button:hover{background:rgba(0,0,0,.06)}
+#bar button.on{background:#22302a;color:#fff}
+#bar .sep{width:1px;background:rgba(0,0,0,.12);margin:4px 2px}
+.sw{width:12px;height:12px;border-radius:4px;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+#help{left:14px;bottom:14px;padding:10px 14px;max-width:min(460px,calc(100% - 28px));color:#3b4a42}
+#help b{color:#22302a}
+kbd{display:inline-block;font:11px/1 ui-monospace,monospace;padding:3px 5px;border-radius:5px;background:#eef1ee;border:1px solid #d5dbd6;color:#22302a}
+#info{right:14px;bottom:14px;padding:14px 16px;width:250px;display:none}
+#info .hd{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin-bottom:8px}
+#info .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;color:#5a6a61}
+#info .row b{color:#22302a;text-align:right}
+#info .meter{height:6px;border-radius:3px;background:#e3e8e4;margin:4px 0 6px;overflow:hidden}
+#info .meter i{display:block;height:100%;border-radius:3px;background:#5aa04a}
+@media (max-width:700px){#info{top:auto;bottom:auto;top:110px;right:14px;width:210px}}
+</style></head><body>
+<div id="bar" class="panel"></div><div id="help" class="panel"></div><div id="info" class="panel"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ---------- renderer / scene ----------
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(Math.min(devicePixelRatio,2));
+R.shadowMap.enabled=true;R.shadowMap.type=THREE.PCFSoftShadowMap;R.toneMapping=THREE.ACESFilmicToneMapping;R.toneMappingExposure=1.05;R.outputEncoding=THREE.sRGBEncoding;
+document.body.appendChild(R.domElement);
+const S=new THREE.Scene();const SKY=0xbfdcef;S.background=new THREE.Color(SKY);S.fog=new THREE.Fog(SKY,180,480);
+const C=new THREE.PerspectiveCamera(40,1,.5,1400);
+function resize(){R.setSize(innerWidth,innerHeight);C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix()}addEventListener('resize',resize);resize();
+S.add(new THREE.HemisphereLight(0xe4f1ff,0x7d8a5a,.85));
+const sun=new THREE.DirectionalLight(0xfff0d8,1.35);sun.castShadow=true;sun.shadow.mapSize.set(4096,4096);
+Object.assign(sun.shadow.camera,{left:-90,right:90,top:90,bottom:-90,near:1,far:320});sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias=-.0004;sun.shadow.normalBias=.04;S.add(sun);S.add(sun.target);
+
+// ---------- materials ----------
+const mc={};function M(c,r=.9,m=0){const k=c+'|'+r+'|'+m;return mc[k]||(mc[k]=new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m,flatShading:true}))}
+const P={soil:M(0x7a5a3a),pasture:M(0x9cc964),forestFloor:M(0x5d7a3c),dry:M(0xcdb685),lush:M(0x79ab47),
+ benchTop:M(0x9b8a76),benchSide:M(0x9e5e43),benchTop2:M(0xab9a84),benchSide2:M(0xb0704f),ore:M(0x7a4636),rockD:M(0x8a8178),
+ asph:M(0x4b4d52,.95),line:M(0xf3efe2),curb:M(0xc9c5bb),gravel:M(0xb3ab9c),conc:M(0xcfcbc2),concD:M(0xa8a399),dirt:M(0xa88a62),
+ white:M(0xf3efe6),cream:M(0xefe2c4),red:M(0xbf4a3a),redD:M(0x8f3328),roof:M(0x5b6068,.7),roofR:M(0x8e3b30,.8),roofT:M(0x6d8390,.55,.35),
+ metal:M(0xc6cbd0,.4,.55),steel:M(0x7d858c,.5,.6),steelD:M(0x50565c,.55,.5),yellow:M(0xf0b429,.6),orange:M(0xe0702c,.6),blue:M(0x3d6694,.5,.3),blueD:M(0x2b4a6e,.5,.3),
+ glass:M(0x33485e,.2,.5),wood:M(0xd2a36a),woodD:M(0x8c6440),bark:M(0x6e4c30),woodEnd:M(0xe6c08e),brick:M(0xa5573f),
+ green:M(0x3f8f45,.6),tire:M(0x26272a,.9),pink:M(0xe3a3a0),cowW:M(0xf4f1ea),cowB:M(0x2e2b29),hay:M(0xe2c26a),hayEnd:M(0xf0d890),
+ water:M(0x5a9cc4,.15,.1),leaf:M(0x5c9a45),cloud:M(0xffffff,1)};
+const PW=M(0xffffff,.9),PJ=M(0x2f5f8a,.6,.2);
+const FLAME=new THREE.MeshStandardMaterial({color:0xffb347,emissive:0xff7a1a,emissiveIntensity:2.2,flatShading:true});
+const UP=new THREE.Vector3(0,1,0);const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+let dt=0;const lerp=(a,b,t)=>a+(b-a)*t;const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+function lerpAng(a,b,t){let d=((b-a+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI;return a+d*t}
+
+// ---------- geometry helpers ----------
+function mesh(g,geo,m,x=0,y=0,z=0){const o=new THREE.Mesh(geo,m);o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;g.add(o);return o}
+function box(g,w,h,d,m,x,y,z){return mesh(g,new THREE.BoxGeometry(w,h,d),m,x,y+h/2,z)}
+function cyl(g,r,h,m,x,y,z,seg=10,rt){return mesh(g,new THREE.CylinderGeometry(rt??r,r,h,seg),m,x,y+h/2,z)}
+function cone(g,r,h,m,x,y,z,seg=8){return mesh(g,new THREE.ConeGeometry(r,h,seg),m,x,y+h/2,z)}
+function sub(g,x,z,ry=0){const s=new THREE.Group();s.position.set(x,0,z);s.rotation.y=ry;g.add(s);return s}
+function prism(g,pts,depth,m,x,y,z,ry=0){const sh=new THREE.Shape(pts.map(p=>new THREE.Vector2(p[0],p[1])));const ge=new THREE.ExtrudeGeometry(sh,{depth,bevelEnabled:false});ge.translate(0,0,-depth/2);const o=mesh(g,ge,m,x,y,z);o.rotation.y=ry;return o}
+function gable(g,span,len,h,m,x,y,z,ry=Math.PI/2){return prism(g,[[-span/2,0],[span/2,0],[0,h]],len,m,x,y,z,ry)}
+function beam(g,a,b,r,m,seg=6){const v=new THREE.Vector3().subVectors(b,a),L=v.length();const o=mesh(g,new THREE.CylinderGeometry(r,r,L,seg),m);o.position.copy(a).addScaledVector(v,.5);o.quaternion.setFromUnitVectors(UP,v.normalize());return o}
+function beamBox(g,a,b,w,h,m){const v=new THREE.Vector3().subVectors(b,a),L=v.length();const o=mesh(g,new THREE.BoxGeometry(L,h,w),m);o.position.copy(a).addScaledVector(v,.5);
+ const d=v.clone().normalize();o.rotation.set(0,Math.atan2(-d.z,d.x),Math.asin(clamp(d.y,-1,1)),'YZX');return o}
+function wheel(g,x,y,z,r,w){const o=mesh(g,new THREE.CylinderGeometry(r,r,w,10),P.tire,x,y,z);o.rotation.x=Math.PI/2;return o}
+const _q=new THREE.Quaternion();function TRS(x,y,z,ry,sx,sy=sx,sz=sx){_q.setFromAxisAngle(UP,ry);return new THREE.Matrix4().compose(V(x,y,z),_q,V(sx,sy,sz))}
+const ZERO=new THREE.Matrix4().makeScale(0,0,0);
+function inst(g,geo,mat,ms,cols){if(!ms.length)return null;const im=new THREE.InstancedMesh(geo,mat,ms.length);ms.forEach((m,i)=>{im.setMatrixAt(i,m);if(cols)im.setColorAt(i,cols[i])});im.castShadow=im.receiveShadow=true;g.add(im);return im}
+const GT={trunk:new THREE.CylinderGeometry(.1,.16,1,5).translate(0,.5,0),c1:new THREE.ConeGeometry(1,1.9,7).translate(0,1.65,0),c2:new THREE.ConeGeometry(.7,1.5,7).translate(0,2.65,0),
+ crown:new THREE.IcosahedronGeometry(1,0).scale(1.1,.95,1.1).translate(0,1.9,0),bush:new THREE.IcosahedronGeometry(1,0).translate(0,.45,0),
+ stump:new THREE.CylinderGeometry(.18,.22,.35,6).translate(0,.17,0),tuft:new THREE.ConeGeometry(.6,1,4).translate(0,.5,0),
+ ridge:new THREE.CylinderGeometry(.5,.5,1,3,1).rotateZ(Math.PI/2).rotateX(-Math.PI/2).translate(0,.25,0),post:new THREE.BoxGeometry(.14,1.1,.14).translate(0,.55,0),
+ rock:new THREE.DodecahedronGeometry(1,0).translate(0,.3,0),log:new THREE.CylinderGeometry(.28,.28,1,7),dash:new THREE.BoxGeometry(2,.02,.18)};
+Object.values(GT).forEach(g=>g.userData.keep=true);
+function clearG(g){for(const o of[...g.children]){g.remove(o);o.traverse(n=>{if(n.isInstancedMesh)n.dispose();if(n.geometry&&!n.geometry.userData.keep)n.geometry.dispose()})}}
+
+// ---------- 2D polygon math (points are [x,z]) ----------
+const dot=(p,a)=>p[0]*a[0]+p[1]*a[1];const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+function pip(p,poly){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if(((a[1]>p[1])!=(b[1]>p[1]))&&(p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0]))c=!c}return c}
+function polyArea(poly){let s=0;for(let i=0,j=poly.length-1;i<poly.length;j=i++)s+=(poly[j][0]+poly[i][0])*(poly[j][1]-poly[i][1]);return Math.abs(s/2)}
+function segDist(p,a,b){const dx=b[0]-a[0],dz=b[1]-a[1],l=dx*dx+dz*dz;const t=l?clamp(((p[0]-a[0])*dx+(p[1]-a[1])*dz)/l,0,1):0;return Math.hypot(p[0]-a[0]-dx*t,p[1]-a[1]-dz*t)}
+function edgeDist(p,poly){let m=1e9;for(let i=0;i<poly.length;i++)m=Math.min(m,segDist(p,poly[i],poly[(i+1)%poly.length]));return m}
+function segX(a,b,c,d){const o=(p,q,r)=>Math.sign((q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]));return o(a,b,c)*o(a,b,d)<0&&o(c,d,a)*o(c,d,b)<0}
+function simple(poly){const n=poly.length;if(n<3)return true;for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){if(j===i+1||(i===0&&j===n-1))continue;if(segX(poly[i],poly[(i+1)%n],poly[j],poly[(j+1)%n]))return false}return true}
+function rows(poly,u,v,c){const xs=[];for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[j],b=poly[i];const da=dot(a,v)-c,db=dot(b,v)-c;if((da<0)!==(db<0)){const t=da/(da-db);xs.push(dot(a,u)+t*(dot(b,u)-dot(a,u)))}}xs.sort((p,q)=>p-q);const o=[];for(let k=0;k+1<xs.length;k+=2)o.push([xs[k],xs[k+1]]);return o}
+function bounds(poly,d){let lo=1e9,hi=-1e9;for(const p of poly){const x=dot(p,d);lo=Math.min(lo,x);hi=Math.max(hi,x)}return[lo,hi]}
+function H(i,j,k=0){const s=Math.sin(i*127.1+j*311.7+k*74.7)*43758.5453;return s-Math.floor(s)}
+function scatter(poly,u,v,sp,jit,margin,cb){const[v0,v1]=bounds(poly,v),[u0,u1]=bounds(poly,u);
+ for(let j=Math.floor(v0/sp);j<=Math.ceil(v1/sp);j++)for(let i=Math.floor(u0/sp);i<=Math.ceil(u1/sp);i++){const s=(i+.5+(H(i,j,1)-.5)*jit)*sp,c=(j+.5+(H(i,j,2)-.5)*jit)*sp;
+  const p=[u[0]*s+v[0]*c,u[1]*s+v[1]*c];if(!pip(p,poly)||(margin>0&&edgeDist(p,poly)<margin))continue;cb(p,i,j)}}
+function centroid(poly){let x=0,z=0;for(const p of poly){x+=p[0];z+=p[1]}return[x/poly.length,z/poly.length]}
+function polyShape(poly){return new THREE.Shape(poly.map(p=>new THREE.Vector2(p[0],-p[1])))}
+function flatPoly(g,poly,mat,y){const ge=new THREE.ShapeGeometry(polyShape(poly));ge.rotateX(-Math.PI/2);const o=new THREE.Mesh(ge,mat);o.position.y=y;o.receiveShadow=true;g.add(o);return o}
+function loopPath(pts){const seg=[];let tot=0;for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length],l=dist(a,b);seg.push({a,b,l,s:tot});tot+=l}
+ return{tot,at(d){d=((d%tot)+tot)%tot;for(const q of seg)if(d<=q.s+q.l){const f=q.l?(d-q.s)/q.l:0;return{x:q.a[0]+(q.b[0]-q.a[0])*f,z:q.a[1]+(q.b[1]-q.a[1])*f,ry:Math.atan2(-(q.b[1]-q.a[1]),q.b[0]-q.a[0])}}return{x:pts[0][0],z:pts[0][1],ry:0}}}}
+
+// ---------- props ----------
+function wins(g,x,y,z,w,d,mat=P.glass){const cx=Math.max(1,Math.floor(w/1.5)),cz=Math.max(1,Math.floor(d/1.5));
+ for(let i=0;i<cx;i++){const xx=x-w/2+(i+.5)*w/cx;box(g,.5,.6,.06,mat,xx,y,z+d/2+.02);box(g,.5,.6,.06,mat,xx,y,z-d/2-.02)}
+ for(let i=0;i<cz;i++){const zz=z-d/2+(i+.5)*d/cz;box(g,.06,.6,.5,mat,x+w/2+.02,y,zz);box(g,.06,.6,.5,mat,x-w/2-.02,y,zz)}}
+function house(g,x,z,ry,w,d,h,wall,roof){const s=sub(g,x,z,ry);box(s,w+.3,.3,d+.3,P.concD,0,0,0);box(s,w,h,d,wall,0,.3,0);
+ gable(s,d+.6,w+.4,1.3,[wall,roof],0,h+.3,0);wins(s,0,1.1,0,w,d);box(s,.8,1.5,.1,P.woodD,w*.22,.3,d/2+.03);box(s,.45,1.5,.45,P.brick,-w*.28,h+.5,-d*.15);return s}
+function roundTree(g,x,z,s=1){cyl(g,.12*s,1.2*s,P.bark,x,0,z,5);const l=mesh(g,new THREE.IcosahedronGeometry(1.05*s,0),P.leaf,x,1.9*s,z);l.scale.y=.9;mesh(g,new THREE.IcosahedronGeometry(.7*s,0),M(0x6aa84f),x+.45*s,2.5*s,z-.2*s)}
+function sign(g,x,z,col){for(const d of[-.6,.6])box(g,.1,1.3,.1,P.steelD,x+d,0,z);box(g,1.6,.6,.1,col,x,1.0,z);box(g,1.2,.1,.12,P.white,x,1.25,z)}
+function fence(g,pts,closed,skipFirst,mat=P.wood){const posts=[],n=pts.length;
+ for(let e=skipFirst?1:0;e<(closed?n:n-1);e++){const a=pts[e],b=pts[(e+1)%n];const L=dist(a,b),k=Math.max(1,Math.round(L/2.2));
+  for(let i=0;i<k;i++){const f=i/k;posts.push(TRS(a[0]+(b[0]-a[0])*f,0,a[1]+(b[1]-a[1])*f,0,1))}
+  for(const y of[.45,.85])beamBox(g,V(a[0],y,a[1]),V(b[0],y,b[1]),.06,.09,mat)}
+ const end=closed?pts[0]:pts[n-1];if(!closed||skipFirst)posts.push(TRS(end[0],0,end[1],0,1));inst(g,GT.post,mat,posts)}
+function bale(g,x,z,ry){const s=sub(g,x,z,ry);const o=mesh(s,new THREE.CylinderGeometry(.55,.55,.9,9),[P.hay,P.hayEnd,P.hayEnd],0,.55,0);o.rotation.z=Math.PI/2;return s}
+function tractor(g,x,z,ry,col=P.green){const s=sub(g,x,z,ry);box(s,2.2,.7,1,col,0,.45,0);box(s,.9,1.1,.95,P.glass,-.45,1.15,0);box(s,1.05,.1,1.1,P.white,-.45,2.25,0);
+ wheel(s,-.55,.6,.65,.6,.35);wheel(s,-.55,.6,-.65,.6,.35);wheel(s,.75,.35,.55,.35,.25);wheel(s,.75,.35,-.55,.35,.25);cyl(s,.05,.8,P.tire,.5,1.15,.3,6);return s}
+function truck(g,x,z,ry,cab){const s=sub(g,x,z,ry);box(s,5.2,.35,1.5,P.steelD,0,.45,0);box(s,1.4,1.4,1.6,cab,1.9,.7,0);box(s,.06,.6,1.3,P.glass,2.62,1.35,0);
+ for(const[a,b]of[[1.9,.8],[1.9,-.8],[-.9,.8],[-.9,-.8],[-1.9,.8],[-1.9,-.8]])wheel(s,a,.42,b,.42,.3);return s}
+function haul(g,x,z,ry,col=P.yellow){const s=sub(g,x,z,ry);box(s,3.6,.5,1.9,P.steelD,0,.6,0);box(s,2.5,1.1,2.1,col,-.5,1.1,0);box(s,2.2,.35,1.8,P.ore,-.5,2.15,0);
+ box(s,1,.12,2.1,col,1.35,1.1,0);box(s,.9,.8,.8,col,1.35,1.22,.55);box(s,.06,.45,.65,P.glass,1.81,1.5,.55);
+ for(const[a,b]of[[1.2,.95],[1.2,-.95],[-1.1,.95],[-1.1,-.95]])wheel(s,a,.6,b,.6,.45);return s}
+function excavator(g,x,z,ry,an,col=P.yellow){const s=sub(g,x,z,ry);for(const zz of[-.75,.75])box(s,3,.6,.5,P.tire,0,0,zz);
+ const up=new THREE.Group();up.position.y=.7;s.add(up);box(up,2.2,.9,1.7,col,-.2,0,0);box(up,.9,.9,.8,P.glass,.35,.9,.4);box(up,.95,.1,.85,col,.35,1.8,.4);box(up,.6,.7,1.6,P.steelD,-1.15,.1,0);
+ beamBox(up,V(.6,.7,-.3),V(2.4,2.4,-.3),.35,.4,col);beamBox(up,V(2.4,2.4,-.3),V(3.3,.4,-.3),.28,.3,col);box(up,.6,.5,.7,P.steelD,3.35,-.55,-.3);
+ const ph=x*.37+z*.11;an.push(t=>{up.rotation.y=Math.sin(t*.45+ph)*1.1});return s}
+function logPile(g,x,z,ry,n=4,len=4.5){const s=sub(g,x,z,ry);const r=.28;for(let row=0;row<n;row++)for(let i=0;i<n-row;i++){const o=mesh(s,GT.log,[P.bark,P.woodEnd,P.woodEnd],(i-(n-row-1)/2)*2*r,r+row*r*1.72,0);o.rotation.x=Math.PI/2;o.scale.y=len*(.92+H(i,row)*.12)}return s}
+function lumber(g,x,z,ry){const s=sub(g,x,z,ry);for(let k=0;k<3;k++){box(s,2.8,.45,1.6,P.wood,0,k*.55,0);box(s,2.8,.1,.12,P.woodD,0,k*.55+.45,-.6);box(s,2.8,.1,.12,P.woodD,0,k*.55+.45,.6)}return s}
+function cow(g){const c=sub(g,0,0,0);const w=P.cowW,b=P.cowB;box(c,1.3,.62,.62,w,0,.5,0);box(c,.42,.64,.64,b,-.12,.49,0);box(c,.26,.3,.645,b,.38,.78,0);
+ for(const[a,d]of[[.48,.2],[.48,-.2],[-.48,.2],[-.48,-.2]])box(c,.14,.52,.14,w,a,0,d);beamBox(c,V(-.65,.95,0),V(-.78,.4,0),.05,.05,b);
+ const hd=new THREE.Group();hd.position.set(.72,.95,0);c.add(hd);box(hd,.42,.36,.34,w,.14,-.3,0);box(hd,.14,.2,.3,P.pink,.38,-.33,0);
+ for(const s of[-1,1]){box(hd,.06,.14,.06,P.cream,.05,.06,s*.13);box(hd,.08,.08,.2,b,0,-.08,s*.24)}c.userData.head=hd;c.scale.setScalar(.9);return c}
+function combine(g){const s=sub(g,0,0,0);const body=M(0xd24b32,.55);box(s,2.6,1.3,1.5,body,-.2,.55,0);box(s,1.1,.9,1.3,body,-.65,1.85,0);
+ box(s,.9,.85,.95,P.glass,.55,1.85,0);box(s,1,.1,1.05,P.white,.55,2.7,0);box(s,.7,.35,3.6,P.yellow,1.55,.25,0);
+ const reel=new THREE.Group();reel.position.set(1.8,1,0);s.add(reel);for(let i=0;i<5;i++){const a=i/5*Math.PI*2;mesh(reel,new THREE.BoxGeometry(.08,.08,3.4),P.yellow,Math.cos(a)*.38,Math.sin(a)*.38,0)}
+ mesh(reel,new THREE.CylinderGeometry(.06,.06,3.5,6),P.steelD).rotation.x=Math.PI/2;
+ wheel(s,.55,.6,.85,.6,.4);wheel(s,.55,.6,-.85,.6,.4);wheel(s,-1.1,.38,.7,.38,.3);wheel(s,-1.1,.38,-.7,.38,.3);beamBox(s,V(-.6,2.1,.6),V(-.9,2.4,2),.18,.18,body);s.userData.reel=reel;return s}
+function pumpjack(g,x,z,ry,an,ph){const s=sub(g,x,z,ry);box(s,4.6,.06,1.8,P.gravel,0,.02,0);box(s,3.6,.25,.8,P.steelD,.3,.06,0);
+ for(const sz of[-.38,.38]){beamBox(s,V(-.2,.3,sz),V(.35,2.55,0),.12,.12,P.steelD);beamBox(s,V(.9,.3,sz),V(.35,2.55,0),.12,.12,P.steelD)}
+ const pv=new THREE.Group();pv.position.set(.35,2.6,0);s.add(pv);box(pv,3.7,.3,.3,PJ,0,-.15,0);
+ prism(pv,[[0,.4],[-.4,.3],[-.6,-.2],[-.45,-.85],[0,-.95]],.34,PJ,-1.8,0,0);box(pv,.25,.5,.9,P.steelD,1.75,-.5,0);
+ const cr=new THREE.Group();cr.position.set(2.1,1.05,0);s.add(cr);for(const sz of[-.52,.52]){box(cr,.22,1.5,.12,P.steelD,0,-.75,sz);box(cr,.8,.5,.16,P.red,0,-.95,sz)}
+ box(s,.9,.7,.7,P.steel,2.1,.08,0);cyl(s,.14,.6,P.steelD,-2.05,.06,0,8);box(s,.5,.12,.5,P.steelD,-2.05,.5,0);beam(s,V(-2.05,.6,0),V(-2.05,1.7,0),.03,P.metal);
+ an.push(t=>{const a=t*1.7+ph;cr.rotation.z=-a;pv.rotation.z=Math.sin(a)*.27});return s}
+
+// ---------- hub buildings (lot local: x -6..6, z -16 (back) .. 0 (road)) ----------
+const BUILD={
+grain(g,an){
+ house(g,-3.4,-3.8,0,3.8,3.4,2.4,P.cream,P.roofR);box(g,3.8,.15,1.1,P.wood,-3.4,.3,-1.55);for(const x of[-5.1,-1.7])box(g,.12,1.6,.12,P.white,x,.45,-1.15);box(g,4,.1,1.3,P.roofR,-3.4,2.05,-1.5);
+ const b=sub(g,2.4,-9);box(b,5.4,.3,7.4,P.concD,0,0,0);box(b,5,3.2,7,P.red,0,.3,0);prism(b,[[-2.8,0],[2.8,0],[2,1.5],[0,2.4],[-2,1.5]],7.4,[P.red,P.roof],0,3.5,0);
+ for(const[x,z]of[[2.5,3.5],[-2.5,3.5],[2.5,-3.5],[-2.5,-3.5]])box(b,.16,3.2,.16,P.white,x,.3,z);
+ box(b,2.4,2.6,.1,P.redD,0,.3,3.54);for(const s of[-1,1]){const o=mesh(b,new THREE.BoxGeometry(3.4,.14,.06),P.white,0,1.6,3.62);o.rotation.z=s*.82}
+ box(b,2.7,.16,.12,P.white,0,2.9,3.58);for(const s of[-1.27,1.27])box(b,.16,2.6,.12,P.white,s,.3,3.58);box(b,1.1,1,.1,P.white,0,3.9,3.76);box(b,.8,.75,.1,P.redD,0,4.02,3.82);
+ box(b,.8,.8,.8,P.white,0,5.7,0);cone(b,.75,.7,P.roof,0,6.5,0,4).rotation.y=Math.PI/4;
+ for(const z of[-2,0,2])for(const s of[-1,1])box(b,.06,.7,.7,P.white,s*2.53,1.6,z);
+ for(const[x,z,r]of[[-4,-12.8,1.15],[-1.5,-14,1]]){cyl(g,r+.3,.3,P.concD,x,0,z,14);cyl(g,r,6.4,P.metal,x,.3,z,14);for(let y=1.3;y<6.6;y+=1.05)cyl(g,r+.03,.06,P.steel,x,.3+y,z,14);cone(g,r*1.08,1.1,P.metal,x,6.7,z,14);cyl(g,.25,.3,P.steel,x,7.8,z,8);box(g,.1,6.4,.35,P.steelD,x+r,.3,z)}
+ box(g,.5,9.6,.5,P.steel,-2.9,0,-11.4);box(g,1,.8,1,P.steel,-2.9,9.6,-11.4);beam(g,V(-2.9,9.8,-11.4),V(-4,8.1,-12.8),.12,P.steelD);beam(g,V(-2.9,9.8,-11.4),V(-1.5,8.1,-14),.12,P.steelD);
+ tractor(g,4.6,-2.5,Math.PI/2);for(const[x,z,y]of[[-5,-7.2,0],[-4,-7.2,0],[-4.5,-7.2,.9]]){const s=bale(g,x,z,Math.PI/2);s.position.y=y}
+ box(g,2.4,.04,6,P.gravel,2.4,.05,-3);fence(g,[[-6,-.3],[1,-.3]],false,false,P.white);fence(g,[[3.8,-.3],[6,-.3]],false,false,P.white);
+ roundTree(g,-5.3,-1);roundTree(g,5.2,-14.6,1.1);roundTree(g,-5.4,-15,.9);
+},
+livestock(g,an){
+ house(g,-3.8,-3.4,0,3.4,3,2.2,P.white,P.roof);
+ const b=sub(g,1.2,-9.6);box(b,10,.3,4.8,P.concD,0,0,0);box(b,9.6,2.2,4.4,M(0xb5523b),0,.3,0);box(b,9.2,.55,4.46,M(0x3a3634),0,1.25,0);
+ gable(b,5.2,10.2,1.5,[M(0xb5523b),P.roofT],0,2.5,0);box(b,9,.25,.5,P.roof,0,3.88,0);
+ for(const x of[-2.6,2.6]){box(b,.7,.7,.7,P.white,x,3.95,0);cone(b,.65,.6,P.roofT,x,4.65,0,4).rotation.y=Math.PI/4}
+ for(const s of[-1,1])box(b,.1,1.9,1.8,P.woodD,s*4.82,.3,0);
+ cyl(g,1.3,.3,P.concD,-4.4,0,-13.6,14);cyl(g,1.25,7.4,P.blueD,-4.4,.3,-13.6,14);mesh(g,new THREE.SphereGeometry(1.25,14,6,0,Math.PI*2,0,Math.PI/2),P.blueD,-4.4,7.7,-13.6);cyl(g,1.28,.4,P.white,-4.4,6.6,-13.6,14);
+ for(const[x,z]of[[-2.6,-14.9],[-2.2,-14.4]]){}
+ cyl(g,.6,1.4,P.metal,-2.3,1.4,-14.8,10);mesh(g,new THREE.ConeGeometry(.6,.8,10),P.metal,-2.3,1,-14.8).rotation.x=Math.PI;for(const[a,c]of[[-.45,-.45],[.45,-.45],[-.45,.45],[.45,.45]])box(g,.08,1.4,.08,P.steelD,-2.3+a,0,-14.8+c);
+ // water-pump windmill
+ const wx=4.8,wz=-14.4;for(const[a,c]of[[-.8,-.8],[.8,-.8],[-.8,.8],[.8,.8]])beam(g,V(wx+a,0,wz+c),V(wx+a*.18,7,wz+c*.18),.06,P.steel);
+ for(const y of[2,4.4])for(const[a,c,d,e]of[[-1,-1,1,-1],[1,-1,1,1],[1,1,-1,1],[-1,1,-1,-1]]){const k=.8*(1-y/7*.82);beam(g,V(wx+a*k,y,wz+c*k),V(wx+d*k,y,wz+e*k),.04,P.steel)}
+ const hdg=new THREE.Group();hdg.position.set(wx,7.2,wz);g.add(hdg);box(hdg,.3,.3,.6,P.steelD,0,-.15,0);box(hdg,.06,.9,1.6,P.white,0,-.2,-1.2);
+ const rot=new THREE.Group();rot.position.z=.4;hdg.add(rot);for(let i=0;i<14;i++){const a=i/14*Math.PI*2;const bl=mesh(rot,new THREE.BoxGeometry(.2,1.2,.03),P.white,Math.sin(a)*.85,Math.cos(a)*.85,0);bl.rotation.z=-a}
+ an.push(t=>{rot.rotation.z-=dt*2.2});
+ fence(g,[[.8,-1],[5.6,-1],[5.6,-5],[.8,-5]],true,false);box(g,2,.6,.6,P.steel,3.2,0,-4.4);box(g,1.8,.04,.45,P.water,3.2,.58,-4.4);
+ for(const[x,z,r,ph]of[[2,-2.6,.4,0],[4.2,-3.1,2.6,2]]){const c=cow(g);c.position.set(x,0,z);c.rotation.y=r;an.push(t=>{c.userData.head.rotation.z=-.4+Math.sin(t*1.3+ph)*.25})}
+ roundTree(g,-5.3,-7.5);box(g,2.2,.04,4,P.gravel,-1,.05,-2);bale(g,-5,-10.8,0);bale(g,-5,-12,0);
+},
+timber(g,an){
+ house(g,-3.8,-3,0,3,2.6,2.2,P.wood,P.roof);
+ const s=sub(g,1.6,-8.4);for(const x of[-3.3,-1.1,1.1,3.3])for(const z of[-2.8,2.8])box(s,.25,z<0?4.4:3.6,.25,P.steelD,x,0,z);
+ const rf=mesh(s,new THREE.BoxGeometry(7.6,.18,6.4),P.roofT,0,4.1,0);rf.rotation.x=Math.atan(.8/5.6);box(s,7,3.4,.15,P.woodD,0,0,-2.85);box(s,.15,3,5.6,P.woodD,-3.4,0,0);
+ box(s,6,.45,.9,P.steel,0,0,.2);const lg=mesh(s,GT.log,[P.bark,P.woodEnd,P.woodEnd],-1.4,.75,.2);lg.rotation.z=Math.PI/2;lg.scale.y=3.6;box(s,1,2.2,1.4,P.red,1.2,0,.2);box(s,2.6,.3,.7,P.wood,2.2,.45,1.6);
+ cyl(g,.45,1.2,P.metal,4.6,4.8,-10.6,10);mesh(g,new THREE.ConeGeometry(.45,1,10),P.metal,4.6,4.3,-10.6).rotation.x=Math.PI;beam(g,V(4.6,6,-10.6),V(3.4,4.2,-9.8),.12,P.metal);
+ logPile(g,-3.4,-11.6,0,4,4.4);logPile(g,-3.4,-14.6,0,3,4.4);lumber(g,3.6,-13.8,0);lumber(g,.6,-14.3,0);
+ excavator(g,-.8,-12.6,Math.PI/2,an,M(0x5d8f3c,.6));cone(g,1.4,1.2,P.woodEnd,4.6,0,-4.4,7);
+ const tk=truck(g,1.6,-2.4,0,P.red);for(const z of[-.3,.3])for(const y of[0,1]){const o=mesh(tk,GT.log,[P.bark,P.woodEnd,P.woodEnd],-.9,1.1+y*.5,z+y*.0);o.rotation.z=Math.PI/2;o.scale.y=3.4}
+ box(g,2.4,.04,6,P.gravel,1.6,.05,-3);
+},
+oil(g,an){
+ const cb=sub(g,-3.2,-2.7);box(cb,4,2.6,2.4,P.white,0,0,0);box(cb,4.2,.3,2.6,P.concD,0,2.6,0);wins(cb,0,1.2,0,4,2.4);box(cb,.8,1.5,.1,P.blue,.9,0,1.23);
+ for(const z of[-8.4,-13.2]){cyl(g,2.1,.3,P.concD,-3.3,0,z,16);cyl(g,1.8,2.6,P.white,-3.3,.3,z,16);cyl(g,1.82,.3,P.red,-3.3,1.9,z,16);cyl(g,1.85,.35,P.metal,-3.3,2.9,z,16,1.2);beam(g,V(-1.4,.3,z),V(-1.4,3,z),.04,P.steelD)}
+ for(const[a,b,c,d]of[[-5.9,-6,-.6,-6],[-.6,-6,-.6,-15.6],[-.6,-15.6,-5.9,-15.6],[-5.9,-15.6,-5.9,-6]])beamBox(g,V(a,.25,b),V(c,.25,d),.25,.5,P.concD);
+ const cx=2.6,cz=-11;cyl(g,1.1,.4,P.concD,cx,0,cz,12);cyl(g,.75,11,P.metal,cx,.4,cz,12);mesh(g,new THREE.SphereGeometry(.75,12,5,0,Math.PI*2,0,Math.PI/2),P.metal,cx,11.4,cz);
+ for(const y of[3,6,9])cyl(g,1.2,.12,P.yellow,cx,y,cz,12);box(g,.1,11,.4,P.steelD,cx+.82,.4,cz);
+ cyl(g,.55,7.4,P.metal,4.5,.3,-13.8,10);for(const y of[2.5,5])cyl(g,.9,.1,P.yellow,4.5,y,-13.8,10);
+ box(g,2.8,2.2,2,P.steel,3.3,0,-6.4);box(g,2.9,.2,2.1,P.steelD,3.3,2.2,-6.4);cyl(g,.3,7,P.brick,4.4,0,-6.4,8);
+ for(const[a,c]of[[-.8,-.8],[.8,-.8],[-.8,.8],[.8,.8]])box(g,.15,1.6,.15,P.steelD,.2+a,0,-14.6+c);mesh(g,new THREE.SphereGeometry(1.25,10,7),P.white,.2,2.6,-14.6);
+ for(const x of[-1.1,.9])box(g,.2,2.2,1.2,P.steelD,x,0,-10.2);[P.steel,P.yellow,P.blue].forEach((m,i)=>beam(g,V(-1.5,2.3,-10.4+i*.35),V(1.9,2.3,-10.4+i*.35),.12,m));
+ beam(g,V(-1.5,2.3,-10),V(-1.5,2.9,-8.4),.1,P.steel);beam(g,V(-1.5,2.3,-10.7),V(-1.5,2.9,-13.2),.1,P.steel);
+ const fx=5.2,fz=-15.2;cyl(g,.22,12,P.steelD,fx,0,fz,8);for(const[a,c]of[[-3,0],[1.5,-2.5],[1.5,2.5]])beam(g,V(fx,10,fz),V(fx+a*.6,0,fz+c*.6),.02,P.steelD,3);
+ const fl=mesh(g,new THREE.ConeGeometry(.45,1.6,6),FLAME,fx,12.8,fz);an.push(t=>{fl.scale.set(1+Math.sin(t*13)*.12,1+Math.sin(t*9.3)*.25+Math.sin(t*21)*.1,1);fl.rotation.y=t*3});
+ const tk=truck(g,1.8,-2.3,0,P.white);const tt=mesh(tk,new THREE.CylinderGeometry(.7,.7,3.4,10),P.metal,-.9,1.5,0);tt.rotation.z=Math.PI/2;
+ box(g,2.4,.04,6,P.asph,1.8,.05,-3);
+},
+ore(g,an){
+ const hh=sub(g,-2.6,-4.4);box(hh,4.4,.3,3.4,P.concD,0,0,0);box(hh,4.2,3,3.2,P.brick,0,.3,0);gable(hh,3.6,4.6,1.3,[P.brick,P.roof],0,3.3,0);wins(hh,0,1.6,0,4.2,3.2);box(hh,1,1.8,.1,P.steelD,1,.3,1.62);
+ const hx=-2.6,hz=-11.2,Ht=10;for(const[a,c]of[[-1,-1],[1,-1],[1,1],[-1,1]])beam(g,V(hx+a*1.3,0,hz+c*1.3),V(hx+a*.55,Ht,hz+c*.55),.12,P.steelD);
+ for(const y of[3.3,6.6]){const k=1.3-(1.3-.55)*y/Ht;for(const[a,c,d,e]of[[-1,-1,1,-1],[1,-1,1,1],[1,1,-1,1],[-1,1,-1,-1]])beam(g,V(hx+a*k,y,hz+c*k),V(hx+d*k,y,hz+e*k),.07,P.steelD)}
+ for(const s of[-1,1])beam(g,V(hx+s*.55,Ht-.4,hz+.55),V(hx+s*1.2,0,hz+4.2),.14,P.steelD);
+ box(g,2,.3,2,P.steelD,hx,Ht,hz);box(g,1.6,1.4,1.6,P.steel,hx,0,hz);
+ const wheels=[];for(const s of[-1,1]){const wg=new THREE.Group();wg.position.set(hx+s*.45,Ht+1.2,hz);wg.rotation.y=Math.PI/2;g.add(wg);const w=new THREE.Group();wg.add(w);
+  mesh(w,new THREE.TorusGeometry(.9,.08,5,16),P.red);for(let i=0;i<4;i++){const sp=mesh(w,new THREE.BoxGeometry(1.8,.06,.06),P.red);sp.rotation.z=i*Math.PI/4}wheels.push(w);
+  beam(g,V(hx+s*.45,Ht,hz),V(hx+s*.45,Ht+1.2,hz),.08,P.steelD);beam(g,V(hx+s*.45,Ht+2.1,hz),V(hx+s*.45,3.2,hz+5.4),.025,P.tire,4)}
+ an.push(t=>{wheels[0].rotation.z+=dt*1.6;wheels[1].rotation.z-=dt*1.6});
+ const cr=sub(g,3,-9);box(cr,4,6.4,4.2,P.conc,0,0,0);const rf=mesh(cr,new THREE.BoxGeometry(4.4,.2,4.6),P.roofT,0,6.6,0);rf.rotation.x=.12;
+ for(const y of[1.6,3.8])for(const s of[-1,1])box(cr,.06,.5,3.4,P.glass,s*2.02,y,0);box(cr,1.8,2.2,.1,P.steelD,0,0,2.12);
+ beamBox(g,V(3.2,5.9,-11),V(3.6,3.1,-14.8),.7,.3,P.steel);for(const[z,h]of[[-12.2,4.8],[-13.6,3.4]])box(g,.15,h,.15,P.steelD,3.35,0,z);
+ cone(g,2.3,2.7,P.ore,3.6,0,-14.6,9);for(const[a,c]of[[-.6,-.6],[.6,-.6],[-.6,.6],[.6,.6]])box(g,.14,2.2,.14,P.steelD,.3+a,0,-14.2+c);
+ box(g,1.7,1,1.7,P.steel,.3,2.2,-14.2);mesh(g,new THREE.ConeGeometry(.85,.9,4),P.steel,.3,1.75,-14.2).rotation.set(Math.PI,Math.PI/4,0);
+ haul(g,3.6,-2.6,0);box(g,2.6,.04,6,P.gravel,3.6,.05,-3);
+}};
+
+// ---------- area fills ----------
+const PINES=[0x3f7a4a,0x4b8a4f,0x356b45,0x5a9452];
+function treeSet(list,kind){const g=new THREE.Group();const geos=kind==='pine'?[GT.trunk,GT.c1,GT.c2]:[GT.trunk,GT.crown];const mats=kind==='pine'?[P.bark,PW,PW]:[P.bark,PW];
+ const ims=geos.map((ge,k)=>{const im=new THREE.InstancedMesh(ge,mats[k],Math.max(1,list.length));im.castShadow=im.receiveShadow=true;g.add(im);return im});
+ const set={g,list,update(hide){list.forEach((t,i)=>{const m=hide&&hide(t)?ZERO:TRS(t.x,0,t.z,t.ry,t.s);ims.forEach((im,k)=>{im.setMatrixAt(i,m);if(k>0)im.setColorAt(i,t.col)})});
+  ims.forEach(im=>{im.count=list.length;im.instanceMatrix.needsUpdate=true;if(im.instanceColor)im.instanceColor.needsUpdate=true})}};set.update();return set}
+function frame(ind){const[a,b]=backLine(ind);const l=dist(a,b);const u=[(b[0]-a[0])/l,(b[1]-a[1])/l];return{u,v:[-u[1],u[0]]}}
+const FILL={
+grain(ind,poly,g,an){const{u,v}=frame(ind);flatPoly(g,poly,P.soil,.05);const ry=Math.atan2(-u[1],u[0]);const[v0,v1]=bounds(poly,v);const sp=1.3;const ms=[],cs=[];let best=null;
+ const pal=[0xe9c45c,0xdcae45,0xf0d687,0xa9c450,0xe2b94f,0xd9b04c];
+ for(let j=Math.ceil(v0/sp+.3);j*sp<v1-.3;j++){const c=j*sp,band=Math.floor(j/6);for(const[s0,s1]of rows(poly,u,v,c)){const a=s0+.9,b=s1-.9;if(b-a<1)continue;const mid=(a+b)/2,L=b-a;
+  ms.push(TRS(u[0]*mid+v[0]*c,.05,u[1]*mid+v[1]*c,ry,L,.55/.75,1/.866));cs.push(new THREE.Color(pal[Math.floor(H(band,3,ind.id)*pal.length)]).offsetHSL(0,0,(H(j,1)-.5)*.05));if(!best||L>best.L)best={a,b,c:c+sp/2,L}}}
+ inst(g,GT.ridge,PW,ms,cs);
+ if(best&&best.L>6){const cb=combine(g);const{a,c,L}=best;an.push(t=>{const k=(t*2.2/L)%2,f=k<1?k:2-k,s=a+1.5+(L-3)*f;cb.position.set(u[0]*s+v[0]*c,.05,u[1]*s+v[1]*c);cb.rotation.y=ry+(k<1?0:Math.PI);cb.userData.reel.rotation.z=-t*4})}
+},
+livestock(ind,poly,g,an){const{u,v}=frame(ind);flatPoly(g,poly,P.pasture,.05);const tm=[],tc=[];
+ scatter(poly,u,v,1.6,.9,.3,(p,i,j)=>{tm.push(TRS(p[0],.05,p[1],H(i,j,3)*6,.22+H(i,j,4)*.22));tc.push(new THREE.Color(H(i,j,5)<.5?0x86b84f:0xa3d062))});inst(g,GT.tuft,PW,tm,tc);
+ fence(g,poly,true,true);const cand=[];scatter(poly,u,v,2.2,.6,1.4,p=>cand.push(p));if(!cand.length)return;
+ const n=Math.min(40,Math.max(3,Math.floor(polyArea(poly)/45)));const herd=[];
+ for(let k=0;k<n;k++){const p=cand[Math.floor(H(k,ind.id,1)*cand.length)];const c=cow(g);c.position.set(p[0]+(H(k,1)-.5),.05,p[1]+(H(k,2)-.5));c.rotation.y=H(k,2)*6;herd.push({c,tgt:p,wait:H(k,3)*5,ph:k})}
+ const pick=c=>{for(let k=0;k<8;k++){const q=cand[Math.floor(Math.random()*cand.length)];const m=[(q[0]+c.x)/2,(q[1]+c.z)/2];if(dist(q,[c.x,c.z])<12&&pip(m,poly))return q}return[c.x,c.z]};
+ an.push(t=>{for(const k of herd){const c=k.c,hd=c.userData.head;if(k.wait>0){k.wait-=dt;hd.rotation.z=lerp(hd.rotation.z,-.6+Math.sin(t*2+k.ph)*.08,.08);if(k.wait<=0)k.tgt=pick(c.position)}
+  else{const dx=k.tgt[0]-c.position.x,dz=k.tgt[1]-c.position.z,d=Math.hypot(dx,dz);hd.rotation.z=lerp(hd.rotation.z,0,.08);if(d<.25)k.wait=3+Math.random()*8;else{const s=.7*dt;c.position.x+=dx/d*s;c.position.z+=dz/d*s;c.rotation.y=lerpAng(c.rotation.y,Math.atan2(-dz,dx),.08)}}}});
+ const q=cand[Math.floor(H(ind.id,4)*cand.length)];roundTree(g,q[0],q[1],1.2);const q2=cand[Math.floor(H(ind.id,7)*cand.length)];roundTree(g,q2[0],q2[1],.9);
+ const q3=cand[Math.floor(H(ind.id,9)*cand.length)];box(g,2,.6,.6,P.steel,q3[0],0,q3[1]);box(g,1.8,.04,.45,P.water,q3[0],.58,q3[1]);
+},
+timber(ind,poly,g,an){const{u,v}=frame(ind);flatPoly(g,poly,P.forestFloor,.05);const L=[],st=[];
+ scatter(poly,u,v,2.4,.85,.9,(p,i,j)=>{const h=H(i,j,5),patch=H(Math.floor(i/4),Math.floor(j/4),9+ind.id);
+  if(patch<.2){if(h<.6)st.push({p,h})}else{const age=patch<.38?.42+h*.2:.75+h*.5;L.push({x:p[0],z:p[1],s:age,ry:h*6,col:new THREE.Color(PINES[Math.floor(h*4)])})}});
+ g.add(treeSet(L,'pine').g);inst(g,GT.stump,[P.bark,P.woodEnd,P.woodEnd],st.map(o=>TRS(o.p[0],.05,o.p[1],o.h*6,1)));
+ [0,6,12].forEach(k=>{if(st[k])logPile(g,st[k].p[0],st[k].p[1],st[k].h*6,3,3.6)});if(st[3])excavator(g,st[3].p[0],st[3].p[1],st[3].h*6,an,M(0x5d8f3c,.6));
+},
+oil(ind,poly,g,an){const{u,v}=frame(ind);flatPoly(g,poly,P.dry,.05);const sm=[],sc=[];
+ scatter(poly,u,v,3.4,.9,.5,(p,i,j)=>{if(H(i,j,2)<.55){const r=.25+H(i,j,4)*.3;sm.push(TRS(p[0],.05,p[1],H(i,j,3)*6,r,r*.7,r));sc.push(new THREE.Color(H(i,j,7)<.5?0x8b9a55:0xa3a065))}});inst(g,GT.bush,PW,sm,sc);
+ const[a,b]=backLine(ind);const bm=[(a[0]+b[0])/2,(a[1]+b[1])/2];let n=0;
+ scatter(poly,u,v,9,.8,2.8,(p,i,j)=>{if(n++>=30)return;pumpjack(g,p[0],p[1],H(i,j,4)*6,an,H(i,j,5)*6);beamBox(g,V(p[0],.15,p[1]),V(bm[0],.15,bm[1]),.14,.14,P.steelD)});
+},
+ore(ind,poly,g,an){const{u,v}=frame(ind);const c=centroid(poly);const SC=[1,.8,.62,.45,.3];const sc=s=>poly.map(p=>[c[0]+(p[0]-c[0])*s,c[1]+(p[1]-c[1])*s]);const rings=SC.map(sc);
+ for(let k=0;k<4;k++){const sh=polyShape(rings[k]);sh.holes.push(new THREE.Path(rings[k+1].map(p=>new THREE.Vector2(p[0],-p[1]))));
+  const ge=new THREE.ExtrudeGeometry(sh,{depth:(4-k)*.8,bevelEnabled:false});ge.rotateX(-Math.PI/2);mesh(g,ge,k%2?[P.benchTop,P.benchSide]:[P.benchTop2,P.benchSide2])}
+ flatPoly(g,rings[4],P.ore,.05);const rm=[],rc=[];
+ scatter(poly,u,v,2.6,.9,.4,(p,i,j)=>{if(H(i,j,3)>.45)return;let k=0;while(k<4&&pip(p,rings[k+1]))k++;const y=k<4?(4-k)*.8:.05;const r=.25+H(i,j,4)*.4;rm.push(TRS(p[0],y,p[1],H(i,j,5)*6,r,r*.7,r));rc.push(new THREE.Color(H(i,j,6)<.5?0x8f877b:0x9a6a52))});
+ inst(g,GT.rock,PW,rm,rc);const path=loopPath(sc(.71));const trucks=[0,1,2].map(()=>haul(g,0,0,0));
+ an.push(t=>{trucks.forEach((tr,i)=>{const q=path.at(t*3.2+i*path.tot/3);tr.position.set(q.x,2.4,q.z);tr.rotation.y=q.ry})});
+ excavator(g,c[0],c[1],H(ind.id,2)*6,an);for(let k=0;k<3;k++){const p=rings[4][k%rings[4].length];const q=[(p[0]+c[0])/2,(p[1]+c[1])/2];cone(g,1+H(k,4)*.6,1.1,P.ore,q[0],.05,q[1],7)}
+}};
+
+// ---------- industry types / resources ----------
+const TYPES={
+ grain:{name:'Grain farm',res:'fertile',resName:'Fertile land',out:'Grain',rate:14,color:0xe7c25a,pad:P.lush},
+ livestock:{name:'Livestock farm',res:null,resName:'None (any flat land)',out:'Livestock',rate:6,color:0x8cc35c,pad:P.lush},
+ timber:{name:'Forestry',res:'forest',resName:'Forest',out:'Timber',rate:9,color:0x3f7a4a,pad:P.dirt},
+ oil:{name:'Oil drilling',res:'oil',resName:'Oil deposits',out:'Crude oil',rate:22,color:0x3a3530,pad:P.conc},
+ ore:{name:'Ore mining',res:'ore',resName:'Ore deposits',out:'Metal ore',rate:17,color:0xc0673f,pad:P.rockD}};
+const RAW={fertile:[[-50,-36,21],[32,42,20],[-82,-62,18],[100,-30,15]],forest:[[-12,-42,20],[64,46,22],[-60,44,20],[-100,-24,16]],
+ oil:[[26,-38,16],[-86,58,13],[96,-64,14],[10,72,11]],ore:[[58,-35,14],[-30,-78,12],[104,32,12],[20,40,9]]};
+const RES={};for(const k in RAW)RES[k]=RAW[k].map(([x,z,r],i)=>({x,z,r,seed:i*2.3+k.length}));
+const rr=(b,a)=>b.r*(1+.13*Math.sin(3*a+b.seed)+.07*Math.sin(5*a+b.seed*1.7));
+const inBlob=(p,b)=>{const dx=p[0]-b.x,dz=p[1]-b.z;return Math.hypot(dx,dz)<rr(b,Math.atan2(dz,dx))};
+const blobPts=(b,n=28,s=1)=>{const o=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2,r=rr(b,a)*s;o.push([b.x+Math.cos(a)*r,b.z+Math.sin(a)*r])}return o};
+
+// ---------- world ----------
+{const ge=new THREE.PlaneGeometry(900,900,110,110).toNonIndexed();ge.rotateX(-Math.PI/2);const pos=ge.attributes.position;const col=new Float32Array(pos.count*3);
+ const c1=new THREE.Color(0x8cbc58),c2=new THREE.Color(0x9cc865),c3=new THREE.Color(0x7fae4e),tmp=new THREE.Color();
+ for(let i=0;i<pos.count;i+=3){const x=(pos.getX(i)+pos.getX(i+1)+pos.getX(i+2))/3,z=(pos.getZ(i)+pos.getZ(i+1)+pos.getZ(i+2))/3;const n=Math.sin(x*.035)*Math.cos(z*.041)+Math.sin(x*.11+z*.07)*.4;
+  tmp.copy(c1).lerp(n>0?c2:c3,Math.min(1,Math.abs(n)*.7)).offsetHSL(0,0,(Math.random()-.5)*.025);for(let k=0;k<3;k++)tmp.toArray(col,(i+k)*3)}
+ ge.setAttribute('color',new THREE.BufferAttribute(col,3));const gm=new THREE.Mesh(ge,new THREE.MeshStandardMaterial({vertexColors:true,roughness:1,flatShading:true}));gm.receiveShadow=true;S.add(gm)}
+box(S,360,.06,6,P.asph,0,-.02,0);for(const s of[-1,1]){box(S,360,.02,.15,P.line,0,.04,s*2.6);box(S,360,.12,.25,P.curb,0,0,s*3.1)}
+{const ms=[];for(let x=-178;x<180;x+=5)ms.push(TRS(x,.045,0,0,1));inst(S,GT.dash,P.line,ms)}
+for(let i=0;i<48;i++){const a=i/48*Math.PI*2+Math.random()*.1,r=270+Math.random()*90;const h=mesh(S,new THREE.IcosahedronGeometry(1,1),M([0x7fae58,0x6f9e50,0x8bb866,0x5f8f4a][i%4]),Math.cos(a)*r,-3,Math.sin(a)*r);h.scale.set(40+Math.random()*40,14+Math.random()*26,40+Math.random()*40);h.castShadow=false}
+const clouds=[];for(let i=0;i<14;i++){const c=new THREE.Group();const n=3+Math.floor(Math.random()*3);for(let k=0;k<n;k++){const m=mesh(c,new THREE.IcosahedronGeometry(3+Math.random()*3,0),P.cloud,k*4-n*2,Math.random()*1.5,(Math.random()-.5)*3);m.scale.y=.6;m.receiveShadow=false}
+ c.position.set((Math.random()-.5)*500,60+Math.random()*25,(Math.random()-.5)*400);S.add(c);clouds.push(c)}
+// resource ground cues
+for(const b of RES.fertile)flatPoly(S,blobPts(b),P.lush,.02);
+for(const b of RES.oil)for(let i=0;i<6;i++){const a=H(i,b.x)*6.28,r=H(i,b.z)*b.r*.7;flatPoly(S,blobPts({x:b.x+Math.cos(a)*r,z:b.z+Math.sin(a)*r,r:1+H(i,3)*1.6,seed:i},9),M(0x5e5444),.025)}
+{const ms=[],cs=[];for(const b of RES.ore)for(let i=0;i<70;i++){const a=H(i,b.x,1)*6.28,r=Math.sqrt(H(i,b.z,2))*b.r;const s=.2+H(i,4)*.5;ms.push(TRS(b.x+Math.cos(a)*r,0,b.z+Math.sin(a)*r,a,s,s*.7,s));cs.push(new THREE.Color(H(i,5)<.5?0x8f877b:0x9a6a52))}inst(S,GT.rock,PW,ms,cs)}
+// wild trees
+const wildPine=[],wildRound=[];
+for(const b of RES.forest){for(let x=b.x-b.r*1.3;x<b.x+b.r*1.3;x+=2.5)for(let z=b.z-b.r*1.3;z<b.z+b.r*1.3;z+=2.5){const p=[x+(H(x,z,1)-.5)*2.2,z+(H(x,z,2)-.5)*2.2];if(!inBlob(p,b)||Math.abs(p[1])<6)continue;const h=H(x,z,3);wildPine.push({x:p[0],z:p[1],s:.7+h*.6,ry:h*6,col:new THREE.Color(PINES[Math.floor(h*4)])})}}
+for(let i=0;i<700;i++){const x=(H(i,1,8)-.5)*300,z=(H(i,2,8)-.5)*300;if(Math.abs(z)<7||H(i,3,8)>.35)continue;const h=H(i,4,8);(h<.5?wildRound:wildPine).push({x,z,s:.7+h*.6,ry:h*6,col:new THREE.Color(h<.5?[0x5c9a45,0x6aa84f,0x4f8c3e][i%3]:PINES[i%4])})}
+const WP=treeSet(wildPine,'pine'),WR=treeSet(wildRound,'round');S.add(WP.g,WR.g);
+// resource overlays
+const RESCOL={fertile:0xb6e04e,forest:0x1f6b34,oil:0x241d33,ore:0xe0703c};const overlays={};
+for(const k in RES){const grp=new THREE.Group();grp.visible=false;const fm=new THREE.MeshBasicMaterial({color:RESCOL[k],transparent:true,opacity:.45,depthWrite:false});const em=new THREE.MeshBasicMaterial({color:RESCOL[k]});
+ for(const b of RES[k]){const pts=blobPts(b);flatPoly(grp,pts,fm,.25);for(let i=0;i<pts.length;i+=2){const a=pts[i],c=pts[(i+1)%pts.length];const o=beamBox(grp,V(a[0],.3,a[1]),V(c[0],.3,c[1]),.4,.05,em);o.castShadow=false}}
+ S.add(grp);overlays[k]=grp}
+let showAllRes=false;function showOverlay(type){for(const k in overlays)overlays[k].visible=showAllRes||(type&&TYPES[type].res===k)}
+
+// ---------- industries ----------
+let uid=1;const inds=[];
+function makeIndustry(type){const ind={id:uid++,type,root:new THREE.Group(),anims:[],areaAnims:[],pts:[],side:-1,x:0,area:new THREE.Group(),prev:new THREE.Group(),handles:new THREE.Group()};
+ box(ind.root,12,.08,16,TYPES[type].pad,0,-.02,-8).castShadow=false;BUILD[type](ind.root,ind.anims);sign(ind.root,5.2,-.7,M(TYPES[type].color,.6));
+ S.add(ind.root,ind.area,ind.prev,ind.handles);return ind}
+function placeAt(ind,x,side){ind.x=x;ind.side=side;ind.root.position.set(x,0,side<0?-3:3);ind.root.rotation.y=side<0?0:Math.PI;ind.root.updateMatrixWorld(true)}
+function L2W(ind,lx,lz){const p=ind.root.localToWorld(V(lx,0,lz));return[p.x,p.z]}
+function backLine(ind){return[L2W(ind,-6,-16),L2W(ind,6,-16)]}
+function polyOf(ind,extra){const[a,b]=backLine(ind);const p=[a,b,...ind.pts];if(extra)p.push(extra);return p}
+function clampPt(ind,p){let[x,z]=p;x=clamp(x,-160,160);z=ind.side<0?clamp(z,-160,-4):clamp(z,4,160);return[x,z]}
+function insideLot(ind,p){const l=ind.root.worldToLocal(V(p[0],0,p[1]));return l.x>-7&&l.x<7&&l.z>-17&&l.z<1}
+function lotFree(ind,x,side){return inds.every(o=>o===ind||o.side!==side||Math.abs(o.x-x)>=12.5)}
+function removeInd(ind){for(const g of[ind.root,ind.area,ind.prev,ind.handles]){clearG(g);S.remove(g)}const i=inds.indexOf(ind);if(i>=0)inds.splice(i,1)}
+function buildArea(ind){clearG(ind.area);ind.areaAnims=[];const poly=polyOf(ind);ind.poly=poly.length>=3?poly:null;if(ind.poly)FILL[ind.type](ind,poly,ind.area,ind.areaAnims)}
+const edgeMat=new THREE.MeshBasicMaterial({color:0xffffff}),badMat=new THREE.MeshBasicMaterial({color:0xff5040});
+function buildPreview(ind,extra){clearG(ind.prev);const poly=polyOf(ind,extra);const ok=simple(poly);
+ if(poly.length>=3)flatPoly(ind.prev,poly,new THREE.MeshBasicMaterial({color:ok?TYPES[ind.type].color:0xd84a3a,transparent:true,opacity:.38,depthWrite:false}),.35);
+ const n=poly.length;for(let i=0;i<(n>=3?n:n-1);i++){const a=poly[i],b=poly[(i+1)%n];const o=beamBox(ind.prev,V(a[0],.4,a[1]),V(b[0],.4,b[1]),.3,.06,ok?edgeMat:badMat);o.castShadow=false}return ok}
+const hGeo=new THREE.OctahedronGeometry(.7,0);hGeo.userData.keep=true;const hFree=new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x444444,flatShading:true}),hFix=new THREE.MeshStandardMaterial({color:0x8a9590,flatShading:true});
+function buildHandles(ind){clearG(ind.handles);polyOf(ind).forEach((p,i)=>{const h=new THREE.Mesh(hGeo,i<2?hFix:hFree);h.position.set(p[0],.9,p[1]);h.userData={ind,idx:i-2};ind.handles.add(h)})}
+function stats(ind,extra){const poly=polyOf(ind,extra);const A=poly.length>=3?polyArea(poly):0;const ha=A*4/1e4;const t=TYPES[ind.type];let cov=1;
+ if(t.res&&A>0){let n=0,k=0;const{u,v}=frame(ind);scatter(poly,u,v,2,0,0,p=>{n++;if(RES[t.res].some(b=>inBlob(p,b)))k++});cov=n?k/n:0}return{ha,cov,out:ha*t.rate*cov}}
+function refreshWild(){const hide=t=>{const p=[t.x,t.z];return inds.some(o=>insideLot(o,p)||(o.poly&&o!==drawing&&pip(p,o.poly)))};WP.update(hide);WR.update(hide)}
+
+// ---------- modes ----------
+let mode='idle',ghost=null,drawing=null,sel=null,drag=null,cursor=null;
+function select(ind){sel=ind;for(const o of inds)o.handles.visible=(o===sel||o===drawing);updateInfo()}
+function pickType(type){if(mode==='draw')finishDraw();if(ghost){removeInd(ghost);ghost=null}
+ ghost=makeIndustry(type);ghost.pad=box(ghost.root,12.4,.1,16.4,new THREE.MeshBasicMaterial({color:0x6fd36f,transparent:true,opacity:.4,depthWrite:false}),0,.08,-8);ghost.pad.castShadow=false;ghost.root.visible=false;
+ select(null);showOverlay(type);setMode('place')}
+function finishDraw(){const ind=drawing;if(!ind)return;drawing=null;clearG(ind.prev);if(ind.pts.length<1||!simple(polyOf(ind))){if(ind.pts.length<1){removeInd(ind);setMode('idle');select(null);showOverlay(null);refreshWild();return}ind.pts.pop()}
+ buildArea(ind);buildHandles(ind);select(ind);showOverlay(null);refreshWild();setMode('idle')}
+function cancel(){if(ghost){removeInd(ghost);ghost=null}if(drawing){removeInd(drawing);drawing=null}showOverlay(null);setMode('idle');select(null)}
+
+// ---------- camera / input ----------
+const cam={t:V(4,0,-14),yaw:.45,pitch:.78,dist:135};
+function camUpdate(){const{t,yaw,pitch,dist}=cam;C.position.set(t.x+Math.sin(yaw)*Math.cos(pitch)*dist,t.y+Math.sin(pitch)*dist,t.z+Math.cos(yaw)*Math.cos(pitch)*dist);C.lookAt(t);sun.position.set(t.x+60,110,t.z+40);sun.target.position.copy(t)}
+function pan(dx,dz){const k=cam.dist*.0016,s=Math.sin(cam.yaw),c=Math.cos(cam.yaw);cam.t.x+=(-c*dx-s*dz)*k;cam.t.z+=(s*dx-c*dz)*k;cam.t.x=clamp(cam.t.x,-200,200);cam.t.z=clamp(cam.t.z,-200,200)}
+const ray=new THREE.Raycaster(),ndc=new THREE.Vector2(),GP=new THREE.Plane(UP,0);
+function setRay(e){ndc.set(e.clientX/innerWidth*2-1,-e.clientY/innerHeight*2+1);ray.setFromCamera(ndc,C)}
+function groundAt(e){setRay(e);const o=V();return ray.ray.intersectPlane(GP,o)?[o.x,o.z]:null}
+function pickHandle(e){setRay(e);const hs=[];for(const o of inds)if(o.handles.visible)o.handles.children.forEach(h=>{if(h.userData.idx>=0)hs.push(h)});const hit=ray.intersectObjects(hs)[0];return hit?hit.object.userData:null}
+let down=null;const cv=R.domElement;
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);down={x:e.clientX,y:e.clientY,b:e.button,moved:false,shift:e.shiftKey};
+ if(e.button===0&&mode==='idle'){const h=pickHandle(e);if(h){drag=h;h.ind.area.visible=false;showOverlay(h.ind.type)}}});
+cv.addEventListener('pointermove',e=>{
+ if(down){const dx=e.clientX-down.x,dy=e.clientY-down.y;if(!down.moved&&Math.hypot(dx,dy)>4)down.moved=true;
+  if(drag){const p=groundAt(e);if(p){const ind=drag.ind,old=ind.pts[drag.idx];ind.pts[drag.idx]=clampPt(ind,p);if(!simple(polyOf(ind)))ind.pts[drag.idx]=old;buildPreview(ind);buildHandles(ind);updateInfo()}}
+  else if(down.moved){if(down.b===1||down.shift)pan(e.movementX,e.movementY);else{cam.yaw-=e.movementX*.005;cam.pitch=clamp(cam.pitch+e.movementY*.004,.25,1.45)}}}
+ const p=groundAt(e);if(!p)return;
+ if(mode==='place'&&ghost){const side=p[1]<0?-1:1,x=Math.round(p[0]/4)*4;placeAt(ghost,x,side);ghost.root.visible=true;ghost.ok=lotFree(ghost,x,side);ghost.pad.material.color.set(ghost.ok?0x6fd36f:0xe0503c)}
+ else if(mode==='draw'&&drawing){cursor=clampPt(drawing,p);buildPreview(drawing,cursor);updateInfo()}
+ cv.style.cursor=mode!=='idle'?'crosshair':(pickHandle(e)?'move':'default')});
+cv.addEventListener('pointerup',e=>{const d=down;down=null;
+ if(drag){const ind=drag.ind;drag=null;clearG(ind.prev);buildArea(ind);ind.area.visible=true;showOverlay(null);refreshWild();updateInfo();return}
+ if(d&&!d.moved&&d.b===0)click(e)});
+function click(e){const p=groundAt(e);if(!p)return;
+ if(mode==='place'){if(!ghost||!ghost.root.visible||!ghost.ok)return;ghost.root.remove(ghost.pad);const ind=ghost;ghost=null;inds.push(ind);drawing=ind;refreshWild();setMode('draw');select(null);cursor=clampPt(ind,p);buildPreview(ind,cursor);buildHandles(ind);return}
+ if(mode==='draw'){const ind=drawing,poly=polyOf(ind),q=clampPt(ind,p);const last=poly[poly.length-1];
+  if(ind.pts.length>=1&&(dist(q,poly[0])<2.4||dist(q,last)<1)){finishDraw();return}if(dist(q,last)<1)return;
+  if(!simple(polyOf(ind,q)))return;ind.pts.push(q);buildHandles(ind);buildPreview(ind,q);updateInfo();return}
+ // idle: insert node on selected edge, else select
+ if(sel&&sel.poly){const poly=sel.poly;for(let e2=1;e2<poly.length;e2++){if(segDist(p,poly[e2],poly[(e2+1)%poly.length])<1.2){const q=clampPt(sel,p);const np=[...sel.pts];np.splice(e2-1,0,q);const old=sel.pts;sel.pts=np;if(!simple(polyOf(sel))){sel.pts=old;return}buildArea(sel);buildHandles(sel);refreshWild();updateInfo();return}}}
+ select(inds.find(o=>insideLot(o,p)||(o.poly&&pip(p,o.poly)))||null)}
+cv.addEventListener('wheel',e=>{e.preventDefault();cam.dist=clamp(cam.dist*(e.deltaY>0?1.12:1/1.12),18,320)},{passive:false});
+const keys={};addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;const k=e.key;
+ if(k>='1'&&k<='5'){pickType(Object.keys(TYPES)[+k-1]);return}
+ if(k==='Enter'&&mode==='draw')finishDraw();
+ if(k==='Escape'){if(mode==='draw'&&drawing.pts.length){finishDraw()}else cancel()}
+ if(k==='Backspace'&&mode==='draw'&&drawing.pts.length){e.preventDefault();drawing.pts.pop();buildHandles(drawing);buildPreview(drawing,cursor);updateInfo()}
+ if((k==='Delete'||k==='Backspace')&&mode==='idle'&&sel){removeInd(sel);select(null);refreshWild()}
+ if(k.toLowerCase()==='r'){showAllRes=!showAllRes;showOverlay(mode==='idle'?null:(ghost||drawing||{}).type);updateBar()}});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+function keysPan(){const s=600*dt;if(keys.w)pan(0,s);if(keys.s)pan(0,-s);if(keys.a)pan(s,0);if(keys.d)pan(-s,0);if(keys.q)cam.yaw+=dt*1.2;if(keys.e)cam.yaw-=dt*1.2}
+
+// ---------- UI ----------
+const hex=c=>'#'+('000000'+c.toString(16)).slice(-6);const bar=document.getElementById('bar');
+function updateBar(){bar.innerHTML='';Object.entries(TYPES).forEach(([k,t],i)=>{const b=document.createElement('button');b.innerHTML=`<span class="sw" style="background:${hex(t.color)}"></span>${t.name}`;b.title=`Key ${i+1}`;
+  if((ghost||drawing||{}).type===k&&mode!=='idle')b.classList.add('on');b.onclick=()=>pickType(k);bar.appendChild(b)});
+ const sp=document.createElement('div');sp.className='sep';bar.appendChild(sp);const r=document.createElement('button');r.textContent='Resources';if(showAllRes)r.classList.add('on');r.onclick=()=>{showAllRes=!showAllRes;showOverlay(mode==='idle'?null:(ghost||drawing||{}).type);updateBar()};bar.appendChild(r)}
+function setMode(m){mode=m;updateBar();const h=document.getElementById('help');
+ h.innerHTML=m==='place'?`<b>Place the ${TYPES[ghost.type].name.toLowerCase()}.</b> Slide along the road and click. Its work area starts from the back of the lot. <kbd>Esc</kbd> cancels.`
+ :m==='draw'?`<b>Draw the work area.</b> It starts from the edge behind the building. Click to add a corner and drag the shape out. Click the first node, click the same spot twice, or press <kbd>Enter</kbd> to finish. <kbd>Backspace</kbd> removes a corner.`
+ :`Pick an industry above or press <kbd>1</kbd>–<kbd>5</kbd>. Click an industry to select it, drag its white nodes, and click an edge to add a node. <kbd>Del</kbd> removes it. Drag to orbit, <kbd>Shift</kbd>+drag or <kbd>WASD</kbd> to pan, scroll to zoom, <kbd>R</kbd> shows resources.`;updateInfo()}
+function updateInfo(){const ind=drawing||sel||ghost;const el=document.getElementById('info');if(!ind){el.style.display='none';return}el.style.display='block';const t=TYPES[ind.type];
+ const st=ind===ghost?null:stats(ind,ind===drawing?cursor:null);
+ el.innerHTML=`<div class="hd"><span class="sw" style="background:${hex(t.color)}"></span>${t.name}</div><div class="row"><span>Needs</span><b>${t.resName}</b></div><div class="row"><span>Produces</span><b>${t.out}</b></div>`+
+ (st?`<div class="row"><span>Area</span><b>${st.ha.toFixed(2)} ha</b></div>`+(t.res?`<div class="row"><span>On ${t.resName.toLowerCase()}</span><b>${Math.round(st.cov*100)}%</b></div><div class="meter"><i style="width:${st.cov*100}%;background:${st.cov<.5?'#d9873a':'#5aa04a'}"></i></div>`:'')+`<div class="row"><span>Output</span><b>${st.out.toFixed(1)} t / month</b></div>`:'')}
+
+// ---------- demo layout ----------
+function demo(type,x,side,pts){const ind=makeIndustry(type);placeAt(ind,x,side);ind.pts=pts.map(([a,b])=>[x+a,b]);inds.push(ind);buildArea(ind);buildHandles(ind);ind.handles.visible=false}
+demo('grain',-48,-1,[[14,-24],[12,-50],[-10,-56],[-18,-30]]);
+demo('timber',-12,-1,[[12,-26],[9,-52],[-6,-58],[-13,-40],[-10,-24]]);
+demo('oil',24,-1,[[10,-30],[7,-52],[-10,-54],[-12,-28]]);
+demo('ore',58,-1,[[10,-26],[12,-44],[-2,-50],[-14,-42],[-9,-24]]);
+demo('livestock',-20,1,[[-16,26],[-14,46],[8,50],[18,30]]);
+refreshWild();setMode('idle');
+
+// ---------- loop ----------
+const clock=new THREE.Clock();
+(function loop(){dt=Math.min(clock.getDelta(),.05);const t=clock.elapsedTime;keysPan();camUpdate();
+ for(const o of inds){o.anims.forEach(f=>f(t));o.areaAnims.forEach(f=>f(t))}if(ghost)ghost.anims.forEach(f=>f(t));
+ const hs=Math.max(.8,cam.dist/90);for(const o of inds)o.handles.children.forEach(h=>{h.scale.setScalar(hs);h.rotation.y=t})
+ for(const c of clouds){c.position.x+=dt*2;if(c.position.x>260)c.position.x=-260}
+ R.render(S,C);requestAnimationFrame(loop)})();
+</script></body></html>

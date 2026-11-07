@@ -22,7 +22,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
-#include <windows.h>
+#include "platform/platform.h"
 #undef min
 #undef max
 
@@ -492,9 +492,7 @@ void PhysicsWorld::SetScene(JobSystem* jobs, const Scene& scene, const std::wstr
 void PhysicsWorld::Update(Vec3 focus, float dt) {
     Impl& w = *impl_;
     if (!w.system || !w.shared) return;
-    LARGE_INTEGER t0, t1, freq;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
+    const int64_t t0 = tbd::platform::Ticks();
     bool arrivedAny = false;
     {
         std::lock_guard<std::mutex> lock(w.shared->mutex);
@@ -552,8 +550,8 @@ void PhysicsWorld::Update(Vec3 focus, float dt) {
         w.system->Update(dt, dolls ? RagdollWorld::Substeps(dt) : 1, w.temp.get(), w.jolt.get());
         if (dolls) w.ragdolls->PostStep(dt);
     }
-    QueryPerformanceCounter(&t1);
-    w.stats.updateMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
+    const int64_t t1 = tbd::platform::Ticks();
+    w.stats.updateMs = tbd::platform::TicksToMs(t1 - t0);
 }
 
 bool PhysicsWorld::ReadyAround(Vec3 at, float radius) const {
@@ -672,9 +670,7 @@ CharacterState PhysicsWorld::Character() const {
 CharacterState PhysicsWorld::StepCharacter(const CharacterStep& step, float dt) {
     Impl& w = *impl_;
     if (!w.character) return {};
-    LARGE_INTEGER t0, t1, freq;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&t0);
+    const int64_t t0 = tbd::platform::Ticks();
     JPH::CharacterVirtual& c = *w.character;
     const JPH::Vec3 gravity = w.system->GetGravity();
     const bool grounded = c.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
@@ -695,8 +691,8 @@ CharacterState PhysicsWorld::StepCharacter(const CharacterStep& step, float dt) 
         TeleportCharacter(w.lastGround + Vec3{0, 0.2f, 0});
         s = Character();
     }
-    QueryPerformanceCounter(&t1);
-    w.stats.characterMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / freq.QuadPart;
+    const int64_t t1 = tbd::platform::Ticks();
+    w.stats.characterMs = tbd::platform::TicksToMs(t1 - t0);
     return s;
 }
 

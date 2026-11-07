@@ -1,9 +1,10 @@
 // Project file format shared by the project manager and the engine.
 // A project is a folder holding project.tbdproject (JSON) plus Assets/ and Scenes/.
 #pragma once
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
+#include "platform/platform.h"
+
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace tbd {
@@ -11,47 +12,29 @@ namespace tbd {
 inline const wchar_t* kProjectFile = L"project.tbdproject";
 inline const char* kEngineVersion = "0.1";
 
-inline std::wstring Utf8ToWide(const std::string& s) {
-    if (s.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
-    return w;
-}
+inline std::wstring Utf8ToWide(const std::string& s) { return platform::Utf8ToWide(s); }
 
-inline std::string WideToUtf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s(n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
-    return s;
-}
+inline std::string WideToUtf8(const std::wstring& w) { return platform::WideToUtf8(w); }
 
 inline bool ReadAllText(const std::wstring& path, std::string& out) {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    LARGE_INTEGER size;
-    if (!GetFileSizeEx(h, &size) || size.QuadPart > (1 << 24)) {
-        CloseHandle(h);
-        return false;
-    }
-    out.assign((size_t)size.QuadPart, '\0');
-    DWORD got = 0;
-    BOOL ok = size.QuadPart == 0 ? TRUE : ReadFile(h, out.data(), (DWORD)size.QuadPart, &got, nullptr);
-    CloseHandle(h);
-    out.resize(got);
-    return ok != FALSE;
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    if (!f) return false;
+    f.seekg(0, std::ios::end);
+    const std::streamoff size = f.tellg();
+    if (size < 0 || size > (1 << 24)) return false;
+    f.seekg(0, std::ios::beg);
+    out.assign((size_t)size, '\0');
+    if (size > 0) f.read(out.data(), size);
+    out.resize((size_t)f.gcount());
+    return size == 0 || !f.bad();
 }
 
 inline bool WriteAllText(const std::wstring& path, const std::string& text) {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD put = 0;
-    BOOL ok = text.empty() ? TRUE : WriteFile(h, text.data(), (DWORD)text.size(), &put, nullptr);
-    CloseHandle(h);
-    return ok && put == text.size();
+    std::ofstream f(std::filesystem::path(path), std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    if (!text.empty()) f.write(text.data(), (std::streamsize)text.size());
+    f.flush();
+    return (bool)f;
 }
 
 inline std::wstring Join(const std::wstring& a, const std::wstring& b) {
@@ -74,7 +57,8 @@ inline std::wstring ProjectFilePath(const std::wstring& folder) {
 }
 
 inline bool ProjectExists(const std::wstring& folder) {
-    return GetFileAttributesW(ProjectFilePath(folder).c_str()) != INVALID_FILE_ATTRIBUTES;
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::path(ProjectFilePath(folder)), ec);
 }
 
 // Reads the "name" field of folder\project.tbdproject.

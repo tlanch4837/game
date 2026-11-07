@@ -22,9 +22,9 @@ struct GpuLayer {
 static_assert(sizeof(GpuLayer) == 96);
 struct GpuBucket { uint32_t first, capacity; float scale, pad; };
 struct Record { tbd::MeshId mesh; tbd::TextureId albedo, normal, surface; uint32_t bucket; bool caster; bool farSet; float shadowReach = 0.0f; };
-inline bool Flag(const char* name) { char b[8] = {}; return !(GetEnvironmentVariableA(name, b, 8) > 0 && b[0] == '0'); } // test switches: on unless set to 0
+inline bool Flag(const char* name) { char b[8] = {}; return !(tbd::platform::GetEnvA(name, b, 8) > 0 && b[0] == '0'); } // test switches: on unless set to 0
 
-inline char Mode() { static const char m = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_GPUVEG", b, 8) > 0 ? b[0] : '1'; }(); return m; }
+inline char Mode() { static const char m = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_GPUVEG", b, 8) > 0 ? b[0] : '1'; }(); return m; }
 
 // Less geometry for the far sets: whole blades go (a blade is a connected piece), and the ones kept grow wider so the tuft's cover
 // stays about the same. A mesh of few pieces (a branching shrub) loses triangles instead.
@@ -152,7 +152,7 @@ public:
         for (float& x : p.m) x = 0;
         p.At(3, 1) = 1.0f;
         p.At(0, 0) = maxReach_;
-        static const float timeOffset = [] { char b[32] = {}; return GetEnvironmentVariableA("TBD_VEGTIME", b, 32) > 0 ? (float)std::atof(b) : 0.0f; }(); // test: another moment of the wind
+        static const float timeOffset = [] { char b[32] = {}; return tbd::platform::GetEnvA("TBD_VEGTIME", b, 32) > 0 ? (float)std::atof(b) : 0.0f; }(); // test: another moment of the wind
         p.At(0, 1) = time + timeOffset;
         p.At(0, 2) = 0.82f; // the wind's direction and strength
         p.At(0, 3) = 0.57f;
@@ -167,7 +167,7 @@ public:
         static const std::vector<float> test = [] {
             char b[96] = {};
             std::vector<float> out(4);
-            return GetEnvironmentVariableA("TBD_BEND", b, 96) > 0 && sscanf_s(b, "%f %f %f %f", &out[0], &out[1], &out[2], &out[3]) == 4 ? out : std::vector<float>{};
+            return tbd::platform::GetEnvA("TBD_BEND", b, 96) > 0 && sscanf_s(b, "%f %f %f %f", &out[0], &out[1], &out[2], &out[3]) == 4 ? out : std::vector<float>{};
         }();
         if (test.size() == 4) { std::copy(test.begin(), test.end(), characters_[0]); count = 1; }
         std::vector<std::pair<float, tbd::Vec3>> closest;
@@ -188,7 +188,7 @@ public:
     template <class UseMaterial>
     void Draw(tbd::Renderer& r, const tbd::Mat4& viewProj, float time, const UseMaterial& useMaterial) {
         if (!active_ || Mode() == '2') return;
-        static const bool twoPass = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_VEGPREPASS", b, 8) > 0 && b[0] == '1'; }(); // measured slower here: off unless asked
+        static const bool twoPass = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_VEGPREPASS", b, 8) > 0 && b[0] == '1'; }(); // measured slower here: off unless asked
         static const bool farPlain = Flag("TBD_VEGFAR"), tilt = Flag("TBD_VEGTILT"), ecotope = Flag("TBD_VEGECO");
         tbd::Mat4 params = Params(time), farParams = params;
         for (tbd::Mat4* m : {&params, &farParams}) {

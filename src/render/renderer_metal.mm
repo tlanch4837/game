@@ -148,9 +148,9 @@ public:
 
     const char* Name() const override { return "METAL"; }
 
-    bool Init(HWND window, int width, int height, bool validation) override {
+    bool Init(void* nativeWindow, int width, int height, bool validation) override {
         Pool pool;
-        layer_ = static_cast<CA::MetalLayer*>(window);
+        layer_ = static_cast<CA::MetalLayer*>(nativeWindow);
         if (!layer_) { Log("Metal: Init needs a CAMetalLayer"); return false; }
         layer_->retain();
         device_ = MTL::CreateSystemDefaultDevice();
@@ -571,6 +571,21 @@ public:
         counts_.shadowTriangles += meshes_[id].count / 3;
     }
 
+    // One-frame instance rows (cosmetic traffic, zoned buildings): a shared buffer per call, retired with the frame.
+    void DrawShadowInstancedTransient(MeshId id, const float* rows, uint32_t count) override {
+        if (pass_ != Pass::Shadow || count == 0 || !rows || !device_ || id >= meshes_.size() || !meshes_[id].live ||
+            meshes_[id].topology != Topology::Triangles)
+            return;
+        MTL::Buffer* b = device_->newBuffer(rows, (NS::UInteger)count * kInstanceStride, MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined);
+        if (!b) return;
+        UsePipe(shadowInstPipe_, -1, dsShadow_);
+        PushMesh(lightVP_, Mat4::Identity());
+        DrawInstancedMesh(meshes_[id], b, 0, count);
+        RetireObject(b);
+        ++counts_.shadowDraws;
+        counts_.shadowTriangles += (uint64_t)(meshes_[id].count / 3) * count;
+    }
+
     void DrawShadowInstanced(MeshId id, InstanceBufferId buffer, uint32_t first, uint32_t count) override {
         if (pass_ != Pass::Shadow || count == 0 || id >= meshes_.size() || !meshes_[id].live || meshes_[id].topology != Topology::Triangles ||
             buffer >= instanceBuffers_.size() || !instanceBuffers_[buffer])
@@ -588,6 +603,23 @@ public:
     }
 
     void SetScenePrepass(int mode) override { prepass_ = mode >= 0 && mode <= 2 ? mode : 0; }
+
+    void DrawInstancedTransient(MeshId id, const float* rows, uint32_t count, const Mat4& viewProj) override {
+        if (!frameActive_ || count == 0 || !rows || !device_ || resolved_ || id >= meshes_.size() || !meshes_[id].live ||
+            meshes_[id].topology != Topology::Triangles)
+            return;
+        if (!DrawEncoder()) return;
+        MTL::Buffer* b = device_->newBuffer(rows, (NS::UInteger)count * kInstanceStride, MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined);
+        if (!b) return;
+        if (prepass_ == 1) UsePipe(prepassDepthPipe_[1], -1, dsScene_);
+        else UsePipe(instancedPipe_, 0, prepass_ == 2 ? dsEqual_ : dsScene_);
+        PushMesh(viewProj, Mat4::Identity());
+        DrawInstancedMesh(meshes_[id], b, 0, count);
+        RetireObject(b);
+        if (prepass_ == 1) return;
+        ++counts_.draws;
+        counts_.triangles += (uint64_t)(meshes_[id].count / 3) * count;
+    }
 
     void DrawInstanced(MeshId id, InstanceBufferId buffer, uint32_t first, uint32_t count, const Mat4& viewProj) override {
         if (!frameActive_ || count == 0 || resolved_ || id >= meshes_.size() || !meshes_[id].live || meshes_[id].topology != Topology::Triangles ||

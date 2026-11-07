@@ -33,9 +33,12 @@ enum class TerrainAction { None, Save, Load };
 
 constexpr float kTerrainPanelWidth = 296.0f; // unscaled px: room for three segments with an icon and "Flatten"
 
-inline TerrainAction TerrainToolbar(Context& g, const TerrainToolbarState& s, const TerrainStatus& status, float statusLift = 34.0f) {
+// slide: 0 hidden (panel not drawn), 1 fully shown; in between it rides down past the bottom edge.
+inline TerrainAction TerrainToolbar(Context& g, const TerrainToolbarState& s, const TerrainStatus& status, float statusLift = 34.0f, float slide = 1.0f) {
     TerrainAction action = TerrainAction::None;
-    g.BeginPanel("Terrain", Anchor::CenterLeft, 8.0f, 0.0f, kTerrainPanelWidth);
+    if (slide < 0.002f) return action;
+    g.AllowOffscreen(true);
+    g.BeginPanel("Terrain", Anchor::CenterLeft, 8.0f, (1.0f - slide) * (g.In().viewH / g.Scale() * 0.5f + 260.0f), kTerrainPanelWidth);
     static const char* const kModes[] = {"Raise", "Dig", "Flatten"};
     static const Icon kModeIcons[] = {Icon::Raise, Icon::Dig, Icon::Flatten};
     if (s.mode) g.Choice("Mode", kModes, 3, s.mode, kModeIcons);
@@ -47,6 +50,7 @@ inline TerrainAction TerrainToolbar(Context& g, const TerrainToolbarState& s, co
     if (g.Button("Load", Icon::Load)) action = TerrainAction::Load;
     g.EndRow();
     g.EndPanel();
+    g.AllowOffscreen(false);
 
     g.BeginPanel("##terrain status", Anchor::BottomRight, 8.0f, statusLift, 0.0f, 0.0f, 8.0f);
     if (status.cursorOnGround)

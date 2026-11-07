@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8"><title>Power grid props (SPOM preview)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#8aa0b4;font:12px sans-serif;overflow:hidden}#ui{position:fixed;top:6px;left:6px;background:#000a;color:#fff;padding:6px;border-radius:4px}button{margin:1px}</style>
+<div id="ui"></div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {patchSpom} from '/assets/buildings/spom_preview.js';
+const r=new THREE.WebGLRenderer({antialias:true});r.setSize(innerWidth,innerHeight);document.body.appendChild(r.domElement);
+const s=new THREE.Scene();s.background=new THREE.Color(0x8aa0b4);
+const cam=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,0.05,1500);
+const oc=new OrbitControls(cam,r.domElement);
+s.add(new THREE.HemisphereLight(0xdfe8ff,0x6b6a58,0.9));
+const sun=new THREE.DirectionalLight(0xfff0d8,2.2);sun.position.set(-12,20,16);s.add(sun);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:0x6d7f52}));ground.rotation.x=-Math.PI/2;ground.position.y=-0.01;s.add(ground);
+// layout: pylon at -40, poles at 0 and 6, substation at 50
+const items={pylon:[-40,0],pole:[0,0],pole_transformer:[6,0],substation:[50,0]};
+const views={all:[[10,40,90],[10,10,0]],pylon:[[-15,22,30],[-40,18,0]],arm:[[-33,25,6],[-36,22,0]],pylonbase:[[-33,4,9],[-40,3,0]],
+ pole:[[4,7,9],[3,6,0]],polehead:[[1.6,10.6,2.4],[0,10.1,0]],can:[[7.5,8.4,-2.4],[6,8.2,0]],
+ sub:[[68,18,28],[50,3,0]],subeq:[[40,6,8],[45,3.5,0]],xfmr:[[60,5,7],[54,3,0]],fence:[[57,2.2,15],[54,1.4,9]]};
+function go(k){const [p,t]=views[k];cam.position.set(...p);oc.target.set(...t);oc.update();}
+const ui=document.getElementById('ui');ui.innerHTML=Object.keys(views).map(k=>`<button data-k="${k}">${k}</button>`).join('')+' <button id="wf">mesh</button> <span id="t"></span>';
+let wf=false;window.mesh=v=>{wf=v===undefined?!wf:v;const ms=[];s.traverse(o=>{if(o.isMesh&&o!==ground)ms.push(o)});for(const o of ms){if(!o.userData.wf){const l=new THREE.LineSegments(new THREE.WireframeGeometry(o.geometry),new THREE.LineBasicMaterial({color:/spom/.test(o.material.name||'')||o.material.isShaderMaterial?0xff8800:0x00e0ff}));o.add(l);o.userData.wf=l;}o.userData.wf.visible=wf;}document.getElementById('wf').style.background=wf?'#fd0':'';};
+ui.onclick=e=>{if(e.target.id==='wf')mesh();else if(e.target.dataset.k)go(e.target.dataset.k);};window.go=go;
+let n=0,info=[];const L=new GLTFLoader();
+for(const [k,[x,z]] of Object.entries(items))L.load(k+'.glb?t='+Date.now(),g=>{const o=g.scene;o.position.set(x,0,z);patchSpom(o,sun.position);s.add(o);
+ let t=0;o.traverse(q=>{if(q.isMesh)t+=q.geometry.index?q.geometry.index.count/3:q.geometry.attributes.position.count/3});info.push(k+' '+t);
+ document.getElementById('t').textContent=info.join(' · ')+' tris';if(++n==4)window.__ready=true;});
+go(location.hash.slice(1)||'all');
+r.setAnimationLoop(()=>{const w=innerWidth||800,h=innerHeight||600;if(r.domElement.width!==w||r.domElement.height!==h){r.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();}oc.update();r.render(s,cam)});
+</script>

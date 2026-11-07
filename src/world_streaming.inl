@@ -103,7 +103,7 @@ inline bool Streamable(const tbd::Entity& e) {
 
 inline bool EnvFloat(const char* name, float& out) {
     char v[32] = {};
-    if (GetEnvironmentVariableA(name, v, sizeof(v)) == 0) return false;
+    if (tbd::platform::GetEnvA(name, v, sizeof(v)) == 0) return false;
     out = (float)atof(v);
     return true;
 }
@@ -134,8 +134,8 @@ public:
     void Start(tbd::Renderer& r) {
         Stop(r);
         LogSinceProcessStart("scene meshes that do not stream are made");
-        LARGE_INTEGER t0, t1;
-        QueryPerformanceCounter(&t0);
+        int64_t t0, t1;
+        t0 = tbd::platform::Ticks();
         active_ = true;
         shared_ = std::make_shared<Shared>();
         loadRadius_ = 1000.0f;
@@ -177,8 +177,8 @@ public:
                 tbd::Log("Streaming: always loaded: %s, radius %.0f m%s", scene.entities[(size_t)items_[i].entity].name.c_str(), items_[i].world.radius, known[i] ? "" : " (bounds unreadable)");
             }
         }
-        QueryPerformanceCounter(&t1);
-        QueryPerformanceCounter(&loadStart_);
+        t1 = tbd::platform::Ticks();
+        loadStart_ = tbd::platform::Ticks();
         lastFrame_ = {};
         ResetFrameStats();
         idleLogged_ = false;
@@ -221,13 +221,13 @@ public:
 
     void Update(tbd::Renderer& r, const tbd::Vec3& eye) {
         if (!active_) return;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        if (!lastFrame_.QuadPart && !firstFrameLogged_) {
+        int64_t now;
+        now = tbd::platform::Ticks();
+        if (!lastFrame_ && !firstFrameLogged_) {
             firstFrameLogged_ = true;
             LogSinceProcessStart("first frame");
         }
-        if (lastFrame_.QuadPart) {
+        if (lastFrame_) {
             const double ms = Seconds(lastFrame_, now) * 1000.0;
             lastInterval_ = ms;
             if (ms > 100.0) tbd::Log("Streaming: %.0f ms frame; the pump before it took %.1f ms", ms, lastPump_);
@@ -262,8 +262,8 @@ public:
         // Whatever a 120 Hz frame has to spare, never under the minimum, so loading never costs a visible hitch.
         static const double minPump = [] { float v = (float)kPumpMs; EnvFloat("TBD_STREAM_PUMP_MS", v); return std::max(0.25, (double)v); }();
         pumpBudgetMs_ = std::clamp(kFrameTargetMs - (lastInterval_ - lastPump_), minPump, std::max(minPump, kPumpMaxMs));
-        LARGE_INTEGER pump0, pump1;
-        QueryPerformanceCounter(&pump0);
+        int64_t pump0, pump1;
+        pump0 = tbd::platform::Ticks();
         pumpTextureMs_ = pumpMeshMs_ = pumpPublishMs_ = 0.0;
         pumpTextures_ = pumpMeshes_ = 0;
         Pump(r, pump0);
@@ -274,7 +274,7 @@ public:
             deadIndices_.clear();
             g_engine.jobs->RunBackground([vertices, indices]() mutable { vertices.reset(); indices.reset(); });
         }
-        QueryPerformanceCounter(&pump1);
+        pump1 = tbd::platform::Ticks();
         lastPump_ = Seconds(pump0, pump1) * 1000.0;
         if (lastPump_ > 20.0)
             tbd::Log("Streaming: pump %.1f ms: %u textures %.1f ms, %u meshes %.1f ms, publish %.1f ms, other %.1f ms", lastPump_, pumpTextures_, pumpTextureMs_, pumpMeshes_, pumpMeshMs_,
@@ -310,7 +310,7 @@ public:
             }
             idleLogged_ = true;
         } else if (!idle && idleLogged_) {
-            QueryPerformanceCounter(&loadStart_);
+            loadStart_ = tbd::platform::Ticks();
             ResetFrameStats();
             idleLogged_ = false;
         }
@@ -355,8 +355,8 @@ public:
 
     bool CaptureMayStart() const {
         if (!active_ || IsIdle()) return true;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
+        int64_t now;
+        now = tbd::platform::Ticks();
         if (Seconds(loadStart_, now) < kCaptureTimeoutSeconds) return false;
         tbd::Log("Streaming: capture gave up waiting after %.0f s; this capture is NOT of a settled scene", kCaptureTimeoutSeconds);
         return true;
@@ -431,14 +431,10 @@ public:
     }
 
 private:
-    double Seconds(const LARGE_INTEGER& a, const LARGE_INTEGER& b) const { return (double)(b.QuadPart - a.QuadPart) / (double)g_engine.tickFreq.QuadPart; }
+    double Seconds(const int64_t& a, const int64_t& b) const { return (double)(b - a) / (double)g_engine.tickFreq; }
 
     static void LogSinceProcessStart(const char* what) {
-        FILETIME created, a, b, c, nowFt;
-        GetProcessTimes(GetCurrentProcess(), &created, &a, &b, &c);
-        GetSystemTimeAsFileTime(&nowFt);
-        const auto ticks = [](const FILETIME& f) { return ((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime; };
-        tbd::Log("Streaming: %s %.2f s after process start", what, (double)(ticks(nowFt) - ticks(created)) / 1e7);
+        tbd::Log("Streaming: %s %.2f s after process start", what, tbd::platform::SecondsSinceProcessStart());
     }
 
     void ResetFrameStats() { frames_ = 0; worstFrame_ = 0; worstPump_ = 0; hitches33_ = 0; hitches100_ = 0; }
@@ -454,11 +450,10 @@ private:
         // A hard ceiling on the process's own memory, whatever the estimates say: past 40% of the machine's RAM (TBD_STREAM_RAM_PCT)
         // no new asset starts until uploads and evictions bring it down. Paging the whole PC is never worth a farther building.
         static const uint64_t ramCap = [] {
-            MEMORYSTATUSEX m = {};
-            m.dwLength = sizeof(m);
+            const uint64_t total = tbd::platform::PhysicalMemoryBytes();
             float pct = 40.0f;
             EnvFloat("TBD_STREAM_RAM_PCT", pct);
-            return GlobalMemoryStatusEx(&m) ? (uint64_t)((double)m.ullTotalPhys * std::clamp(pct, 10.0f, 90.0f) / 100.0) : (6ull << 30);
+            return total ? (uint64_t)((double)total * std::clamp(pct, 10.0f, 90.0f) / 100.0) : (6ull << 30);
         }();
         if (PrivateBytes() > ramCap) {
             if (!ramCapLogged_) { ramCapLogged_ = true; tbd::Log("Streaming: process memory over %llu MB: new loads wait", (unsigned long long)(ramCap >> 20)); }
@@ -556,9 +551,7 @@ private:
 
     // The process's private bytes, for the RAM ceiling in Launch.
     static uint64_t PrivateBytes() {
-        PROCESS_MEMORY_COUNTERS_EX pmc = {};
-        pmc.cb = sizeof(pmc);
-        return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)) ? pmc.PrivateUsage : 0;
+        return tbd::platform::ProcessPrivateBytes();
     }
     static void Finish(const std::shared_ptr<LoadJob>& job, const std::shared_ptr<Shared>& shared) {
         if (job->remaining.fetch_sub(1) != 1) return;
@@ -806,10 +799,10 @@ private:
     }
 
     // Takes finished jobs, nearest first, and creates their GPU objects until the frame's time is spent.
-    void Pump(tbd::Renderer& r, const LARGE_INTEGER& start) {
+    void Pump(tbd::Renderer& r, const int64_t& start) {
         const auto spent = [&] {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
+            int64_t now;
+            now = tbd::platform::Ticks();
             return Seconds(start, now) * 1000.0 >= pumpBudgetMs_;
         };
         for (;;) {
@@ -847,10 +840,10 @@ private:
                 }
                 const uint64_t cost = EstimateCost(job);
                 item.lastCost = cost;
-                LARGE_INTEGER m0, m1;
-                QueryPerformanceCounter(&m0);
+                int64_t m0, m1;
+                m0 = tbd::platform::Ticks();
                 const bool room = MakeRoom(r, item, cost);
-                QueryPerformanceCounter(&m1);
+                m1 = tbd::platform::Ticks();
                 if (Seconds(m0, m1) > 0.008) tbd::Log("Streaming: slow eviction for %s: %.1f ms", job.path.c_str(), Seconds(m0, m1) * 1000.0);
                 if (!room) {
                     item.state = ItemState::Denied;
@@ -872,10 +865,10 @@ private:
                     if (entry.state != TextureEntry::Ready) { ++job.nextTexture; continue; }
                     mips = entry.mips;
                 }
-                LARGE_INTEGER t0, t1;
-                QueryPerformanceCounter(&t0);
+                int64_t t0, t1;
+                t0 = tbd::platform::Ticks();
                 const tbd::TextureId id = r.CreateTextureNoWait(mips->levels, mips->dims);
-                QueryPerformanceCounter(&t1);
+                t1 = tbd::platform::Ticks();
                 pumpTextureMs_ += Seconds(t0, t1) * 1000.0;
                 ++pumpTextures_;
                 if (Seconds(t0, t1) > 0.03) tbd::Log("Streaming: slow texture %dx%d: %.1f ms", mips->dims[0].first, mips->dims[0].second, Seconds(t0, t1) * 1000.0);
@@ -894,10 +887,10 @@ private:
             }
             while (job.nextPart < job.parts.size()) {
                 LoadedPart& part = job.parts[job.nextPart];
-                LARGE_INTEGER t0, t1;
-                QueryPerformanceCounter(&t0);
+                int64_t t0, t1;
+                t0 = tbd::platform::Ticks();
                 const tbd::MeshId id = r.CreateMeshNoWait(part.vertices.data(), (uint32_t)part.vertices.size(), part.indices.data(), (uint32_t)part.indices.size());
-                QueryPerformanceCounter(&t1);
+                t1 = tbd::platform::Ticks();
                 pumpMeshMs_ += Seconds(t0, t1) * 1000.0;
                 ++pumpMeshes_;
                 if (Seconds(t0, t1) > 0.03) tbd::Log("Streaming: slow mesh, %zu vertices: %.1f ms", part.vertices.size(), Seconds(t0, t1) * 1000.0);
@@ -936,10 +929,10 @@ private:
                 ++job.nextPart;
                 if (spent()) return;
             }
-            LARGE_INTEGER p0, p1;
-            QueryPerformanceCounter(&p0);
+            int64_t p0, p1;
+            p0 = tbd::platform::Ticks();
             Publish(r, job, item);
-            QueryPerformanceCounter(&p1);
+            p1 = tbd::platform::Ticks();
             pumpPublishMs_ += Seconds(p0, p1) * 1000.0;
             if (Seconds(p0, p1) > 0.008) tbd::Log("Streaming: slow publish of %s, %zu source parts: %.1f ms", job.path.c_str(), job.source.size(), Seconds(p0, p1) * 1000.0);
             {
@@ -1021,8 +1014,8 @@ private:
             return;
         }
         SetMeshBounds(handle, job.whole);
-        LARGE_INTEGER q0, q1, q2;
-        QueryPerformanceCounter(&q0);
+        int64_t q0, q1, q2;
+        q0 = tbd::platform::Ticks();
         // A street mesh has tens of thousands of source ranges but a handful of materials: each is looked up once, and the
         // parts themselves were made by the worker.
         std::vector<MatPart>& source = job.sourceParts;
@@ -1048,9 +1041,9 @@ private:
             p.normal = last.normal;
             if (s.skin) p.surface = SkinSurfaceFor(job.path);
         }
-        QueryPerformanceCounter(&q1);
+        q1 = tbd::platform::Ticks();
         g_engine.sourceParts[handle] = std::move(source);
-        QueryPerformanceCounter(&q2);
+        q2 = tbd::platform::Ticks();
         if (Seconds(q0, q2) > 0.008) tbd::Log("Streaming: publish of %zu source parts: textures %.1f ms, store %.1f ms", job.source.size(), Seconds(q0, q1) * 1000.0, Seconds(q1, q2) * 1000.0);
         item.partMeshes.clear();
         for (const MatPart& p : job.made) item.partMeshes.push_back(p.mesh);
@@ -1085,8 +1078,8 @@ private:
     bool ramCapLogged_ = false;
     tbd::TextureId pores_ = tbd::kNoTexture;
     bool poresTried_ = false, skinMapsUploaded_ = false;
-    LARGE_INTEGER loadStart_ = {}, lastFrame_ = {};
-    LARGE_INTEGER lastProgress_ = {};
+    int64_t loadStart_ = {}, lastFrame_ = {};
+    int64_t lastProgress_ = {};
     double pumpBudgetMs_ = kPumpMs, lastInterval_ = 100.0;
     double worstFrame_ = 0, worstPump_ = 0, lastPump_ = 0;
     bool firstFrameLogged_ = false;
@@ -1107,7 +1100,7 @@ struct ShotTour {
     int settledFrames = 0;
     ShotTour() {
         char v[96] = {};
-        wanted = GetEnvironmentVariableA("TBD_SHOT2", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", to, to + 1, to + 2, &speed) == 4;
+        wanted = tbd::platform::GetEnvA("TBD_SHOT2", v, sizeof(v)) > 0 && sscanf(v, "%f %f %f %f", to, to + 1, to + 2, &speed) == 4;
     }
     bool Done() const { return !wanted || finished; }
     void Advance(float* target, float dt, bool idle) {
