@@ -353,7 +353,7 @@ struct Engine {
     ULONGLONG toastUntil = 0;
 
     Drag drag = Drag::None;
-    UINT dragButton = 0; // the WM_*BUTTONDOWN message that started it
+    int dragButton = -1; // the button that started it: 0 left, 1 right, 2 middle
     int lastX = 0, lastY = 0;
 };
 
@@ -3088,16 +3088,16 @@ void RoadRenameBegin() {
     g_roadRename = {true, g_hoverSeg, g_roadNames.Label(g_hoverSeg)};
 }
 // Keys while the rename box is open: returns true (it swallows every key so tool shortcuts don't fire while typing).
-bool RoadRenameKey(WPARAM wparam) {
-    if (wparam == (int)tbd::platform::Key::Escape) g_roadRename.active = false;
-    else if (wparam == (int)tbd::platform::Key::Return) {
+bool RoadRenameKey(int key) {
+    if (key == (int)tbd::platform::Key::Escape) g_roadRename.active = false;
+    else if (key == (int)tbd::platform::Key::Return) {
         g_roadRename.active = false;
         g_roadNames.Rename(g_roads.net, g_roadRename.seg, g_roadRename.text); // empty text clears back to the generated name
-    } else if (wparam == (int)tbd::platform::Key::Back && !g_roadRename.text.empty()) g_roadRename.text.pop_back();
+    } else if (key == (int)tbd::platform::Key::Back && !g_roadRename.text.empty()) g_roadRename.text.pop_back();
     return true;
 }
-void RoadRenameChar(WPARAM wparam) {
-    if (wparam >= 32 && wparam < 127 && g_roadRename.text.size() < 32) g_roadRename.text.push_back((char)wparam);
+void RoadRenameChar(uint32_t ch) {
+    if (ch >= 32 && ch < 127 && g_roadRename.text.size() < 32) g_roadRename.text.push_back((char)ch);
 }
 
 // Length / slope / angle / elevation chips over the world, and the reason a placement is refused, beside the cursor.
@@ -4589,38 +4589,54 @@ Drag DragForTool(tbd::ToolId tool) {
     }
 }
 
-void BeginDrag(HWND hwnd, Drag mode, UINT button, LPARAM lparam) {
-    if (g_engine.drag != Drag::None) return;
-    SetFocus(hwnd); // so shortcuts work after clicking in a text field
-    if (mode == Drag::None) return;
+// Game side of a drag: true when one started (the shell then captures the pointer) or ended (it releases it).
+bool BeginDragAt(Drag mode, int button, int x, int y) {
+    if (mode == Drag::None) return false;
     g_engine.drag = mode;
     g_engine.dragButton = button;
-    g_engine.lastX = GET_X_LPARAM(lparam);
-    g_engine.lastY = GET_Y_LPARAM(lparam);
-    SetCapture(hwnd);
+    g_engine.lastX = x;
+    g_engine.lastY = y;
+    return true;
 }
 
-void EndDrag(UINT button) {
-    if (g_engine.drag != Drag::None && g_engine.dragButton == button) {
-        g_engine.drag = Drag::None;
-        g_engine.gizmo.End();
-        ReleaseCapture();
-    }
+bool EndDragAt(int button) {
+    if (g_engine.drag == Drag::None || g_engine.dragButton != button) return false;
+    g_engine.drag = Drag::None;
+    g_engine.gizmo.End();
+    return true;
 }
 
-tbd::Ray MouseRay(LPARAM lparam) {
-    return g_engine.camera.ScreenRay((float)GET_X_LPARAM(lparam), (float)GET_Y_LPARAM(lparam), (float)g_engine.vpW,
-                                     (float)g_engine.vpH);
+tbd::Ray MouseRayAt(int x, int y) {
+    return g_engine.camera.ScreenRay((float)x, (float)y, (float)g_engine.vpW, (float)g_engine.vpH);
 }
+
+// ---- Windows side of the above: message decoding, focus and capture
+int ButtonOf(UINT msg) {
+    return msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP || msg == WM_RBUTTONDBLCLK ? 1
+         : msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP || msg == WM_MBUTTONDBLCLK ? 2 : 0;
+}
+
+void BeginDrag(HWND hwnd, Drag mode, UINT msg, LPARAM lparam) {
+    if (g_engine.drag != Drag::None) return;
+    SetFocus(hwnd); // so shortcuts work after clicking in a text field
+    if (BeginDragAt(mode, ButtonOf(msg), GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) SetCapture(hwnd);
+}
+
+void EndDrag(UINT msg) {
+    if (EndDragAt(ButtonOf(msg))) ReleaseCapture();
+}
+
+tbd::Ray MouseRay(LPARAM lparam) { return MouseRayAt(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)); }
 
 // Left click with a non-view tool: a Create tool places a new entity; otherwise grab a gizmo handle if one
 // is under the cursor, or select whatever entity is under the cursor (or nothing).
-void LeftClickInViewport(HWND hwnd, UINT msg, LPARAM lparam) {
-    const tbd::Ray ray = MouseRay(lparam);
+// True when a gizmo drag started (the shell captures the pointer).
+bool LeftClickAt(int x, int y, int button) {
+    const tbd::Ray ray = MouseRayAt(x, y);
     tbd::MeshKind kind;
     if (CreateKind(g_engine.tools.Active(), kind)) {
         PlaceEntity(kind, ray);
-        return;
+        return false;
     }
     g_engine.gizmo.mode = tbd::GizmoModeForTool(g_engine.tools.Active());
     tbd::Entity* sel = g_engine.scene.Selected();
@@ -4628,22 +4644,25 @@ void LeftClickInViewport(HWND hwnd, UINT msg, LPARAM lparam) {
         const int axis = g_engine.gizmo.HitTest(ray, g_engine.camera, *sel, (float)g_engine.vpH, DpiScale());
         if (axis >= 0 && g_engine.gizmo.Begin(axis, ray, g_engine.camera, *sel, (float)g_engine.vpH, DpiScale())) {
             g_engine.drag = Drag::Transform;
-            g_engine.dragButton = msg;
-            SetCapture(hwnd);
-            return;
+            g_engine.dragButton = button;
+            return true;
         }
     }
     g_engine.scene.selected = g_engine.scene.Pick(ray);
+    return false;
 }
 
-void ContinueDrag(LPARAM lparam) {
-    const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
+void LeftClickInViewport(HWND hwnd, UINT msg, LPARAM lparam) {
+    if (LeftClickAt(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), ButtonOf(msg))) SetCapture(hwnd);
+}
+
+void ContinueDrag(int x, int y) {
     const float dx = (float)(x - g_engine.lastX), dy = (float)(y - g_engine.lastY);
     g_engine.lastX = x;
     g_engine.lastY = y;
     switch (g_engine.drag) {
     case Drag::Transform:
-        if (tbd::Entity* sel = g_engine.scene.Selected()) g_engine.gizmo.Update(MouseRay(lparam), *sel);
+        if (tbd::Entity* sel = g_engine.scene.Selected()) g_engine.gizmo.Update(MouseRayAt(x, y), *sel);
         break;
     case Drag::Orbit: g_engine.camera.Orbit(dx * tbd::character::CameraScale(), dy * tbd::character::CameraScale()); break; // creator open: slower
     case Drag::Fly: g_engine.camera.Look(dx * tbd::character::CameraScale(), dy * tbd::character::CameraScale()); break;
@@ -4655,38 +4674,37 @@ void ContinueDrag(LPARAM lparam) {
 }
 
 // Keys that don't tear down windows (those are menu accelerators). Returns true when the key was used.
-bool HandleKey(WPARAM wparam, LPARAM lparam) {
-    if (g_roadRename.active) return RoadRenameKey(wparam);
-    if (wparam == (int)tbd::platform::Key::F2 && g_roads.active && g_hoverSeg >= 0) {
+bool HandleKey(int key, bool repeat) {
+    if (g_roadRename.active) return RoadRenameKey(key);
+    if (key == (int)tbd::platform::Key::F2 && g_roads.active && g_hoverSeg >= 0) {
         RoadRenameBegin();
         return true;
     }
     if (g_play.active) { // Play owns the keyboard: Esc stops, G walks / flies, WASD etc. are polled by PlayMode::Update
-        if (wparam == (int)tbd::platform::Key::Escape) OnTransport(2, nullptr);
-        else if (wparam == 'G' && !(lparam & (1 << 30))) {
+        if (key == (int)tbd::platform::Key::Escape) OnTransport(2, nullptr);
+        else if (key == 'G' && !repeat) {
             if (g_player.Active()) { // the character waits where he is while the camera flies
                 g_play.player = !g_play.player;
                 Toast(g_play.player ? "PLAYER" : "FLYING");
             } else if (const char* message = g_play.ToggleWalk(g_engine.camera, PlayGround)) Toast(message);
-        } else if (wparam == 'V' && !(lparam & (1 << 30)) && g_player.Active() && g_play.player) {
+        } else if (key == 'V' && !repeat && g_player.Active() && g_play.player) {
             g_player.ToggleView();
             Toast(g_player.FirstPerson() ? "THIRD PERSON" : "FIRST PERSON"); // it flips at the next frame
-        } else if ((wparam == 'R' || wparam == 'B' || wparam == 'K' || wparam == 'H') && !(lparam & (1 << 30)) && g_player.Active() && g_play.player) {
-            g_player.Request(wparam == 'R' ? 1 : wparam == 'B' ? 2 : wparam == 'K' ? 3 : 6); // ragdoll, explosion behind him, knock out, punch
-            Toast(wparam == 'R' ? "RAGDOLL" : wparam == 'B' ? "BLAST" : wparam == 'K' ? "KNOCKOUT" : "PUNCH");
+        } else if ((key == 'R' || key == 'B' || key == 'K' || key == 'H') && !repeat && g_player.Active() && g_play.player) {
+            g_player.Request(key == 'R' ? 1 : key == 'B' ? 2 : key == 'K' ? 3 : 6); // ragdoll, explosion behind him, knock out, punch
+            Toast(key == 'R' ? "RAGDOLL" : key == 'B' ? "BLAST" : key == 'K' ? "KNOCKOUT" : "PUNCH");
         }
         return true;
     }
     if (g_engine.drag == Drag::Fly) return true; // WASD belongs to the camera while flying
     const bool ctrl = tbd::platform::KeyDownSync(tbd::platform::Key::Control), alt = tbd::platform::KeyDownSync(tbd::platform::Key::Alt);
-    const bool repeat = (lparam & (1 << 30)) != 0;
-    if (wparam == (int)tbd::platform::Key::Space && !repeat && !ctrl && !alt) { // the game clock: pause / resume
+    if (key == (int)tbd::platform::Key::Space && !repeat && !ctrl && !alt) { // the game clock: pause / resume
         g_clock.paused = !g_clock.paused;
         return true;
     }
-    if (g_indTool.active && IndustryKey(wparam)) return true;
+    if (g_indTool.active && IndustryKey(key)) return true;
     if (g_utilTool.active) { // the utilities tool's keys: Esc ends the line / drops the item / closes, Page Up / Down elevation, , . rotate
-        switch (wparam) {
+        switch (key) {
         case (int)tbd::platform::Key::Escape:
             if (g_utilIn.laying) g_utilIn.laying = false;
             else {
@@ -4701,20 +4719,20 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         }
     }
     if (g_transportTool.active) { // the transport tool's keys: Esc drops the building / closes, , . rotate
-        switch (wparam) {
+        switch (key) {
         case (int)tbd::platform::Key::Escape: g_transportTool.Escape(); return true;
         case (int)tbd::platform::Key::Return: if (g_transportTool.lines) { g_transportTool.finishLine = true; return true; } break;
         case (int)tbd::platform::Key::Comma: g_transportTool.Rotate(15.0f); return true;
         case (int)tbd::platform::Key::Period: g_transportTool.Rotate(-15.0f); return true;
         }
     }
-    if (g_zoneTool.active && wparam == (int)tbd::platform::Key::Escape) {
+    if (g_zoneTool.active && key == (int)tbd::platform::Key::Escape) {
         if (g_zoneIn.held) g_zoneIn.held = false;
         else g_zoneTool.active = false;
         return true;
     }
     if (g_roads.active) { // the road tool's keys (CS2): Esc cancels / closes, Page Up / Down elevation, , . rotate, Ctrl+Z / Y
-        switch (wparam) {
+        switch (key) {
         case (int)tbd::platform::Key::Escape:
             if (g_roads.Pending()) g_roads.Cancel();
             else g_roads.Close();
@@ -4728,7 +4746,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         case 'Y': if (ctrl) { g_roads.Redo(); return true; } break;
         }
     }
-    switch (wparam) {
+    switch (key) {
     case (int)tbd::platform::Key::Home:
         g_engine.camera = tbd::OrbitCamera();
         return true;
@@ -4739,39 +4757,39 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         g_engine.scene.selected = -1;
         return true;
     }
-    if (!repeat && wparam == (int)tbd::platform::Key::F8) { SaveTerrainEdits(); return true; }
-    if (!repeat && ctrl && tbd::platform::KeyDownSync(tbd::platform::Key::Shift) && wparam == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
-    if (!repeat && wparam == (int)tbd::platform::Key::F11) { LoadTerrainEdits(); return true; }
+    if (!repeat && key == (int)tbd::platform::Key::F8) { SaveTerrainEdits(); return true; }
+    if (!repeat && ctrl && tbd::platform::KeyDownSync(tbd::platform::Key::Shift) && key == 'B') { CityBuildingsCycleForce(); return true; } // Track R debug
+    if (!repeat && key == (int)tbd::platform::Key::F11) { LoadTerrainEdits(); return true; }
     if (ctrl || alt) return false;
-    if (!repeat && wparam == 'T') {
+    if (!repeat && key == 'T') {
         g_terrainEdit.on = !g_terrainEdit.on;
         Toast(g_terrainEdit.on ? "TERRAIN EDIT ON - DRAG PAINTS THE TOOLBAR MODE, SHIFT DIGS, CTRL FLATTENS" : "TERRAIN EDIT OFF");
         return true;
     }
-    if (!repeat && wparam == 'U') { // in-game GUI (F1-F7, F9, F10 are menu accelerators, F8 / F11 save / load terrain)
+    if (!repeat && key == 'U') { // in-game GUI (F1-F7, F9, F10 are menu accelerators, F8 / F11 save / load terrain)
         g_guiVisible = !g_guiVisible;
         Toast(g_guiVisible ? "GAME GUI ON (U HIDES)" : "GAME GUI OFF (U SHOWS)");
         return true;
     }
-    if (g_terrainEdit.on && (wparam == (int)tbd::platform::Key::LeftBracket || wparam == (int)tbd::platform::Key::RightBracket)) {
-        g_terrainEdit.radius = std::clamp(g_terrainEdit.radius * (wparam == (int)tbd::platform::Key::RightBracket ? 1.25f : 0.8f), 4.0f, 300.0f);
+    if (g_terrainEdit.on && (key == (int)tbd::platform::Key::LeftBracket || key == (int)tbd::platform::Key::RightBracket)) {
+        g_terrainEdit.radius = std::clamp(g_terrainEdit.radius * (key == (int)tbd::platform::Key::RightBracket ? 1.25f : 0.8f), 4.0f, 300.0f);
         Toast("BRUSH RADIUS " + std::to_string((int)g_terrainEdit.radius) + " M");
         return true;
     }
-    if (wparam == 'F') {
+    if (key == 'F') {
         FrameSelected();
         return true;
     }
-    if ((wparam == 'N' || wparam == 'P' || wparam == 'I') && !repeat) { // NPC authoring: N cycles the routine, P adds a patrol point, I sets the night door
+    if ((key == 'N' || key == 'P' || key == 'I') && !repeat) { // NPC authoring: N cycles the routine, P adds a patrol point, I sets the night door
         if (tbd::Entity* sel = g_engine.scene.Selected()) {
             tbd::NpcInfo& npc = sel->npc;
             static const char* routines[] = {"townsfolk", "guard", "loiterer", "follower", "skittish"};
-            if (wparam == 'N') {
+            if (key == 'N') {
                 int at = -1;
                 for (int i = 0; i < 5; ++i) if (npc.enabled && npc.routine == routines[i]) at = i;
                 if (at == 4) { npc = tbd::NpcInfo(); Toast("NPC OFF"); }
                 else { npc.enabled = true; npc.routine = routines[at + 1]; Toast("NPC " + npc.routine); }
-            } else if (npc.enabled && wparam == 'P') {
+            } else if (npc.enabled && key == 'P') {
                 npc.patrol.push_back(g_engine.camera.target);
                 Toast("PATROL POINT " + std::to_string(npc.patrol.size()));
             } else if (npc.enabled) {
@@ -4782,7 +4800,7 @@ bool HandleKey(WPARAM wparam, LPARAM lparam) {
         }
         return true;
     }
-    if (g_engine.tools.ActivateByKey((wchar_t)wparam)) { // Q W E R, 1 2 3, H O Z
+    if (g_engine.tools.ActivateByKey((wchar_t)key)) { // Q W E R, 1 2 3, H O Z
         tbd::Toolbar_Refresh(g_engine.toolbar);
         return true;
     }
@@ -4843,46 +4861,78 @@ void GenerateOutdoorLods() {
 // screen (the last finished frame's panels, see gui.h), the moves and release of a press it took, the wheel over a panel.
 // Everything else goes on to the engine unchanged; presses the engine keeps are still reported (claim = false) so the GUI
 // does not light up widgets under an engine drag.
-bool GuiMouse(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    const float x = (float)GET_X_LPARAM(lparam), y = (float)GET_Y_LPARAM(lparam);
-    switch (msg) {
-    case WM_MOUSEMOVE:
+// The in-game GUI's share of pointer input (portable). Returns true when the GUI used it. `fx` says what the shell must do
+// with the OS pointer: give the window focus, capture the pointer, or release it.
+enum class GuiPtr { Move, LeftDown, LeftUp, OtherDown, Wheel, CaptureLost };
+struct GuiPtrEffect { bool focus = false, capture = false, release = false; };
+bool GuiPointer(GuiPtr ev, float x, float y, float wheelNotches, GuiPtrEffect& fx) {
+    switch (ev) {
+    case GuiPtr::Move:
         g_guiInput.Move(x, y);
         return g_guiOwnsButton; // a slider drag: the engine must not hover gizmos or paint underneath
-    case WM_LBUTTONDOWN:
-    case WM_LBUTTONDBLCLK: {
+    case GuiPtr::LeftDown: {
         const bool mine = g_engine.drag == Drag::None && !tbd::platform::KeyDownSync(tbd::platform::Key::Alt) && g_gui.WantsMouseAt(x, y);
         g_guiInput.Down(x, y, mine);
         if (!mine) return false;
         g_guiOwnsButton = true;
-        SetFocus(hwnd);   // shortcuts keep working after a toolbar click
-        SetCapture(hwnd); // a slider drag keeps going outside the window until release
+        fx.focus = true;   // shortcuts keep working after a toolbar click
+        fx.capture = true; // a slider drag keeps going outside the window until release
         return true;
     }
-    case WM_LBUTTONUP:
+    case GuiPtr::LeftUp:
         g_guiInput.Up(x, y);
         if (!g_guiOwnsButton) return false;
         g_guiOwnsButton = false;
-        ReleaseCapture();
+        fx.release = true;
         return true;
-    case WM_RBUTTONDOWN:
-    case WM_MBUTTONDOWN: // no fly / pan starting on a panel
+    case GuiPtr::OtherDown: // no fly / pan starting on a panel
         return g_engine.drag == Drag::None && g_gui.WantsMouseAt(x, y);
-    case WM_MOUSEWHEEL: { // wheel messages carry screen coordinates
-        POINT pt = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-        ScreenToClient(hwnd, &pt);
-        if (g_engine.drag != Drag::None || !g_gui.WantsMouseAt((float)pt.x, (float)pt.y)) return false;
-        g_guiInput.Wheel((float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA);
+    case GuiPtr::Wheel:
+        if (g_engine.drag != Drag::None || !g_gui.WantsMouseAt(x, y)) return false;
+        g_guiInput.Wheel(wheelNotches);
         return true;
-    }
-    case WM_CAPTURECHANGED:
-        if (g_guiOwnsButton && (HWND)lparam != hwnd) { // capture taken away mid-press: let go
+    case GuiPtr::CaptureLost: // capture taken away mid-press: let go
+        if (g_guiOwnsButton) {
             g_guiOwnsButton = false;
             g_guiInput.Up(-1e9f, -1e9f);
         }
         return false;
     }
     return false;
+}
+
+// Windows side: decode the message, run GuiPointer, apply focus / capture in the order the GUI asked.
+bool GuiMouse(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    float x = (float)GET_X_LPARAM(lparam), y = (float)GET_Y_LPARAM(lparam), wheel = 0.0f;
+    GuiPtr ev;
+    switch (msg) {
+    case WM_MOUSEMOVE: ev = GuiPtr::Move; break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK: ev = GuiPtr::LeftDown; break;
+    case WM_LBUTTONUP: ev = GuiPtr::LeftUp; break;
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN: ev = GuiPtr::OtherDown; break;
+    case WM_MOUSEWHEEL: { // wheel messages carry screen coordinates
+        POINT pt = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(hwnd, &pt);
+        x = (float)pt.x;
+        y = (float)pt.y;
+        wheel = (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA;
+        ev = GuiPtr::Wheel;
+        break;
+    }
+    case WM_CAPTURECHANGED:
+        if ((HWND)lparam == hwnd) return false;
+        ev = GuiPtr::CaptureLost;
+        break;
+    default: return false;
+    }
+    GuiPtrEffect fx;
+    const bool used = GuiPointer(ev, x, y, wheel, fx);
+    if (fx.focus) SetFocus(hwnd);
+    if (fx.capture) SetCapture(hwnd);
+    if (fx.release) ReleaseCapture();
+    return used;
 }
 
 LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -4903,12 +4953,12 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return 0;
     case WM_CHAR:
         if (g_roadRename.active) {
-            RoadRenameChar(wparam);
+            RoadRenameChar((uint32_t)wparam);
             return 0;
         }
         break;
     case WM_KEYDOWN:
-        if (HandleKey(wparam, lparam)) return 0;
+        if (HandleKey((int)wparam, (lparam & (1 << 30)) != 0)) return 0;
         break;
     case WM_LBUTTONDOWN:
         if (tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) {
@@ -5001,7 +5051,7 @@ LRESULT CALLBACK ViewportProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         g_terrainEdit.mouseX = GET_X_LPARAM(lparam);
         g_terrainEdit.mouseY = GET_Y_LPARAM(lparam);
         if (g_engine.drag != Drag::None) {
-            ContinueDrag(lparam);
+            ContinueDrag(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
         } else {
             // Highlight the handle under the cursor.
             const tbd::Entity* sel = g_engine.scene.Selected();
@@ -5363,12 +5413,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         break;
     case WM_CHAR:
         if (g_roadRename.active) {
-            RoadRenameChar(wparam);
+            RoadRenameChar((uint32_t)wparam);
             return 0;
         }
         break;
     case WM_KEYDOWN:
-        if (HandleKey(wparam, lparam)) return 0;
+        if (HandleKey((int)wparam, (lparam & (1 << 30)) != 0)) return 0;
         break;
 
     case WM_LBUTTONDOWN: {
@@ -5453,12 +5503,12 @@ LRESULT CALLBACK FloatProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         return 0;
     case WM_CHAR:
         if (g_roadRename.active) {
-            RoadRenameChar(wparam);
+            RoadRenameChar((uint32_t)wparam);
             return 0;
         }
         break;
     case WM_KEYDOWN:
-        if (HandleKey(wparam, lparam)) return 0;
+        if (HandleKey((int)wparam, (lparam & (1 << 30)) != 0)) return 0;
         break;
     case WM_ERASEBKGND:
         return 1;
