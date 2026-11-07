@@ -12,4 +12,12 @@ void Alert(const std::wstring& text);
 // controls ignore keys while another app has focus.
 bool AppHasFocus();
 
+// The window / app title (Windows: the main window's caption).
+void SetTitle(const std::wstring& title);
+
+// Editor panels that mirror game state (Windows only; no-ops elsewhere): a scene was saved (the content browser
+// lists it), the active tool changed (the toolbar shows it).
+void OnSceneSaved();
+void OnToolChanged();
+
 } // namespace tbd::shell

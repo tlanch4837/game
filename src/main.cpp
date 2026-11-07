@@ -637,13 +637,16 @@ void Layout() {
 
 // ----------------------------------------------------------------- renderer
 
+// GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES: a file or folder is there.
+bool FileExists(const std::wstring& path) { std::error_code ec; return std::filesystem::exists(path, ec); }
+
 void UpdateTitle() {
     std::wstring title = g_engine.titleBase;
     if (!g_engine.scenePath.empty()) {
         const size_t cut = g_engine.scenePath.find_last_of(L"\\/");
         title += L" - " + g_engine.scenePath.substr(cut == std::wstring::npos ? 0 : cut + 1);
     }
-    SetWindowTextW(g_shell.window, title.c_str());
+    tbd::shell::SetTitle(title);
 }
 
 // Imported files, parsed once per path (duplicating an entity or reloading a scene doesn't re-read the file).
@@ -757,7 +760,7 @@ bool LidRelaxedVertices(const tbd::Entity& e, std::vector<tbd::Vertex>* rest, st
     if (e.mesh != tbd::MeshKind::Imported) return false;
     std::string file = e.meshPath.substr(0, e.meshPath.find('#'));
     file = file.substr(0, file.find_last_of('.')) + ".lid_relaxed.glb";
-    if (GetFileAttributesW(tbd::Utf8ToWide(file).c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    if (!FileExists(tbd::Utf8ToWide(file))) return false;
     tbd::Entity r = e;
     r.meshPath = file;
     const auto noHair = [](std::vector<tbd::Vertex> v) { v.erase(std::remove_if(v.begin(), v.end(), [](const tbd::Vertex& x) { return tbd::IsHairVertex(x.a); }), v.end()); return v; };
@@ -1002,7 +1005,7 @@ tbd::TextureId SkinSurfaceFor(const std::string& meshPath) {
     if (dir.empty() || !g_engine.renderer) return SkinSurfaceMap();
     auto it = g_charSurfaces.find(file); // per mesh first: a mesh with its own region mask has its own copy of the surface
     if (it == g_charSurfaces.end()) it = g_charSurfaces.find(dir);
-    if (it != g_charSurfaces.end() && (it->first == file || GetFileAttributesW(tbd::Utf8ToWide(file.substr(0, file.find_last_of('.')) + ".skin_extra.png").c_str()) == INVALID_FILE_ATTRIBUTES))
+    if (it != g_charSurfaces.end() && (it->first == file || !FileExists(tbd::Utf8ToWide(file.substr(0, file.find_last_of('.')) + ".skin_extra.png"))))
         return it->second != tbd::kNoTexture ? it->second : SkinSurfaceMap();
     // <mesh>.skin_extra.png beside the mesh: the extra map (SetSurfaceExtra) for that mesh's own UVs; its G picks the pore
     // tile per region (mesh.hlsl SkinPoreNormal). The surface is shared per folder, so such a mesh gets its own copy.
@@ -1934,7 +1937,7 @@ void UpdateInspector() {
 
 std::wstring ScenesFolder() {
     const std::wstring dir = tbd::Join(g_engine.assetsRoot, L"Scenes");
-    CreateDirectoryW(dir.c_str(), nullptr);
+    { std::error_code ec; std::filesystem::create_directory(dir, ec); }
     return dir;
 }
 
@@ -1999,7 +2002,7 @@ bool SaveScene(bool saveAs) {
     }
     g_engine.scenePath = path;
     UpdateTitle();
-    if (g_shell.contentBrowser) tbd::ContentBrowser_Refresh(g_shell.contentBrowser);
+    tbd::shell::OnSceneSaved();
     Toast("SAVED " + ToastName(path));
     return true;
 }
@@ -4802,7 +4805,7 @@ bool HandleKey(int key, bool repeat) {
         return true;
     }
     if (g_engine.tools.ActivateByKey((wchar_t)key)) { // Q W E R, 1 2 3, H O Z
-        tbd::Toolbar_Refresh(g_shell.toolbar);
+        tbd::shell::OnToolChanged();
         return true;
     }
     return false;
@@ -5792,6 +5795,9 @@ std::wstring AssetsFolderFor(const std::wstring& projectFolder) {
 } // namespace
 
 // ---- tbd::shell (src/game/shell.h), Windows implementation
+void tbd::shell::SetTitle(const std::wstring& title) { SetWindowTextW(g_shell.window, title.c_str()); }
+void tbd::shell::OnSceneSaved() { if (g_shell.contentBrowser) tbd::ContentBrowser_Refresh(g_shell.contentBrowser); }
+void tbd::shell::OnToolChanged() { tbd::Toolbar_Refresh(g_shell.toolbar); }
 void tbd::shell::Alert(const std::wstring& text) { MessageBoxW(g_shell.window, text.c_str(), kWindowTitle, MB_ICONWARNING); }
 bool tbd::shell::AppHasFocus() {
     DWORD pid = 0;
