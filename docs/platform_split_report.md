@@ -50,7 +50,17 @@ and cells (40) as before the split, and `TBD_CITY_STRESS=200` matches the origin
 
 ## Codemagic
 
-BUILD_RESULT_PLACEHOLDER
+Workflow `ios-sideload-ipa` on branch `ios-metal`, 2026-11-07:
+
+| Build | Commit | Result | What it showed |
+|---|---|---|---|
+| #6 | 248a972 | failed (compile) | `std::ifstream` from `std::wstring` (MSVC extension) in mesh_import.h, mesh_lod.h, physics.cpp; `_wfopen` in glb_bounds.h |
+| #7 | c0b111d | failed (compile) | `std::filesystem::path::c_str()` is narrow on Apple (city_stress.inl) |
+| #8 | 0edd544 | failed (link) | everything compiled; the Jolt / Recast / Luau static libraries were not found because build_ios.sh moves CONFIGURATION_BUILD_DIR |
+| #9 | 0c6923a | **passed** | `cityengine.ipa` produced (unsigned, arm64, iOS 16+), with the game module, Jolt, Recast, Luau and the Metal backend |
+
+Not yet seen: the app running on the iPad. Install the build #9 IPA with Sideloadly and check that it launches, draws the
+city map (terrain, roads; no models or textures without assets), and that touch, pan and pinch move the camera.
 
 ## Next steps
 
