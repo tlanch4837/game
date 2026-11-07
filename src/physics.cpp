@@ -23,6 +23,8 @@
 #include <Jolt/RegisterTypes.h>
 
 #include "platform/platform.h"
+
+#include <filesystem>
 #undef min
 #undef max
 
@@ -332,7 +334,7 @@ void SetUp(const std::vector<Placement>& placements, const std::vector<InstanceF
         for (const Placement& p : placements) place(p);
         for (const InstanceFile& f : files) {
             if (assetOf(f.path)->kind == Collision::None) continue;
-            std::ifstream in(f.file, std::ios::binary);
+            std::ifstream in(std::filesystem::path(f.file), std::ios::binary);
             if (!in) continue;
             const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             const size_t count = bytes.size() / (12 * sizeof(float));

@@ -245,7 +245,7 @@ bool SaveCityGame(int slot) {
 bool LoadCityGame(int slot) {
     using namespace tbd::city;
     using namespace tbd::scene_io_detail;
-    std::ifstream in(GameSavePath(slot, L".tbdgame"), std::ios::binary);
+    std::ifstream in(std::filesystem::path(GameSavePath(slot, L".tbdgame")), std::ios::binary);
     if (!in) {
         Toast("NO SAVED GAME IN SLOT " + std::to_string(slot + 1));
         return false;
