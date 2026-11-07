@@ -21,11 +21,11 @@ struct State {
     int phase = 0; // 0 waiting, 1 roads built (waiting for the zone grid), 2 lots spawned, 3 views, 4 done
     tbd::city::V2 centre{};
     float size = 0;
-    ULONGLONG phaseStart = 0;
+    uint64_t phaseStart = 0;
     int view = -1;
     int waitFrames = 0;
     bool grow = false;        // TBD_CITY_GROW=<lots>: a district sized for that many lots, painted, left to grow
-    ULONGLONG growLast = 0, growEnd = 0;
+    uint64_t growLast = 0, growEnd = 0;
 };
 inline State g;
 
@@ -203,13 +203,13 @@ void CityStressSync() {
             g_clock.speed = 2;
             g_clock.paused = false;
             g.growLast = tbd::platform::TickCountMs();
-            g.growEnd = g.growLast + (ULONGLONG)EnvInt("TBD_CITY_GROW_SECONDS", 300) * 1000ull;
+            g.growEnd = g.growLast + (uint64_t)EnvInt("TBD_CITY_GROW_SECONDS", 300) * 1000ull;
             SetView(std::clamp(EnvInt("TBD_CITY_GROW_VIEW", 1), 0, 2));
         }
         return;
     }
     if (g.phase == 5) { // grow mode: a status line every 15 s, then quit (or stay) at the end
-        const ULONGLONG now = tbd::platform::TickCountMs();
+        const uint64_t now = tbd::platform::TickCountMs();
         if (now - g.growLast >= 15000) {
             g.growLast = now;
             int lots = 0, building = 0, l2 = 0;
@@ -234,7 +234,7 @@ void CityStressSync() {
         }
         // TBD_CITY_GROW_SAVETEST=1: two thirds in, save to slot 10, load it back, compare (S8).
         static int saveStep = 0;
-        static ULONGLONG saveAt = 0;
+        static uint64_t saveAt = 0;
         static uint64_t popBefore = 0, lotsBefore = 0;
         static int64_t moneyBefore = 0;
         static size_t peopleBefore = 0;
@@ -243,7 +243,7 @@ void CityStressSync() {
             for (const tbd::city::Lot& l : g_zones.lots) n += l.alive;
             return n;
         };
-        static const ULONGLONG growStart = now;
+        static const uint64_t growStart = now;
         if (EnvInt("TBD_CITY_GROW_SAVETEST", 0) && saveStep == 0 && now >= growStart + (g.growEnd - growStart) * 2 / 3) {
             g_clock.paused = true; // a still city: the numbers before and after can be compared exactly
             for (const tbd::city::Lot& l : g_zones.lots) { // a few tracked people
@@ -270,7 +270,7 @@ void CityStressSync() {
         if (now >= g.growEnd && saveStep != 1) {
             tbd::Log("City grow: done");
             g.phase = 4;
-            if (EnvInt("TBD_CITY_STRESS_QUIT", 0)) PostQuitMessage(0);
+            if (EnvInt("TBD_CITY_STRESS_QUIT", 0)) tbd::shell::Quit();
         }
         return;
     }
@@ -282,7 +282,7 @@ void CityStressSync() {
         g.phaseStart = tbd::platform::TickCountMs();
         return;
     }
-    static const ULONGLONG hold = (ULONGLONG)EnvInt("TBD_CITY_STRESS_HOLD", 12) * 1000ull;
+    static const uint64_t hold = (uint64_t)EnvInt("TBD_CITY_STRESS_HOLD", 12) * 1000ull;
     if (tbd::platform::TickCountMs() - g.phaseStart < hold) return;
     if (++g.view < 3) {
         SetView(g.view);
@@ -291,5 +291,5 @@ void CityStressSync() {
     }
     tbd::Log("City stress: views done");
     g.phase = 4;
-    if (EnvInt("TBD_CITY_STRESS_QUIT", 0)) PostQuitMessage(0);
+    if (EnvInt("TBD_CITY_STRESS_QUIT", 0)) tbd::shell::Quit();
 }

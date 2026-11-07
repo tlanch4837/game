@@ -1,7 +1,7 @@
 // In-engine profiler overlay (F3, View > Profiler Overlay): a frame time graph of the last 240 frames with 8.33 ms (120 fps)
 // and 16.6 ms (60 fps) lines and the worst frame highlighted, CPU and cull time, draw/triangle/instance counts and the
 // streamer's numbers. Drawn through the renderer's transient 2D path like the other viewport overlays, in the editor theme's
-// palette (ui_theme.h). Header only; main.cpp feeds it a Sample per frame.
+// palette (ui_palette.h). Header only; main.cpp feeds it a Sample per frame.
 //
 // Costs nothing when off: BeginFrame() and Draw() return at once, and main.cpp only gathers the cull numbers while
 // Enabled() is true. It can never turn on during a TBD_SHOT or TBD_CAPTURE run (Blocked()), so captures stay clean.
@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "editor_draw.h"
-#include "ui_theme.h"
+#include "ui_palette.h"
 
 namespace tbd {
 namespace profiler {
@@ -76,7 +76,7 @@ struct GpuPasses {
 
 namespace detail {
 
-inline Vec3 Rgb(COLORREF c) { return {GetRValue(c) / 255.0f, GetGValue(c) / 255.0f, GetBValue(c) / 255.0f}; }
+inline Vec3 Rgb(uint32_t c) { return {theme::RedOf(c) / 255.0f, theme::GreenOf(c) / 255.0f, theme::BlueOf(c) / 255.0f}; }
 
 inline std::string Grouped(uint64_t v) {
     std::string s = std::to_string(v);
@@ -96,7 +96,7 @@ class Overlay {
 public:
     // TBD_SHOT / TBD_CAPTURE runs are for clean captures and benchmarks: the profiler refuses to run in them.
     static bool Blocked() {
-        static const bool blocked = GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) > 0 || GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) > 0;
+        static const bool blocked = tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) > 0 || tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0) > 0;
         return blocked;
     }
 

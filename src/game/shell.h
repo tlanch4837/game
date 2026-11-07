@@ -2,6 +2,9 @@
 // What the game asks of the platform shell that hosts it (Windows: main.cpp's window code; iOS: main_ios.mm).
 // Portable declarations only. Keep it to calls the game code actually makes.
 #include <string>
+#include <vector>
+
+#include "../render/vertex.h"
 
 namespace tbd { class Renderer; }
 
@@ -33,10 +36,22 @@ void Transport(int action);
 // scene is drawn. CaptureThisFrame / AfterCapture: a screenshot request for this frame. AfterFrame: after EndFrame.
 bool DevReloadTick();
 void PumpRemote();
-void EditorTick();
+void EditorTick(float dt);
 void RefreshInspector();
 bool CaptureThisFrame();
 void AfterCapture(Renderer& r);
 void AfterFrame(Renderer& r);
+
+// The hot-reloaded gameplay code (Windows: bin\game.dll); dt is 0 outside Play.
+void GameplayTick(float dt, bool playing);
+// Leave the app (Windows: PostQuitMessage). Used when a capture run is finished.
+void Quit();
+
+// Editor panels that work in the 3D view (Windows: the Character Creator; elsewhere they are absent).
+float EditorCameraScale(); // camera speed factor: below 1 while a panel wants fine moves
+bool EditorBusy();         // a panel is still working: captures wait for it
+bool EditorHidesHeadHair();
+bool EditorBrushLines(std::vector<Vertex>& lines);
+bool EditorClayDraw(std::vector<Vertex>& tris, std::vector<Vertex>& lines);
 
 } // namespace tbd::shell

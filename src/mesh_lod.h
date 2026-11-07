@@ -4,10 +4,13 @@
 // tile edges and texture layout intact at the price of less reduction on very seamy meshes. One pass makes the whole chain:
 // a snapshot each time the live triangle count crosses the next target. Renderer-agnostic, touches no shared state.
 #pragma once
+#include "platform/platform.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <queue>
 #include <string>
@@ -335,7 +338,9 @@ inline bool SaveLodLevels(const std::wstring& path, const std::vector<LodLevel>&
         }
         if (!f) return false;
     }
-    return MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    std::error_code ec; // like MoveFileExW(MOVEFILE_REPLACE_EXISTING): replaces an existing file
+    std::filesystem::rename(temp, path, ec);
+    return !ec;
 }
 
 } // namespace tbd

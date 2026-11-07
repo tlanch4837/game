@@ -1,12 +1,11 @@
 // The game: engine core, scene loading, terrain, city tools and sim, frame rendering, viewport input.
 // Textually included inside an anonymous namespace by the platform shell (Windows: src/main.cpp).
 // No Windows code here: what the game needs from its host goes through src/game/shell.h and src/platform.
-const COLORREF kClearColor = RGB(26, 26, 26);
 
 enum class Drag { None, Orbit, Pan, Zoom, Transform, Fly, Terrain };
 enum class Api { D3D12, Vulkan };
 
-enum Command : UINT {
+enum Command : unsigned {
     IDM_NEW = 100, IDM_OPEN, IDM_SAVE, IDM_SAVEAS, IDM_EXIT,
     IDM_DUPLICATE, IDM_DELETE,
     IDM_POPOUT, IDM_BROWSER, IDM_RESETCAM, IDM_FRAME,
@@ -184,7 +183,6 @@ struct Engine {
     tbd::Terrain terrain;
     tbd::Sun sun;
     tbd::Gizmo gizmo;
-    tbd::FaceDriver faceDriver; // plays face mocap clips on entities
     tbd::SkeletalAnimator animator; // poses and skins entities that have an animation clip
     float playStartHour = -1.0f; // toolbar Play: the sun's hour when playback started (Stop returns to it); < 0 = not playing
 
@@ -229,15 +227,12 @@ tbd::PhysicsWorld g_physics;     // made on the first Play, never in a TBD_SHOT 
 tbd::ai::NpcSystem g_npcs;       // AI agents while playing; see ai/npc_system.h
 tbd::PlayerCharacter g_player;   // Wyatt on a capsule while playing; see player_character.h
 tbd::PlayerScript g_playtest;    // TBD_PLAYTEST
-tbd::hot::Shaders g_hotShaders;  // shader files changing (and F5) reload them on both backends; see hot_reload.h
-tbd::hot::Game g_game;           // bin\game.dll, swapped in whenever it is rebuilt; see hot_reload.h
 tbd::script::LuauHost g_script;  // Luau gameplay scripts from <project>\Scripts; see docs/scripting_spec.md
 std::vector<tbd::Entity> g_gamePlaySnapshot; // the scene's transforms when Play started, put back at Stop
 double g_lastAnimMs = 0.0;       // poses and skinning, last frame, for the playtest's trace
-tbd::FaceSessionLog g_faceLog; // debug video of the Face Mocap Live tab
 
 const char* ApiName(Api api) { return api == Api::D3D12 ? "D3D12" : "VULKAN"; }
-int Sx(int v) { return MulDiv(v, g_engine.dpi, 96); }
+int Sx(int v) { return tbd::platform::MulDiv(v, g_engine.dpi, 96); }
 float DpiScale() { return (float)g_engine.dpi / 96.0f; }
 
 void Toast(const std::string& text) {
@@ -953,40 +948,6 @@ void ReplaceEntityVertices(int index, const std::vector<tbd::Vertex>& v, const s
 }
 
 // Each material part of entity `i` with its decoded color texture.
-bool EntityFitParts(int i, std::vector<tbd::FitPart>* out) {
-    if (i < 0 || i >= (int)g_engine.scene.entities.size()) return false;
-    const tbd::Entity& e = g_engine.scene.entities[i];
-    if (e.mesh != tbd::MeshKind::Imported) return false;
-    static std::map<std::string, std::vector<tbd::FitPart>> cache;
-    auto it = cache.find(e.meshPath);
-    if (it == cache.end()) {
-        std::vector<tbd::FitPart> parts;
-        const tbd::ImportedModel& model = ImportedModels()[e.meshPath];
-        std::map<int, std::pair<std::vector<uint8_t>, std::pair<int, int>>> decoded;
-        for (const tbd::ImportedPart& p : model.parts) {
-            tbd::FitPart fp;
-            fp.first = p.first;
-            fp.count = p.count;
-            fp.hair = p.hair;
-            if (p.albedo >= 0 && p.albedo < (int)model.images.size()) {
-                auto d = decoded.find(p.albedo);
-                if (d == decoded.end()) {
-                    std::vector<uint8_t> px;
-                    int w = 0, h = 0;
-                    tbd::DecodeImage(model.images[(size_t)p.albedo].data(), model.images[(size_t)p.albedo].size(), px, w, h);
-                    d = decoded.emplace(p.albedo, std::make_pair(std::move(px), std::make_pair(w, h))).first;
-                }
-                fp.rgba = d->second.first;
-                fp.w = d->second.second.first;
-                fp.h = d->second.second.second;
-            }
-            parts.push_back(std::move(fp));
-        }
-        it = cache.emplace(e.meshPath, std::move(parts)).first;
-    }
-    *out = it->second;
-    return !out->empty();
-}
 
 // Into the current shadow pass: entity `i`'s parts visible to `pass` (merged static parts hold the geometry), else its mesh.
 void DrawEntityCaster(tbd::Renderer& r, size_t i, uint8_t pass) {
@@ -1099,7 +1060,7 @@ struct SceneLoad {
     std::shared_ptr<EntityBuild> build;
     tbd::MeshId handle = tbd::kInvalidMesh;
     std::vector<MatPart> made;
-    ULONGLONG started = 0;
+    uint64_t started = 0;
 };
 SceneLoad g_load;
 bool SceneLoadActive() { return g_load.phase != SceneLoad::Idle; }
@@ -1579,7 +1540,7 @@ float FrameDelta() {
 void UpdateFly(float dt) {
     if (g_engine.drag != Drag::Fly) return;
     using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
-    const float speed = g_engine.flySpeed * (down(PK::Shift) ? 4.0f : 1.0f) * dt * tbd::character::CameraScale() * tbd::character::CameraScale(); // creator open: ~1/10 fly speed
+    const float speed = g_engine.flySpeed * (down(PK::Shift) ? 4.0f : 1.0f) * dt * tbd::shell::EditorCameraScale() * tbd::shell::EditorCameraScale(); // creator open: ~1/10 fly speed
     const float forward = (down(PK::W) ? 1.0f : 0.0f) - (down(PK::S) ? 1.0f : 0.0f);
     const float right = (down(PK::D) ? 1.0f : 0.0f) - (down(PK::A) ? 1.0f : 0.0f);
     const float up = ((down(PK::E) || down(PK::Space)) ? 1.0f : 0.0f) - ((down(PK::Q) || down(PK::C)) ? 1.0f : 0.0f);
@@ -1614,7 +1575,7 @@ void UpdateCityCam(float dt) {
     const float turn = (down(PK::E) ? 1.0f : 0.0f) - (down(PK::Q) ? 1.0f : 0.0f);
     const float tilt = (down(PK::X) ? 1.0f : 0.0f) - (down(PK::Z) ? 1.0f : 0.0f);
     if (fw == 0.0f && rt == 0.0f && turn == 0.0f && tilt == 0.0f) return;
-    const float fast = down(PK::Shift) ? 3.0f : 1.0f, k = tbd::character::CameraScale();
+    const float fast = down(PK::Shift) ? 3.0f : 1.0f, k = tbd::shell::EditorCameraScale();
     tbd::Vec3 f = cam.Forward(); f.y = 0.0f;
     const float fl = std::sqrt(f.x * f.x + f.z * f.z);
     if (fl > 1e-4f) f = f * (1.0f / fl);
@@ -2112,9 +2073,9 @@ void RenderFrame() {
     // TBD_HITCHLOG=<ms>: logs every gap between frames longer than that, in any run: the way to catch a freeze in the editor or in Play.
     static const int hitchMs = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_HITCHLOG", v, sizeof(v)) > 0 ? atoi(v) : 0; }();
     if (hitchMs > 0) {
-        static ULONGLONG lastFrame = 0;
-        const ULONGLONG t = tbd::platform::TickCountMs();
-        if (lastFrame && t - lastFrame >= (ULONGLONG)hitchMs) tbd::Log("Hitch: %llu ms between frames at %llu ms", t - lastFrame, t);
+        static uint64_t lastFrame = 0;
+        const uint64_t t = tbd::platform::TickCountMs();
+        if (lastFrame && t - lastFrame >= (uint64_t)hitchMs) tbd::Log("Hitch: %llu ms between frames at %llu ms", t - lastFrame, t);
         lastFrame = t;
     }
     SceneLoadTick(16.0);
@@ -2218,7 +2179,7 @@ void RenderFrame() {
         }
         else g_play.Update(g_engine.camera, dt, PlayGround);
     }
-    g_game.Tick(g_play.active ? dt : 0.0f, g_play.active);
+    tbd::shell::GameplayTick(g_play.active ? dt : 0.0f, g_play.active); // the hot-reloaded gameplay DLL (Windows)
     g_script.PollReload(); // saving a .luau file swaps its code in, in or out of Play (self kept); about 4 checks a second
     if (g_play.active) g_script.Update(dt);
     if (g_play.active && g_npcs.Active() && g_engine.jobs) {
@@ -2240,8 +2201,7 @@ void RenderFrame() {
                             g_play.active && g_play.walking, tbd::kPlayEyeHeight); // no-op unless audio.h's Start succeeded
     UpdateFly(dt);
     UpdateCityCam(dt);
-    g_engine.faceDriver.Update(dt, g_engine.scene);
-    tbd::shell::EditorTick(); // editor panels: face tab, Character Creator, the scene's undo checkpoint
+    tbd::shell::EditorTick(dt); // editor panels: face tab, Character Creator, the scene's undo checkpoint
     if (g_engine.sun.animate) g_engine.sun.Advance(dt);
     // The sun's shadow map follows the camera's focus; it covers more ground the farther the camera is.
     tbd::Lighting light = tbd::ComputeLighting(g_engine.sun);
@@ -2267,7 +2227,7 @@ void RenderFrame() {
                 fprintf(out, "%-20s scene %6.2f frame %6.2f\n", steps[step].name, scene / kCount, frame / kCount);
                 fflush(out);
                 seen = 0; scene = frame = 0;
-                if (++step == (int)std::size(steps)) { fclose(out); out = nullptr; PostQuitMessage(0); step = 0; }
+                if (++step == (int)std::size(steps)) { fclose(out); out = nullptr; tbd::shell::Quit(); step = 0; }
             }
             featureOff = steps[step].bits;
         }
@@ -2369,7 +2329,7 @@ void RenderFrame() {
             if (captureFramesLeft > 0) captureFramesLeft = benchFrames + 61;
         }
     }
-    if (captureFramesLeft > 0 && (SceneLoadActive() || !g_stream.CaptureMayStart() || !shotTour.Done() || !ground_bake::Settled() || tbd::character::Busy())) captureFramesLeft = benchFrames + 61 + settleFrames;
+    if (captureFramesLeft > 0 && (SceneLoadActive() || !g_stream.CaptureMayStart() || !shotTour.Done() || !ground_bake::Settled() || tbd::shell::EditorBusy())) captureFramesLeft = benchFrames + 61 + settleFrames;
 
     const float clear[4] = {24.0f / 255.0f, 20.0f / 255.0f, 16.0f / 255.0f, 1.0f}; // matches kClearColor
     // World and model-view-projection matrices of every entity, into preallocated slots (no locks: each index is
@@ -2675,7 +2635,7 @@ void RenderFrame() {
                 if (parts[k].lodMax > 0.0f && parts[k].hair && !(partFlags & kVisibleCamera)) partFlags = 0; // another hair level casts
                 // terrain's other sets; hair cards cast only into the tight character map, through their alpha (DrawShadowCasterCutout)
                 if (!parts[k].caster) partFlags &= (uint8_t)~(parts[k].hair ? kVisibleSun : (kVisibleSun | kVisibleTight));
-                if (parts[k].hair && tbd::character::HideHeadHair()) partFlags = 0; // Hair Maker: the clay is being worked
+                if (parts[k].hair && tbd::shell::EditorHidesHeadHair()) partFlags = 0; // Hair Maker: the clay is being worked
                 if (!noCull && !LodShows(parts[k], partWorld, eye, pixelScale)) partFlags = 0; // another level of its chain draws, shadows included
                 if (!noCull && parts[k].interior && !shellNear[i]) partFlags = 0; // the shell has gone coarse: nobody sees in
                 if (!noCull && parts[k].interior && roomAllowed[i] && parts[k].roomMask && !(parts[k].roomMask & roomAllowed[i])) partFlags = 0; // another room, behind walls
@@ -3124,9 +3084,9 @@ void RenderFrame() {
     }
     static const bool navDebug = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_NAVDEBUG", v, sizeof(v)) > 0 && v[0] != '0'; }();
     if (navDebug && !testShot && g_npcs.Active()) g_npcs.DebugDraw(r, viewProj, g_player.Placed() ? g_player.State().feet : g_engine.camera.target);
-    if (static std::vector<tbd::Vertex> brush; !testShot && !g_play.active && (brush.clear(), tbd::character::BrushLines(brush))) // Character Creator hair brush
+    if (static std::vector<tbd::Vertex> brush; !testShot && !g_play.active && (brush.clear(), tbd::shell::EditorBrushLines(brush))) // Character Creator hair brush
         r.DrawTransient(brush.data(), (uint32_t)brush.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), false);
-    if (static std::vector<tbd::Vertex> clayTris, clayLines; !g_play.active && (clayTris.clear(), clayLines.clear(), tbd::character::ClayDraw(clayTris, clayLines))) { // Hair Maker clay + comb
+    if (static std::vector<tbd::Vertex> clayTris, clayLines; !g_play.active && (clayTris.clear(), clayLines.clear(), tbd::shell::EditorClayDraw(clayTris, clayLines))) { // Hair Maker clay + comb
         if (!clayTris.empty()) r.DrawTransient(clayTris.data(), (uint32_t)clayTris.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
         if (!clayLines.empty()) r.DrawTransient(clayLines.data(), (uint32_t)clayLines.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), true);
     }
@@ -3233,7 +3193,7 @@ void RenderFrame() {
         if (g_npcs.Active() && tbd::platform::GetEnvA("TBD_NPC_REPORT", reportPath, tbd::platform::kMaxPath) > 0)
             if (FILE* f = fopen(reportPath, "w")) { g_npcs.WriteReport(f, r.Name()); fclose(f); }
         tbd::Log("Playtest: done");
-        PostQuitMessage(0);
+        tbd::shell::Quit();
     }
     if (captureFrames == 1) { g_vegetation.LogCounts(r); g_water.LogRipples(r); }
     // TBD_BENCH=<file.txt> with TBD_CAPTURE: frame times after a 60 frame warm-up, written when the capture quits.
@@ -3293,12 +3253,7 @@ void RenderFrame() {
                 fclose(f);
             }
         }
-        PostQuitMessage(0);
-    }
-    if (g_faceLog.Active()) {
-        static std::vector<uint8_t> shot;
-        int shotW = 0, shotH = 0;
-        if (r.CapturedFrame(shot, shotW, shotH)) g_faceLog.OnFrame(shot, shotW, shotH);
+        tbd::shell::Quit();
     }
     tbd::shell::AfterFrame(r);
     g_engine.stats.AddDraws(r.Counts().draws, r.Counts().triangles);
@@ -3404,10 +3359,10 @@ void ContinueDrag(int x, int y) {
     case Drag::Transform:
         if (tbd::Entity* sel = g_engine.scene.Selected()) g_engine.gizmo.Update(MouseRayAt(x, y), *sel);
         break;
-    case Drag::Orbit: g_engine.camera.Orbit(dx * tbd::character::CameraScale(), dy * tbd::character::CameraScale()); break; // creator open: slower
-    case Drag::Fly: g_engine.camera.Look(dx * tbd::character::CameraScale(), dy * tbd::character::CameraScale()); break;
-    case Drag::Pan: g_engine.camera.Pan(dx * tbd::character::CameraScale(), dy * tbd::character::CameraScale(), (float)g_engine.vpH); break;
-    case Drag::Zoom: g_engine.camera.Zoom(-dy * 0.1f * tbd::character::CameraScale()); break; // drag up = closer
+    case Drag::Orbit: g_engine.camera.Orbit(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break; // creator open: slower
+    case Drag::Fly: g_engine.camera.Look(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break;
+    case Drag::Pan: g_engine.camera.Pan(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale(), (float)g_engine.vpH); break;
+    case Drag::Zoom: g_engine.camera.Zoom(-dy * 0.1f * tbd::shell::EditorCameraScale()); break; // drag up = closer
     case Drag::Terrain: break; // the brush follows lastX / lastY, applied once per frame
     case Drag::None: break;
     }
@@ -3788,7 +3743,7 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         const float notches = e.wheel;
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
-            const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::character::CameraScale();
+            const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();
             const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
             g_camSmooth.goal = std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
             g_camSmooth.lastSet = g_engine.camera.distance;

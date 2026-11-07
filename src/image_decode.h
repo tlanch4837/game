@@ -3,7 +3,7 @@
 #pragma once
 #include "platform/platform.h"
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(TBD_NO_WIN32_HEADERS) // the probe build (tools/probe_game) checks portability on Windows
 // Windows-only callers (src/character/creator.cpp) use WIC directly and have always got it through this header.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

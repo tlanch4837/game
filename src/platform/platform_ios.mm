@@ -131,6 +131,14 @@ uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) {
 
 uint64_t TickCountMs() { return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1000000ull; }
 
+int MulDiv(int a, int b, int c) {
+    if (c == 0) return -1; // as Windows
+    const long long p = (long long)a * b;
+    const long long ap = p < 0 ? -p : p, ac = c < 0 ? -(long long)c : c;
+    const long long q = (ap + ac / 2) / ac; // magnitude, halves rounded up
+    return (int)(((p < 0) != (c < 0)) ? -q : q);
+}
+
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) {
     return std::fopen(WideToUtf8(path).c_str(), WideToUtf8(mode).c_str());
 }
@@ -151,6 +159,8 @@ uint64_t ProcessPrivateBytes() {
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count) == KERN_SUCCESS ? vm.phys_footprint : 0;
 }
+
+uint64_t PhysicalMemoryBytes() { return (uint64_t)[NSProcessInfo processInfo].physicalMemory; }
 
 // Fed by the UIKit shell (touches as MouseLeft, hardware keyboard keys) on the main thread; read on the main thread.
 static std::atomic<bool> g_keys[256];

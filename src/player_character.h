@@ -2,6 +2,8 @@
 // the speed he actually moves at (so running into a wall stops his legs), and his wake in the water. Part of main's includes;
 // the renderer is not touched. PlayerScript is TBD_PLAYTEST: fixed-step scripted input that writes frames and a trace.
 #pragma once
+#include "platform/platform.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -378,7 +380,7 @@ public:
 
     bool Start() {
         char v[1024] = {};
-        if (GetEnvironmentVariableA("TBD_PLAYTEST", v, sizeof(v)) == 0) return false;
+        if (tbd::platform::GetEnvA("TBD_PLAYTEST", v, sizeof(v)) == 0) return false;
         std::string text = v;
         if (text == "script" || text == "1") text = kDefault;
         size_t at = 0;
@@ -391,7 +393,7 @@ public:
             at = end + 1;
         }
         char d[512] = {};
-        dir_ = GetEnvironmentVariableA("TBD_PLAYTEST_DIR", d, sizeof(d)) > 0 ? d : ".";
+        dir_ = tbd::platform::GetEnvA("TBD_PLAYTEST_DIR", d, sizeof(d)) > 0 ? d : ".";
         active_ = true;
         return true;
     }

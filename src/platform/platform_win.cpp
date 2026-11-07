@@ -104,6 +104,7 @@ static_assert((int)Key::A == 'A' && (int)Key::Q == 'Q' && (int)Key::W == 'W' && 
 uint32_t GetEnvA(const char* name, char* buf, uint32_t size) { return GetEnvironmentVariableA(name, buf, size); }
 uint32_t GetEnvW(const wchar_t* name, wchar_t* buf, uint32_t size) { return GetEnvironmentVariableW(name, buf, size); }
 uint64_t TickCountMs() { return GetTickCount64(); }
+int MulDiv(int a, int b, int c) { return ::MulDiv(a, b, c); }
 static_assert(kMaxPath == MAX_PATH);
 FILE* WOpen(const wchar_t* path, const wchar_t* mode) { return _wfopen(path, mode); }
 
@@ -121,6 +122,12 @@ uint64_t ProcessPrivateBytes() {
     return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)) ? pmc.PrivateUsage : 0;
 }
 
+uint64_t PhysicalMemoryBytes() {
+    MEMORYSTATUSEX m = {};
+    m.dwLength = sizeof(m);
+    return GlobalMemoryStatusEx(&m) ? m.ullTotalPhys : 0;
+}
+
 bool KeyDownAsync(Key k) { return (GetAsyncKeyState((int)k) & 0x8000) != 0; }
 bool KeyDownSync(Key k) { return (GetKeyState((int)k) & 0x8000) != 0; }
 void SetKeyDown(Key, bool) {}
@@ -136,3 +143,7 @@ void LowerThreadPriority(std::thread& t) {
 static_assert(sizeof(tbd::BmpFileHeader) == sizeof(BITMAPFILEHEADER) && sizeof(tbd::BmpInfoHeader) == sizeof(BITMAPINFOHEADER));
 static_assert(offsetof(tbd::BmpFileHeader, bfOffBits) == offsetof(BITMAPFILEHEADER, bfOffBits));
 static_assert(offsetof(tbd::BmpInfoHeader, biCompression) == offsetof(BITMAPINFOHEADER, biCompression) && tbd::kBmpRgb == BI_RGB);
+
+// The portable palette (src/ui_palette.h) uses COLORREF's layout.
+#include "../ui_palette.h"
+static_assert(tbd::theme::Rgb8(0x12, 0x34, 0x56) == RGB(0x12, 0x34, 0x56));

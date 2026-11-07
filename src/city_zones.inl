@@ -384,7 +384,7 @@ inline std::vector<std::array<tbd::Vec3, 25>> geo;
 inline std::vector<uint8_t> geoOk;
 inline uint64_t geoFor = ~0ull, builtFor = ~0ull;
 inline bool builtTool = false;
-inline ULONGLONG lastBuild = 0;
+inline uint64_t lastBuild = 0;
 
 inline const std::array<tbd::Vec3, 25>& Geo(size_t ci) {
     if (!geoOk[ci]) {
@@ -414,7 +414,7 @@ inline void Sync(tbd::Renderer& r) {
         builtFor = ~0ull;
     }
     if (builtFor == g_zones.version && builtTool == g_zoneTool.active) return;
-    const ULONGLONG now = tbd::platform::TickCountMs();
+    const uint64_t now = tbd::platform::TickCountMs();
     if (!g_zoneTool.active && builtTool == g_zoneTool.active && mesh != tbd::kInvalidMesh && now - lastBuild < 500) return;
     builtFor = g_zones.version, builtTool = g_zoneTool.active, lastBuild = now;
     static std::vector<tbd::Vertex> v;

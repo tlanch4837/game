@@ -4,6 +4,8 @@
 // into the vertices; the material's base color factor becomes the vertex color. Both formats are right-handed
 // with counter-clockwise front faces, which matches the engine's primitives, so no winding flip is applied.
 #pragma once
+#include "platform/platform.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -226,13 +228,7 @@ private:
 
 // ---------------------------------------------------------------- shared helpers
 // Paths are UTF-8 (that is how scenes store them); Windows needs UTF-16 to open non-ASCII names.
-inline std::wstring Utf8ToWide(const std::string& s) {
-    if (s.empty()) return std::wstring();
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring w((size_t)n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
-    return w;
-}
+inline std::wstring Utf8ToWide(const std::string& s) { return platform::Utf8ToWide(s); }
 
 inline bool ReadFile(const std::string& path, std::vector<uint8_t>& out) {
     std::ifstream f(Utf8ToWide(path), std::ios::binary);

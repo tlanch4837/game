@@ -450,11 +450,10 @@ private:
         // A hard ceiling on the process's own memory, whatever the estimates say: past 40% of the machine's RAM (TBD_STREAM_RAM_PCT)
         // no new asset starts until uploads and evictions bring it down. Paging the whole PC is never worth a farther building.
         static const uint64_t ramCap = [] {
-            MEMORYSTATUSEX m = {};
-            m.dwLength = sizeof(m);
+            const uint64_t total = tbd::platform::PhysicalMemoryBytes();
             float pct = 40.0f;
             EnvFloat("TBD_STREAM_RAM_PCT", pct);
-            return GlobalMemoryStatusEx(&m) ? (uint64_t)((double)m.ullTotalPhys * std::clamp(pct, 10.0f, 90.0f) / 100.0) : (6ull << 30);
+            return total ? (uint64_t)((double)total * std::clamp(pct, 10.0f, 90.0f) / 100.0) : (6ull << 30);
         }();
         if (PrivateBytes() > ramCap) {
             if (!ramCapLogged_) { ramCapLogged_ = true; tbd::Log("Streaming: process memory over %llu MB: new loads wait", (unsigned long long)(ramCap >> 20)); }

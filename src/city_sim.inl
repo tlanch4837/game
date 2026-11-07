@@ -568,7 +568,7 @@ void SimSync(float realDt) {
 
     static const bool log = sim_host::EnvDouble("TBD_SIM_LOG", 0.0) > 0.0;
     if (log) {
-        static ULONGLONG lastLog = tbd::platform::TickCountMs();
+        static uint64_t lastLog = tbd::platform::TickCountMs();
         static double worstFrame = 0.0;
         static int frames = 0;
         static int64_t ticksAtLog = 0;

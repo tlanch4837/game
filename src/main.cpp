@@ -128,6 +128,95 @@ static void ShowBrightnessSlider(HWND owner) {
 namespace {
 #include "game/game_core.inl" // the game (portable); the Windows shell follows
 
+const COLORREF kClearColor = RGB(26, 26, 26); // window background behind the viewport
+
+tbd::hot::Shaders g_hotShaders;  // shader files changing (and F5) reload them on both backends; see hot_reload.h
+tbd::hot::Game g_game;           // bin\game.dll, swapped in whenever it is rebuilt; see hot_reload.h
+tbd::FaceSessionLog g_faceLog; // debug video of the Face Mocap Live tab
+tbd::FaceDriver g_faceDriver;  // plays face mocap clips on entities
+
+// Play's mouse look on Windows: the cursor is captured, hidden, clipped to the viewport and recentred every frame.
+struct WinLookPointer : tbd::PlayMode::LookPointer {
+    HWND viewport = nullptr;
+    bool cursorHidden = false;
+    WinLookPointer* For(HWND v) { viewport = v; return this; }
+    void Grab() override {
+        SetFocus(viewport);
+        SetCapture(viewport);
+        ShowCursor(FALSE);
+        cursorHidden = true;
+        const POINT centre = LockCursor();
+        SetCursorPos(centre.x, centre.y);
+    }
+    void Release() override {
+        ClipCursor(nullptr);
+        if (cursorHidden) ShowCursor(TRUE);
+        cursorHidden = false;
+        if (GetCapture() == viewport) ReleaseCapture();
+    }
+    bool Lost() const override {
+        return GetActiveWindow() != GetAncestor(viewport, GA_ROOT) && GetActiveWindow() != GetAncestor(viewport, GA_ROOTOWNER);
+    }
+    void Delta(float& dx, float& dy) override {
+        if (GetCapture() != viewport) SetCapture(viewport); // a toolbar click still in flight can take it
+        POINT centre = LockCursor();
+        POINT p;
+        if (GetCursorPos(&p)) {
+            dx = (float)(p.x - centre.x);
+            dy = (float)(p.y - centre.y);
+            SetCursorPos(centre.x, centre.y);
+        }
+    }
+    // Keeps the cursor inside the viewport and returns its centre in screen pixels.
+    POINT LockCursor() {
+        RECT rc = {};
+        GetClientRect(viewport, &rc);
+        POINT a = {rc.left, rc.top}, b = {rc.right, rc.bottom};
+        ClientToScreen(viewport, &a);
+        ClientToScreen(viewport, &b);
+        const RECT screen = {a.x, a.y, b.x, b.y};
+        ClipCursor(&screen);
+        return POINT{(a.x + b.x) / 2, (a.y + b.y) / 2};
+    }
+};
+WinLookPointer g_winLook;
+
+bool EntityFitParts(int i, std::vector<tbd::FitPart>* out) {
+    if (i < 0 || i >= (int)g_engine.scene.entities.size()) return false;
+    const tbd::Entity& e = g_engine.scene.entities[i];
+    if (e.mesh != tbd::MeshKind::Imported) return false;
+    static std::map<std::string, std::vector<tbd::FitPart>> cache;
+    auto it = cache.find(e.meshPath);
+    if (it == cache.end()) {
+        std::vector<tbd::FitPart> parts;
+        const tbd::ImportedModel& model = ImportedModels()[e.meshPath];
+        std::map<int, std::pair<std::vector<uint8_t>, std::pair<int, int>>> decoded;
+        for (const tbd::ImportedPart& p : model.parts) {
+            tbd::FitPart fp;
+            fp.first = p.first;
+            fp.count = p.count;
+            fp.hair = p.hair;
+            if (p.albedo >= 0 && p.albedo < (int)model.images.size()) {
+                auto d = decoded.find(p.albedo);
+                if (d == decoded.end()) {
+                    std::vector<uint8_t> px;
+                    int w = 0, h = 0;
+                    tbd::DecodeImage(model.images[(size_t)p.albedo].data(), model.images[(size_t)p.albedo].size(), px, w, h);
+                    d = decoded.emplace(p.albedo, std::make_pair(std::move(px), std::make_pair(w, h))).first;
+                }
+                fp.rgba = d->second.first;
+                fp.w = d->second.second.first;
+                fp.h = d->second.second.second;
+            }
+            parts.push_back(std::move(fp));
+        }
+        it = cache.emplace(e.meshPath, std::move(parts)).first;
+    }
+    *out = it->second;
+    return !out->empty();
+}
+
+
 
 const wchar_t* kWindowClass = L"TBDEngineWindow";
 const wchar_t* kViewportClass = L"TBDViewport";
@@ -681,9 +770,9 @@ void OnToolAction(tbd::ToolId id) {
             tbd::FaceTab_Close();
             return;
         }
-        if (!g_engine.faceDriver.live.Running()) {
+        if (!g_faceDriver.live.Running()) {
             std::string error;
-            if (!g_engine.faceDriver.live.Start(-1, nullptr, (tbd::ExeDirectory() + L"\\models\\face").c_str(), &error)) {
+            if (!g_faceDriver.live.Start(-1, nullptr, (tbd::ExeDirectory() + L"\\models\\face").c_str(), &error)) {
                 Toast(error);
                 return;
             }
@@ -691,7 +780,7 @@ void OnToolAction(tbd::ToolId id) {
         tbd::FaceTabHost host;
         host.instance = g_shell.instance;
         host.parent = g_shell.window;
-        host.live = &g_engine.faceDriver.live;
+        host.live = &g_faceDriver.live;
         host.relayout = [] { Layout(); };
         host.selectedIndex = [] { return g_engine.scene.selected < (int)g_engine.scene.entities.size() ? g_engine.scene.selected : -1; };
         host.entityName = [](int i) {
@@ -716,11 +805,11 @@ void OnToolAction(tbd::ToolId id) {
         host.driveHead = [](int i, bool on) {
             if (i < 0 || i >= (int)g_engine.scene.entities.size()) return;
             tbd::Entity& e = g_engine.scene.entities[i];
-            if (on) g_engine.faceDriver.BindLive(e);
-            else g_engine.faceDriver.Unbind(e);
+            if (on) g_faceDriver.BindLive(e);
+            else g_faceDriver.Unbind(e);
         };
         host.overrideHeadPose = [](const float* pose, const float* neutral) {
-            tbd::FaceDriver& d = g_engine.faceDriver;
+            tbd::FaceDriver& d = g_faceDriver;
             d.poseOverride = pose && neutral;
             if (d.poseOverride)
                 for (int k = 0; k < 3; ++k) { d.overridePose[k] = pose[k]; d.overrideNeutral[k] = neutral[k]; }
@@ -737,8 +826,8 @@ void OnToolAction(tbd::ToolId id) {
         };
         host.setMaxGraphics = [](bool on) { SetMaxGraphics(on); };
         host.maxGraphicsOn = [] { return g_maxGraphics; };
-        host.setMirror =[](bool m) { g_engine.faceDriver.mirror = m; };
-        host.stopCapture = [] { g_engine.faceDriver.StopLive(g_engine.scene); Toast("WEBCAM OFF"); };
+        host.setMirror =[](bool m) { g_faceDriver.mirror = m; };
+        host.stopCapture = [] { g_faceDriver.StopLive(g_engine.scene); Toast("WEBCAM OFF"); };
         host.startVideoLog = [live = host.live] {
             if (!g_engine.renderer || !g_faceLog.Start(live, tbd::platform::CacheRoot() / L"facelog")) return false; // next to the exe
             g_engine.renderer->SetFrameCapture(true);
@@ -760,7 +849,7 @@ void OnToolAction(tbd::ToolId id) {
         return;
     }
     if (id == tbd::ToolId::FaceDriveStop) {
-        g_engine.faceDriver.Unbind(*sel);
+        g_faceDriver.Unbind(*sel);
         Toast("STOPPED DRIVING " + sel->name);
         return;
     }
@@ -774,7 +863,7 @@ void OnToolAction(tbd::ToolId id) {
     ofn.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
     std::string error;
-    if (g_engine.faceDriver.Bind(*sel, buf, &error)) Toast("DRIVING " + sel->name + " WITH " + ToastName(buf));
+    if (g_faceDriver.Bind(*sel, buf, &error)) Toast("DRIVING " + sel->name + " WITH " + ToastName(buf));
     else Toast(error);
 }
 
@@ -909,7 +998,7 @@ void FaceShotStart() {
         }
     }
     g_engine.scene.selected = -1;
-    g_engine.faceDriver.Unbind(g_engine.scene.entities[fs.target]); // a clip bound in the scene would turn the head
+    g_faceDriver.Unbind(g_engine.scene.entities[fs.target]); // a clip bound in the scene would turn the head
     g_engine.scene.entities[fs.target].rotation = {0, 0, 0, 1};
     g_engine.renderer->SetFrameCapture(true);
     fs.active = true;
@@ -1492,7 +1581,7 @@ void OnTransport(int action, void*) {
     switch (action) {
     case 0:
         CompleteSceneLoad();
-        if (!g_play.active && g_shell.viewportWindow && g_play.Begin(g_shell.viewportWindow, g_engine.camera)) {
+        if (!g_play.active && g_shell.viewportWindow && g_play.Begin(g_winLook.For(g_shell.viewportWindow), g_engine.camera)) {
             if (g_engine.drag != Drag::None) { // a drag in progress ends; Begin has taken the mouse capture
                 g_engine.drag = Drag::None;
                 g_engine.gizmo.End();
@@ -2004,7 +2093,8 @@ bool tbd::shell::DevReloadTick() {
     return true;
 }
 void tbd::shell::PumpRemote() { RemotePump(); }
-void tbd::shell::EditorTick() {
+void tbd::shell::EditorTick(float dt) {
+    g_faceDriver.Update(dt, g_engine.scene);
     tbd::FaceTab_Tick();
     CharacterCreatorHost(); tbd::character::Tick(); // Character panel: at most one re-deform per frame; TBD_CHARPRESET
     scene_undo::Checkpoint(); // an editor edit that just finished becomes one undo step
@@ -2012,7 +2102,21 @@ void tbd::shell::EditorTick() {
 void tbd::shell::RefreshInspector() { UpdateInspector(); }
 bool tbd::shell::CaptureThisFrame() { return RemoteShotThisFrame(); }
 void tbd::shell::AfterCapture(tbd::Renderer& r) { RemoteShotAfterFrame(r); }
-void tbd::shell::AfterFrame(tbd::Renderer& r) { if (g_shot.active) FaceShotStep(r); }
+void tbd::shell::AfterFrame(tbd::Renderer& r) {
+    if (g_faceLog.Active()) {
+        static std::vector<uint8_t> shot;
+        int shotW = 0, shotH = 0;
+        if (r.CapturedFrame(shot, shotW, shotH)) g_faceLog.OnFrame(shot, shotW, shotH);
+    }
+    if (g_shot.active) FaceShotStep(r);
+}
+void tbd::shell::GameplayTick(float dt, bool playing) { g_game.Tick(dt, playing); }
+void tbd::shell::Quit() { PostQuitMessage(0); }
+float tbd::shell::EditorCameraScale() { return tbd::character::CameraScale(); }
+bool tbd::shell::EditorBusy() { return tbd::character::Busy(); }
+bool tbd::shell::EditorHidesHeadHair() { return tbd::character::HideHeadHair(); }
+bool tbd::shell::EditorBrushLines(std::vector<tbd::Vertex>& lines) { return tbd::character::BrushLines(lines); }
+bool tbd::shell::EditorClayDraw(std::vector<tbd::Vertex>& tris, std::vector<tbd::Vertex>& lines) { return tbd::character::ClayDraw(tris, lines); }
 void tbd::shell::SetTitle(const std::wstring& title) { SetWindowTextW(g_shell.window, title.c_str()); }
 void tbd::shell::OnSceneSaved() { if (g_shell.contentBrowser) tbd::ContentBrowser_Refresh(g_shell.contentBrowser); }
 void tbd::shell::OnToolChanged() { tbd::Toolbar_Refresh(g_shell.toolbar); }
@@ -2057,7 +2161,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdline, int show) {
     if (args.faceLive) OnToolAction(tbd::ToolId::FaceLive);
     if (args.facePhone) {
         std::string error;
-        if (g_engine.faceDriver.live.StartPhone(tbd::kLiveLinkPort, &error)) OnToolAction(tbd::ToolId::FaceLive);
+        if (g_faceDriver.live.StartPhone(tbd::kLiveLinkPort, &error)) OnToolAction(tbd::ToolId::FaceLive);
         else Toast(error);
     }
     if (!args.shotDir.empty() || !args.videoPath.empty()) {

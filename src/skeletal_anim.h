@@ -5,6 +5,8 @@
 // Skinning is dual quaternion (volume kept through bends and twists: wrists, elbows, shoulders do not pinch or candy-wrap);
 // a vertex bound to a joint whose matrix carries scale falls back to linear blending. TBD_SKIN_LBS=1: linear for all, to compare.
 #pragma once
+#include "platform/platform.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <memory>
@@ -198,7 +200,7 @@ public:
         if (instances_.empty()) return;
         static const float fixedTime = [] {
             char v[32] = {};
-            return GetEnvironmentVariableA("TBD_ANIM_TIME", v, sizeof(v)) > 0 ? (float)std::atof(v) : -1.0f;
+            return tbd::platform::GetEnvA("TBD_ANIM_TIME", v, sizeof(v)) > 0 ? (float)std::atof(v) : -1.0f;
         }();
         time_ += dt;
         const float now = fixedTime >= 0.0f ? fixedTime : time_;
@@ -211,7 +213,7 @@ public:
         for (const std::unique_ptr<Instance>& inst : instances_) {
             // The same pose (a held clip, a held key): the mesh already has it. TBD_ANIM_RESKIN=1 skins anyway, to measure
             // what a moving character costs.
-            static const bool alwaysSkin = GetEnvironmentVariableA("TBD_ANIM_RESKIN", nullptr, 0) > 0;
+            static const bool alwaysSkin = tbd::platform::GetEnvA("TBD_ANIM_RESKIN", nullptr, 0) > 0;
             // Skinned once more after the last change: motion vectors compare the newest vertices with the ones before.
             inst->heldFrames = inst->shown == inst->palette ? inst->heldFrames + 1 : 0;
             if (!alwaysSkin && inst->heldFrames >= 2) continue;
@@ -431,7 +433,7 @@ private:
             for (size_t i = begin; i < end; ++i) {
                 const VertexSkin& vs = skin[i];
                 Vertex v = bind[i];
-                static const bool linearOnly = GetEnvironmentVariableA("TBD_SKIN_LBS", nullptr, 0) > 0;
+                static const bool linearOnly = tbd::platform::GetEnvA("TBD_SKIN_LBS", nullptr, 0) > 0;
                 bool useDq = !linearOnly && !dq.empty();
                 for (int k = 0; k < 4 && useDq; ++k) if (vs.weights[k] > 0.0f && (vs.joints[k] >= rigid.size() || !rigid[vs.joints[k]])) useDq = false;
                 if (useDq && vs.weights[0] + vs.weights[1] + vs.weights[2] + vs.weights[3] > 0.0f) {

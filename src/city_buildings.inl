@@ -251,9 +251,9 @@ inline void SlotTexel(int slot, uint32_t& x, uint32_t& y) {
 inline std::wstring CacheFile(const Cell& c) {
     static const std::wstring dir = [] {
         std::wstring d = tbd::ExeDirectory() + L"\\..\\cache";
-        CreateDirectoryW(d.c_str(), nullptr);
+        { std::error_code ec; std::filesystem::create_directory(d, ec); }
         d += L"\\chunks";
-        CreateDirectoryW(d.c_str(), nullptr);
+        { std::error_code ec; std::filesystem::create_directory(d, ec); }
         return d;
     }();
     constexpr uint32_t kBakeVersion = 2; // bump when the bake's look changes
@@ -295,7 +295,7 @@ inline void CacheSave(tbd::Renderer& r, Cell& c) {
     if (!f) return;
     for (const auto& v : ch) fwrite(v.data(), 1, v.size(), f);
     fclose(f);
-    MoveFileExW((file + L".tmp").c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
+    { std::error_code ec; std::filesystem::rename(file + L".tmp", file, ec); } // replaces, like MOVEFILE_REPLACE_EXISTING
     ++statCacheSaves;
 }
 
@@ -873,7 +873,7 @@ inline int gpuFrames = 0;
 inline uint64_t drawsSum = 0, trisSum = 0;
 inline std::wstring Dir() {
     const std::wstring d = tbd::ExeDirectory() + L"\\..\\shots";
-    CreateDirectoryW(d.c_str(), nullptr);
+    { std::error_code ec; std::filesystem::create_directory(d, ec); }
     return d;
 }
 inline void WriteBmp(const std::wstring& file, const uint8_t* bgra, int w, int h) {
@@ -1005,6 +1005,6 @@ void CityChunkCheckAfterFrame(tbd::Renderer& r) {
     if (++combo >= 2 * kCheckKinds) {
         tbd::Log("Chunk check: done");
         step = 99;
-        if (city_bld::EnvI("TBD_CITY_STRESS_QUIT", 0)) PostQuitMessage(0);
+        if (city_bld::EnvI("TBD_CITY_STRESS_QUIT", 0)) tbd::shell::Quit();
     }
 }

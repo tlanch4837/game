@@ -54,6 +54,6 @@ inline bool Redo(std::string* label) {
 
 } // namespace tbd::undo
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(TBD_NO_WIN32_HEADERS) // the probe build (tools/probe_game) checks portability on Windows
 #include "undo_toast_win.h" // the Win32 popup; Windows-only callers (main.cpp, the Character Creator) use it
 #endif

@@ -7,6 +7,8 @@
 // Env: TBD_WATER=0 leaves the entity as it was; TBD_WATER=2 runs compute only, to time it.
 // TBD_WATER_TEST="x z radius speed extent": a sphere moved through the water at a fixed step per frame, so runs reproduce.
 #pragma once
+#include "platform/platform.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -42,7 +44,7 @@ class WaterSystem {
 public:
     using LoadFn = bool (*)(const std::string& path, std::vector<Vertex>& out);
 
-    static char Mode() { static const char m = [] { char b[8] = {}; return GetEnvironmentVariableA("TBD_WATER", b, 8) > 0 ? b[0] : '1'; }(); return m; }
+    static char Mode() { static const char m = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_WATER", b, 8) > 0 ? b[0] : '1'; }(); return m; }
 
     // After a scene loads: reads its water files on a worker.
     void Prepare(Renderer* r, JobSystem* jobs, const Scene& scene, LoadFn load) {

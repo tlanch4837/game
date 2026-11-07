@@ -22,6 +22,9 @@
 #include "vertex.h"    // struct Vertex (its own header so platform-free code can build vertex lists)
 #include "ui_vertex.h" // struct UiVertex, the smooth UI path's vertex (DrawUi)
 
+// The open scene's fixed exposure, 0 = auto (Scene::exposure). Defined by the platform shell; the renderers read it.
+extern float g_sceneExposure;
+
 namespace tbd {
 
 enum class Topology { Triangles, Lines };

@@ -6,7 +6,6 @@
 // read once on a worker thread into a coarse grid of the highest surface height per cell, and a downward ray at (x, z)
 // becomes a bilinear lookup in that grid. See GroundGrid. Nothing here touches the renderer.
 #pragma once
-#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -174,23 +173,27 @@ public:
         return GroundState() == GroundGrid::Ready && grid_->Height(x, z, y);
     }
 
+    // The platform's relative pointer for mouse look (Windows: main.cpp's WinLookPointer, which captures, hides, clips and
+    // recentres the cursor). Each call does at that moment what PlayMode used to do with Win32 directly.
+    struct LookPointer {
+        virtual void Grab() = 0;                      // take the pointer: focus, capture, hide, lock to the view, centre
+        virtual void Release() = 0;                   // give it back
+        virtual bool Lost() const = 0;                // the app lost the keyboard (alt-tab, a dialog)
+        virtual void Delta(float& dx, float& dy) = 0; // movement since the last call, in pixels; recentres
+    };
+
     // Takes over the mouse and the camera. False when refused (a TBD_SHOT / TBD_CAPTURE run, or no viewport).
-    bool Begin(HWND viewport, const OrbitCamera& camera) {
-        if (active || !viewport) return false;
-        scripted = GetEnvironmentVariableA("TBD_PLAYTEST", nullptr, 0) > 0;
-        if (!scripted && (GetEnvironmentVariableA("TBD_SHOT", nullptr, 0) > 0 || GetEnvironmentVariableA("TBD_CAPTURE", nullptr, 0) > 0)) return false;
-        viewport_ = viewport;
+    bool Begin(LookPointer* pointer, const OrbitCamera& camera) {
+        if (active || !pointer) return false;
+        scripted = tbd::platform::GetEnvA("TBD_PLAYTEST", nullptr, 0) > 0;
+        if (!scripted && (tbd::platform::GetEnvA("TBD_SHOT", nullptr, 0) > 0 || tbd::platform::GetEnvA("TBD_CAPTURE", nullptr, 0) > 0)) return false;
+        pointer_ = pointer;
         saved_ = camera;
         walking = false;
         player = false;
         active = true;
         if (scripted) return true; // the mouse stays the owner's
-        SetFocus(viewport);
-        SetCapture(viewport);
-        ShowCursor(FALSE);
-        cursorHidden_ = true;
-        const POINT centre = LockCursor();
-        SetCursorPos(centre.x, centre.y); // so the first frame's look delta is zero, not the distance from the toolbar
+        pointer_->Grab(); // centred, so the first frame's look delta is zero, not the distance from the toolbar
         return true;
     }
 
@@ -202,15 +205,12 @@ public:
         player = false;
         camera = saved_;
         if (scripted) return;
-        ClipCursor(nullptr);
-        if (cursorHidden_) ShowCursor(TRUE);
-        cursorHidden_ = false;
-        if (GetCapture() == viewport_) ReleaseCapture();
+        pointer_->Release();
     }
 
     // The window lost the keyboard (alt-tab, a dialog): the caller should stop, so the mouse is never held hostage.
     bool Lost() const {
-        return active && !scripted && GetActiveWindow() != GetAncestor(viewport_, GA_ROOT) && GetActiveWindow() != GetAncestor(viewport_, GA_ROOTOWNER);
+        return active && !scripted && pointer_->Lost();
     }
 
     // G. Returns a message to show, or nullptr.
@@ -235,14 +235,7 @@ public:
     void PollMouse(float& dx, float& dy) {
         dx = dy = 0.0f;
         if (!active || scripted) return;
-        if (GetCapture() != viewport_) SetCapture(viewport_); // a toolbar click still in flight can take it
-        POINT centre = LockCursor();
-        POINT p;
-        if (GetCursorPos(&p)) {
-            dx = (float)(p.x - centre.x);
-            dy = (float)(p.y - centre.y);
-            SetCursorPos(centre.x, centre.y);
-        }
+        pointer_->Delta(dx, dy);
     }
 
     // Once per frame: mouse look, then movement.
@@ -279,21 +272,8 @@ private:
         c.target = eye - Vec3{cp * std::sin(c.yaw), std::sin(c.pitch), cp * std::cos(c.yaw)} * c.distance;
     }
 
-    // Keeps the cursor inside the viewport and returns its centre in screen pixels.
-    POINT LockCursor() {
-        RECT rc = {};
-        GetClientRect(viewport_, &rc);
-        POINT a = {rc.left, rc.top}, b = {rc.right, rc.bottom};
-        ClientToScreen(viewport_, &a);
-        ClientToScreen(viewport_, &b);
-        const RECT screen = {a.x, a.y, b.x, b.y};
-        ClipCursor(&screen);
-        return POINT{(a.x + b.x) / 2, (a.y + b.y) / 2};
-    }
-
-    HWND viewport_ = nullptr;
+    LookPointer* pointer_ = nullptr;
     OrbitCamera saved_;
-    bool cursorHidden_ = false;
     std::shared_ptr<GroundGrid> grid_;
     std::string signature_;
 };

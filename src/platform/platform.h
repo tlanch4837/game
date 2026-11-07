@@ -54,6 +54,10 @@ FILE* WOpen(const wchar_t* path, const wchar_t* mode);
 // Process diagnostics for the streaming logs and RAM ceiling.
 double SecondsSinceProcessStart();
 uint64_t ProcessPrivateBytes(); // Windows: PrivateUsage. Apple: physical footprint. 0 if unknown.
+uint64_t PhysicalMemoryBytes(); // installed RAM (Windows: GlobalMemoryStatusEx ullTotalPhys). 0 if unknown.
+
+// a * b / c rounded to the nearest integer, halves away from zero, in 64-bit (Windows: MulDiv). For DPI scaling.
+int MulDiv(int a, int b, int c);
 
 // Keys and mouse buttons the game polls. Values are the Windows virtual-key codes, so the Windows side is a plain cast.
 enum class Key : uint8_t {

@@ -36,7 +36,7 @@ int g_gameAction = 0, g_gameSlot = 0;
 
 std::wstring GameSavePath(int slot, const wchar_t* ext) {
     const std::wstring dir = tbd::Join(g_engine.projectFolder.empty() ? tbd::ExeDirectory() : g_engine.projectFolder, L"saves");
-    CreateDirectoryW(dir.c_str(), nullptr);
+    { std::error_code ec; std::filesystem::create_directory(dir, ec); }
     return tbd::Join(dir, std::wstring(L"city_slot") + std::to_wstring(slot + 1) + ext);
 }
 
