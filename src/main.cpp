@@ -26,6 +26,7 @@
 #include <tuple>
 #include "audio.h"
 #include "bmp_header.h"
+#include "game/shell.h"
 #include "camera.h"
 #include "content_browser.h"
 #include <set>
@@ -251,7 +252,7 @@ inline std::vector<tbd::LodLevel> LodLevelsFor(const std::string& path, const st
     const bool pieces = levels.empty(); // a kit of small hard-edged pieces: no edge may collapse, but whole pieces can go
     if (pieces) levels = tbd::BuildPieceLevels(vertices, indices, radius);
     t1 = tbd::platform::Ticks();
-    CreateDirectoryW(g_lodCacheDir.c_str(), nullptr);
+    { std::error_code ec; std::filesystem::create_directory(g_lodCacheDir, ec); } // like CreateDirectoryW: one level
     tbd::SaveLodLevels(file, levels);
     int64_t freq;
     freq = tbd::platform::TickFrequency();
@@ -1536,7 +1537,7 @@ void SceneLoadTick(double budgetMs) {
 void CompleteSceneLoad() {
     while (SceneLoadActive() && g_engine.renderer) {
         SceneLoadTick(0.0);
-        if (SceneLoadActive()) Sleep(1);
+        if (SceneLoadActive()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -1962,7 +1963,7 @@ void NewScene() {
 bool LoadScene(const std::wstring& path) {
     g_skinDetailScale.clear(); g_skinPoreDepth.clear(); // entity indices of the old scene
     if (!tbd::LoadSceneFile(path, g_engine.scene, g_engine.terrain.params)) {
-        MessageBoxW(g_engine.window, (L"Could not read this scene:\n" + path).c_str(), kWindowTitle, MB_ICONWARNING);
+        tbd::shell::Alert(L"Could not read this scene:\n" + path);
         return false;
     }
     g_engine.scenePath = path;
@@ -1987,7 +1988,7 @@ bool SaveScene(bool saveAs) {
         if (!PickSceneFile(true, path)) return false;
     }
     if (!tbd::SaveSceneFile(path, g_engine.scene, g_engine.terrain.params)) {
-        MessageBoxW(g_engine.window, L"The scene could not be saved there.", kWindowTitle, MB_ICONWARNING);
+        tbd::shell::Alert(L"The scene could not be saved there.");
         return false;
     }
     g_engine.scenePath = path;
@@ -2223,9 +2224,7 @@ void OnToolAction(tbd::ToolId id) {
         host.setMirror =[](bool m) { g_engine.faceDriver.mirror = m; };
         host.stopCapture = [] { g_engine.faceDriver.StopLive(g_engine.scene); Toast("WEBCAM OFF"); };
         host.startVideoLog = [live = host.live] {
-            wchar_t exe[tbd::platform::kMaxPath] = {};
-            GetModuleFileNameW(nullptr, exe, tbd::platform::kMaxPath);
-            if (!g_engine.renderer || !g_faceLog.Start(live, std::filesystem::path(exe).parent_path() / L"facelog")) return false;
+            if (!g_engine.renderer || !g_faceLog.Start(live, tbd::platform::CacheRoot() / L"facelog")) return false; // next to the exe
             g_engine.renderer->SetFrameCapture(true);
             return true;
         };
@@ -2358,11 +2357,7 @@ void UpdateFly(float dt) {
 bool RoadRenameActive(); // defined with the road rename box
 struct CamSmooth { float goal = -1.0f, lastSet = -1.0f; bool anchored = false; tbd::Vec3 anchor{}; };
 CamSmooth g_camSmooth;
-bool AppHasFocus() {
-    DWORD pid = 0;
-    HWND fg = GetForegroundWindow();
-    return fg && GetWindowThreadProcessId(fg, &pid) && pid == GetCurrentProcessId();
-}
+bool AppHasFocus() { return tbd::shell::AppHasFocus(); }
 void UpdateCityCam(float dt) {
     tbd::OrbitCamera& cam = g_engine.camera;
     // smooth zoom, anchored on the ground point that was under the cursor
@@ -5789,6 +5784,14 @@ std::wstring AssetsFolderFor(const std::wstring& projectFolder) {
 }
 
 } // namespace
+
+// ---- tbd::shell (src/game/shell.h), Windows implementation
+void tbd::shell::Alert(const std::wstring& text) { MessageBoxW(g_engine.window, text.c_str(), kWindowTitle, MB_ICONWARNING); }
+bool tbd::shell::AppHasFocus() {
+    DWORD pid = 0;
+    HWND fg = GetForegroundWindow();
+    return fg && GetWindowThreadProcessId(fg, &pid) && pid == GetCurrentProcessId();
+}
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdline, int show) {
     tbd::InstallCrashHandlers();
