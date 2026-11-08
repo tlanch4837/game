@@ -30,18 +30,22 @@ New-Item -ItemType Directory -Force "$Out\assets\news" | Out-Null
 Copy-Item "$repo\src\city\news_lines.json" "$Out\assets\news" -Force
 
 # What the radio and the sim read; a missing one is only a warning (the game runs without it, quieter or untuned).
-foreach ($need in "audio\radio", "sim\tuning.json", "buildings") {
+foreach ($need in "audio\radio", "audio\music\playlist.txt", "audio\ambience", "sim\tuning.json", "buildings") {
     if (-not (Test-Path "$Out\assets\$need")) { Write-Warning "assets\$need is missing from $Assets" }
 }
-# The sound the iPad will have (assets\audio is mirrored whole: sfx, radio, ambience, music, zones.txt).
-foreach ($dir in "audio\sfx", "audio\radio") {
-    $n = @(Get-ChildItem "$Out\assets\$dir" -File -ErrorAction SilentlyContinue).Count
-    "assets\{0}: {1} files" -f $dir, $n
+if (-not (Test-Path "$Out\assets\audio\music\playlist.txt")) {
+    Write-Warning "no city music: run  python tools\audio_gen\gen_audio.py  (writes assets\audio\music and assets\audio\ambience)"
+}
+# The sound the iPad will have (assets\audio is mirrored whole: sfx, radio, music, ambience, zones.txt).
+# Copy each of these folders into Documents/assets/audio/ on the iPad.
+foreach ($dir in "audio\sfx", "audio\radio", "audio\music", "audio\ambience") {
+    $files = @(Get-ChildItem "$Out\assets\$dir" -File -ErrorAction SilentlyContinue)
+    $mb = ($files | Measure-Object Length -Sum).Sum / 1MB
+    "assets\{0}: {1} files, {2:N1} MB" -f $dir, $files.Count, $mb
 }
 
 Get-ChildItem "$Out\shaders" -File | Remove-Item
 if ($Shaders) { Copy-Item "$repo\src\shaders\msl\*.metal" "$Out\shaders" }
 
-$size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum)
-"{0} files, {1:N0} MB in {2}" -f $size.Count, ($size.Sum / 1MB), $Out
+$size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum)"{0} files, {1:N0} MB in {2}" -f $size.Count, ($size.Sum / 1MB), $Out
 exit 0 # robocopy's 1 ("files copied") is success
