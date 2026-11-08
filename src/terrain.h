@@ -51,6 +51,7 @@ public:
     float BaseHeightAt(float x, float z) const {
         if (params.mapKind == 1) return IslandMap::Height(x, z);
         if (params.mapKind == 2) return CityMap::Height(x, z, params.seed, params.relief);
+        if (params.mapKind == 3) return CityMap::BayHeight(x, z, params.seed); // [example map] the Bayside archipelago (city_example.inl)
         const float d = std::sqrt(x * x + z * z);
         const float mask = params.flatStart ? Smooth((d - 30.0f) / 70.0f) : 1.0f;
         float sum = 0, amp = 1, total = 0, freq = params.frequency;
@@ -422,7 +423,7 @@ private:
         }
         if (seaMesh_ != kInvalidMesh) return;
         std::vector<Vertex> sea, river;
-        if (params.mapKind == 2) CityMap::BuildWater(sea);
+        if (params.mapKind >= 2) CityMap::BuildWater(sea); // [example map] 3 too
         else IslandMap::BuildWater(sea, river);
         seaKind_ = params.mapKind;
         seaMesh_ = r.CreateMesh(sea.data(), (uint32_t)sea.size(), Topology::Triangles);
