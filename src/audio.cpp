@@ -2,6 +2,7 @@
 // only appends to a command queue and stores the latest listener pose (both under g_mutex).
 #define NOMINMAX
 #include "audio.h"
+#include "audio_director.h"
 
 #include "platform/platform.h"
 
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +43,10 @@
 #endif
 #pragma warning(pop)
 
+namespace tbd {
+void Log(const char* format, ...); // render/log.cpp (log_apple.cpp on iOS); thread-safe
+}
+
 namespace tbd::audio {
 namespace {
 
@@ -50,7 +56,7 @@ constexpr size_t kMaxOneShots = 48;
 constexpr float kFootstepStride = 2.1f; // metres of walking per step
 
 struct Cmd {
-    enum Type { Play, Loop, Move, Stop, Music, StopMusic, BusVolume, Playing, Radio, StopRadio } type = Play;
+    enum Type { Play, Loop, Move, Stop, Music, StopMusic, BusVolume, UserVolume, Playing, Radio, StopRadio } type = Play;
     std::vector<std::string> names; // Radio
     unsigned id = 0;
     std::string name;
@@ -69,6 +75,7 @@ std::mutex g_mutex;
 std::condition_variable g_cv;
 std::vector<Cmd> g_queue;       // under g_mutex
 Listener g_listener;            // under g_mutex
+CityScene g_city;               // under g_mutex: the latest SetCityScene
 std::thread g_thread;
 std::atomic<bool> g_started{false}, g_failed{false}, g_quit{false}, g_radioBusy{false};
 std::atomic<bool> g_restart{false}; // the device was stopped by the OS (interruption) or the app resumed: start it again
@@ -119,7 +126,9 @@ struct Voice {
     std::unique_ptr<ma_sound, SoundDelete> snd; // ma_sound must not move once initialised
     float base = 1.0f;             // the caller's volume
     float gain = 1.0f, gainTarget = 1.0f, rate = 1000.0f; // fade, per second
+    float duck = 1.0f;             // the radio duck and the pause menu (music, city beds)
     bool spatial = false, loop = false, stopping = false;
+    bool music = false;            // a music track (also while it fades out in dying_)
     Vec3 pos = {0, 0, 0};
 };
 
@@ -152,6 +161,7 @@ public:
         if (ma_engine_init(&engineConfig, &engine_) != MA_SUCCESS) { ma_context_uninit(&context_); g_failed = true; return; }
         for (int i = 1; i <= 4; ++i) ma_sound_group_init(&engine_, 0, nullptr, &groups_[i]);
         LoadZones();
+        LoadMusic();
         auto last = std::chrono::steady_clock::now();
         while (!g_quit.load()) {
             std::vector<Cmd> commands;
@@ -161,6 +171,7 @@ public:
                 g_cv.wait_for(lock, std::chrono::milliseconds(15), [] { return g_quit.load() || !g_queue.empty(); });
                 commands.swap(g_queue);
                 listener = g_listener;
+                city_ = g_city;
             }
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.25f);
@@ -294,22 +305,28 @@ private:
             if (it != voices_.end()) FadeOut(it->second, c.seconds);
             break;
         }
-        case Cmd::Music: {
+        case Cmd::Music: { // Play mode's music: it takes the music voice over from the city playlist
+            cityMusic_ = false;
             if (music_.snd) { dying_.push_back(std::move(music_)); FadeOut(dying_.back(), c.seconds); music_ = Voice(); }
             const std::wstring* path = Pick(c.name);
             if (!path) return;
             if (!Open(music_, *path, true, 1, false, {0, 0, 0}, c.volume, 1.0f, c.loop)) return;
+            music_.music = true;
             music_.gain = 0.0f;
             music_.gainTarget = 1.0f;
             music_.rate = c.seconds > 0.01f ? 1.0f / c.seconds : 1000.0f;
             break;
         }
         case Cmd::StopMusic:
+            cityMusic_ = false;
             if (music_.snd) { dying_.push_back(std::move(music_)); FadeOut(dying_.back(), c.seconds); music_ = Voice(); }
             break;
         case Cmd::BusVolume:
-            if (c.bus == 0) ma_engine_set_volume(&engine_, c.volume);
-            else if (c.bus >= 1 && c.bus <= 4) ma_sound_group_set_volume(&groups_[c.bus], c.volume);
+        case Cmd::UserVolume:
+            if (c.bus < 0 || c.bus > 4) break;
+            (c.type == Cmd::BusVolume ? codeVol_ : userVol_)[c.bus] = c.volume;
+            if (c.bus == 0) ma_engine_set_volume(&engine_, codeVol_[0] * userVol_[0]);
+            else ma_sound_group_set_volume(&groups_[c.bus], codeVol_[c.bus] * userVol_[c.bus]);
             break;
         case Cmd::Playing:
             playing_ = c.loop;
@@ -347,7 +364,7 @@ private:
         if (!v.snd) return;
         if (v.gain < v.gainTarget) v.gain = std::min(v.gain + v.rate * dt, v.gainTarget);
         else if (v.gain > v.gainTarget) v.gain = std::max(v.gain - v.rate * dt, v.gainTarget);
-        float vol = v.base * v.gain;
+        float vol = v.base * v.gain * v.duck;
         if (v.spatial && v.loop) vol *= std::clamp((kMaxDistance - Distance(v.pos)) / (kMaxDistance * 0.25f), 0.0f, 1.0f);
         ma_sound_set_volume(v.snd.get(), vol);
     }
@@ -365,14 +382,33 @@ private:
             Advance(v, dt);
             ++it;
         }
-        Advance(music_, dt);
         TickRadio(dt);
+        TickCityMusic(dt);
+        music_.duck = musicDuck_;
+        Advance(music_, dt);
         for (size_t i = 0; i < dying_.size();) {
+            if (dying_[i].music) dying_[i].duck = musicDuck_;
             Advance(dying_[i], dt);
             if (dying_[i].gain <= 0.0f || !dying_[i].snd) dying_.erase(dying_.begin() + (std::ptrdiff_t)i);
             else ++i;
         }
         TickBeds(dt);
+        LogState(dt);
+    }
+
+    // TBD_AUDIO_LOG=1: once a second, the music track, its position, the duck, and every open bed's level.
+    void LogState(float dt) {
+        static const bool on = tbd::platform::GetEnvA("TBD_AUDIO_LOG", nullptr, 0) > 0;
+        if (!on || (logT_ += dt) < 1.0f) return;
+        logT_ = 0.0f;
+        float cursor = 0.0f;
+        if (music_.snd) ma_sound_get_cursor_in_seconds(music_.snd.get(), &cursor);
+        std::string beds;
+        char b[96];
+        for (const auto& kv : beds_)
+            if (kv.second.ok && kv.second.voice.snd) std::snprintf(b, sizeof(b), " %s=%.3f", kv.first.c_str(), kv.second.voice.gain), beds += b;
+        tbd::Log("Audio: music %s %.1fs gain %.2f duck %.2f, fading %d, radio %d | beds:%s", music_.snd ? trackName_.c_str() : "-", cursor,
+                 music_.gain, musicDuck_, (int)dying_.size(), g_radioBusy.load() ? 1 : 0, beds.c_str());
     }
 
     // ---------------------------------------------------------------- radio
@@ -392,6 +428,81 @@ private:
         }
         Advance(radio_, dt);
         g_radioBusy = radio_.snd != nullptr || !radioQueue_.empty();
+    }
+
+    // ---------------------------------------------------------------- the city's music (audio_director.h)
+    void LoadMusic() {
+        std::ifstream f(tbd::platform::FsPath(root_ + L"\\music\\playlist.txt"), std::ios::binary);
+        if (!f) { // no playlist: the city view has no music (Play mode's music/theme still plays)
+            tbd::Log("Audio: no music\\playlist.txt, the city plays without music");
+            return;
+        }
+        const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        director_.SetTracks(ParsePlaylist(text));
+        tbd::Log("Audio: %d music tracks in music\\playlist.txt", (int)director_.Tracks().size());
+    }
+
+    // The next track: the old one (if any) fades out over the crossfade while this one fades in.
+    void StartCityTrack(bool first) {
+        const int i = director_.Next(city_.hour, Random01Thread());
+        if (i < 0) return;
+        const MusicTrack& t = director_.Tracks()[(size_t)i];
+        if (music_.snd) { dying_.push_back(std::move(music_)); FadeOut(dying_.back(), MusicDirector::kCrossfade); music_ = Voice(); }
+        const std::wstring* path = Pick("music/" + t.name);
+        if (!path || !Open(music_, *path, true, 1, false, {0, 0, 0}, kMusicLevel, 1.0f, false)) {
+            music_ = Voice();
+            cityMusic_ = false;
+            musicGap_ = 4.0f; // a missing or unreadable file: try another in a moment
+            return;
+        }
+        music_.music = true;
+        music_.gain = 0.0f;
+        music_.gainTarget = 1.0f;
+        music_.rate = 1.0f / (first ? 4.0f : MusicDirector::kCrossfade);
+        trackSeconds_ = t.seconds;
+        cityMusic_ = true;
+        trackName_ = t.name;
+        tbd::Log("Audio: music %s (%.0f s)", t.name.c_str(), t.seconds);
+    }
+
+    void TickCityMusic(float dt) {
+        // the radio duck and the pause menu, for the music and (a little) the city's beds
+        const float duck = ducker_.Update(radio_.snd != nullptr || !radioQueue_.empty(), dt);
+        menuK_ += ((city_.menu ? 1.0f : 0.0f) - menuK_) * (1.0f - std::exp(-dt / 0.4f));
+        musicDuck_ = duck * (1.0f - 0.5f * menuK_);
+        const float dip = (1.0f - duck) / std::max(1.0f - ducker_.Floor(), 1e-3f); // 0 none .. 1 fully ducked
+        bedDuck_ = (1.0f - 0.3f * dip) * (1.0f - 0.7f * menuK_);
+
+        // (music turned all the way down in Settings decodes nothing)
+        const bool want = city_.active && !playing_ && !director_.Empty() && userVol_[0] > 0.0f && userVol_[1] > 0.0f;
+        if (!want) {
+            if (cityMusic_ && music_.snd) { dying_.push_back(std::move(music_)); FadeOut(dying_.back(), 2.5f); music_ = Voice(); }
+            cityMusic_ = false;
+            musicGap_ = city_.active ? musicGap_ : 1.0f; // back in the city: a moment of ambience first
+            if (!city_.active) director_.Restart();
+            return;
+        }
+        if (!cityMusic_) {
+            if (music_.snd) return; // Play mode's track is still fading out
+            if ((musicGap_ -= dt) > 0.0f) return;
+            StartCityTrack(!started_);
+            started_ = true;
+            return;
+        }
+        if (!music_.snd) { cityMusic_ = false; return; }
+        float cursor = 0.0f;
+        ma_sound_get_cursor_in_seconds(music_.snd.get(), &cursor);
+        const bool ended = ma_sound_at_end(music_.snd.get()) != MA_FALSE;
+        const float remaining = trackSeconds_ > 0.0f ? trackSeconds_ - cursor : 1e9f;
+        if (!ended && remaining > MusicDirector::kCrossfade) return;
+        const float gap = MusicDirector::GapAfter(Random01Thread());
+        if (gap <= 0.0f && !ended) { StartCityTrack(false); return; }
+        // a breath: this one fades out by its end, the next starts after the gap
+        dying_.push_back(std::move(music_));
+        FadeOut(dying_.back(), std::max(0.3f, std::min(remaining, MusicDirector::kCrossfade)));
+        music_ = Voice();
+        cityMusic_ = false;
+        musicGap_ = gap + std::max(0.0f, std::min(remaining, MusicDirector::kCrossfade));
     }
 
     // ---------------------------------------------------------------- zone ambience
@@ -440,6 +551,18 @@ private:
                 Bed& b = beds_[defaultSound_];
                 b.target = std::max(b.target, (1.0f - strongest) * defaultVolume_);
             }
+        } else if (city_.active && userVol_[0] > 0.0f && userVol_[3] > 0.0f) { // the city view's beds (audio_director.h CityBedMix)
+            static const float kTrim[kBedCount] = {0.55f, 0.85f, 0.75f, 0.7f, 0.65f, 0.7f, 0.5f}; // the files' levels evened out
+            CityView view;
+            view.hour = city_.hour, view.height = city_.height, view.built = city_.built, view.traffic = city_.traffic, view.water = city_.water;
+            float w[kBedCount];
+            CityBedMix(view, w);
+            for (int i = 0; i < kBedCount; ++i) {
+                const float v = w[i] * kTrim[i] * bedDuck_;
+                if (v < 0.004f && beds_.find(CityBedName(i)) == beds_.end()) continue; // not wanted, not open: leave it closed
+                Bed& b = beds_[CityBedName(i)];
+                b.target = std::max(b.target, v >= 0.004f ? v : 0.0f); // so a bed that is barely wanted closes
+            }
         }
         const float k = 1.0f - std::exp(-dt / 1.2f);
         for (auto it = beds_.begin(); it != beds_.end();) {
@@ -476,6 +599,16 @@ private:
     std::string defaultSound_;
     float defaultVolume_ = 0.7f;
     bool playing_ = false;
+    // the city view
+    static constexpr float kMusicLevel = 0.8f;
+    CityScene city_;
+    MusicDirector director_;
+    Ducker ducker_{-12.0f};
+    bool cityMusic_ = false, started_ = false; // the music voice plays the city playlist; the first track has played
+    float musicGap_ = 1.5f, trackSeconds_ = 0.0f;
+    float menuK_ = 0.0f, musicDuck_ = 1.0f, bedDuck_ = 1.0f, logT_ = 0.0f;
+    std::string trackName_;
+    float codeVol_[5] = {1, 1, 1, 1, 1}, userVol_[5] = {1, 1, 1, 1, 1};
     std::map<std::string, std::vector<std::wstring>> files_;
     std::map<std::string, int> lastPick_;
     uint32_t rng_ = 0x2545f491u;
@@ -533,6 +666,21 @@ void SetBusVolume(Bus bus, float volume) {
     c.bus = (int)bus;
     c.volume = std::clamp(volume, 0.0f, 1.0f);
     Push(std::move(c));
+}
+
+void SetUserVolume(Bus bus, float volume) {
+    if (!Running()) return;
+    Cmd c;
+    c.type = Cmd::UserVolume;
+    c.bus = (int)bus;
+    c.volume = std::clamp(volume, 0.0f, 1.0f);
+    Push(std::move(c));
+}
+
+void SetCityScene(const CityScene& scene) {
+    if (!Running()) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_city = scene;
 }
 
 void PlayOneShot(const char* name, const Vec3& position, float volume, float pitch, Bus bus) {
