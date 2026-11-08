@@ -43,6 +43,8 @@
 #include "gui/road_toolkit.h"  // [road toolkit] the road / rail touch panel + palette (game/glass_dock_host.inl RoadKit)
 #include "gui/road_reticle.h"  // [road ux] the aim dot (game/glass_dock_host.inl RoadKit)
 #include "gui/terrain_kit.h"   // [road ux] the compact terrain tools (game/glass_dock_host.inl TerrainKit)
+#include "gui/title_screen.h"  // [title] the loading screen, title screen and slot picker (game/title_host.inl)
+#include "game/save_slots.h"   // [title] the ten save slots (city_game.inl, game/title_host.inl)
 #include "gui/city_hud.h"
 #include "gui/city_overlays.h"
 #include "gui/zone_toolbar.h"

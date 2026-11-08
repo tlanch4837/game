@@ -1,4 +1,4 @@
-﻿"""Vectorises the Optima Engine logo (a black-on-white raster) into a small, clean SVG.
+"""Vectorises the Optima Engine logo (a black-on-white raster) into a small, clean SVG.
 
     python tools/branding/trace_logo.py <logo.png|webp> [out_dir]
 

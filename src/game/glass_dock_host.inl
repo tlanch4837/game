@@ -19,6 +19,9 @@ tbd::gui::dock::Model g_model;
 tbd::gui::dock::Atlas g_atlas;
 bool g_tried = false, g_hidden = false; // photo mode: the GUI hides until the next tap
 bool g_menuPaused = false;              // the pause menu paused the clock (and resumes it when it closes)
+void TitleOpenPicker(bool save);        // [title] title_host.inl: the slot picker, the title screen, the logo cell
+void TitleFromGame();
+void TitleAppendLogo(std::vector<uint8_t>& rgba, int w, int& h, tbd::gui::dock::Atlas& atlas);
 
 inline bool Legacy() {
     static const bool on = tbd::platform::GetEnvA("TBD_GUI_LEGACY", nullptr, 0) > 0;
@@ -203,9 +206,10 @@ void LoadAtlas(tbd::Renderer& r) {
         return;
     }
     // straight alpha is what ui.hlsl expects; the PNG is straight already
+    g_atlas.Parse(txt.data(), txt.size());
+    TitleAppendLogo(rgba, w, h, g_atlas); // [title] the Optima Engine logo below the atlas: the "logo" cell (title_host.inl)
     const tbd::TextureId tex = r.CreateTexture(rgba.data(), w, h);
     r.SetUiImages(tex);
-    g_atlas.Parse(txt.data(), txt.size());
     tbd::Log("Glass Dock: atlas %dx%d, %zu cells", w, h, g_atlas.cells.size());
 }
 
@@ -639,9 +643,9 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     }
     if (o.cameraPressed || o.photo) g_hidden = true;
     if (o.alertsPressed) g_overlayHud.on = g_overlayHud.on == tbd::gui::Overlay::Power ? tbd::gui::Overlay::None : tbd::gui::Overlay::Power;
-    if (o.save) g_gameAction = 1;
-    if (o.load) g_gameAction = 2;
-    if (o.mainMenu) g_gameAction = 3; // no title screen yet: a fresh random map
+    if (o.save) TitleOpenPicker(true);  // [title] the ten-slot picker over the pause menu (title_host.inl)
+    if (o.load) TitleOpenPicker(false); // [title]
+    if (o.mainMenu) TitleFromGame();    // [title] the title screen
     if (o.settingsChanged) { // sound, text size and the interface switch must not hand the graphics over from the TBD_* switches
         const std::string now = tbd::gfx::Serialize(g_model.gfx);
         if (now != g_gfxPrev) g_gfxPrev = now, g_settingsTouched = true;

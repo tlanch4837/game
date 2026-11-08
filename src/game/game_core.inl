@@ -316,6 +316,7 @@ bool ProjectWantsSandbox(const std::wstring& folder) {
 
 void SaveTerrainEdits();
 void NewCityGame(int seed); // city_game.inl: the random north-land / south-sea map with the default corridor
+void TitleBoot(int seed);   // [title] title_host.inl: the saves, then the splash and the title screen (or NewCityGame, as before)
 void LoadTerrainEdits();
 void RebuildSceneMeshes();
 
@@ -330,7 +331,7 @@ void StartTerrainSandbox() {
     int seed = (int)(tbd::platform::TickCountMs() % 900000ull) + 100; // random every start; TBD_SEED=<n> pins it
     char sv[16] = {};
     if (tbd::platform::GetEnvA("TBD_SEED", sv, sizeof(sv)) > 0) seed = atoi(sv);
-    NewCityGame(seed);
+    TitleBoot(seed); // [title]
     { // TBD_BRUSHTEST="x z radius metres": one stroke at startup, so a capture can show the brush's effect without a mouse
         char v[96] = {};
         float x, z, radius, metres;
@@ -1946,6 +1947,7 @@ void RoadsWorldLabels() {
 #include "city_industry.inl" // specialized industry: hubs, drawn work areas, resource heat maps
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
+#include "city_example.inl"  // [example map] the example map "Bayside" (the default Save 1; TBD_MAP=example)
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
 #include "city_radio.inl"    // the city radio: Elton reacts to what the player did, plus The Weekly Rundown
 #include "city_herds.inl"    // neighbourhoods, herds over the day and the visible cars made from them (src/city/sim_hoods.h ...)
@@ -2008,6 +2010,7 @@ void HudOpenTool(int tool) {
 
 float g_guiScaleSel = 1.0f; // the HUD Options menu: interface size multiplier
 #include "glass_dock_host.inl" // the Glass Dock+ GUI (src/gui/glass_dock.h) on the city game
+#include "title_host.inl"      // [title] the loading screen, the title screen and the save slots
 #include "city_audio.inl"      // the city view's music, ambience and event sounds (after the dock: it reads the pause menu)
 
 // ------------------------------------------------------------------- in-game GUI, per frame
@@ -2098,7 +2101,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     RadioHudFill(hud); // the City News feed
     if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
     if (!gdock::Legacy()) { // Glass Dock+: its bar, panels and placement bar replace the HUD and the tools' panels
-        gdock::Frame(r, hud);
+        if (!TitleGuiFrame(r, hud)) gdock::Frame(r, hud); // [title] the front end owns the screen while it is up
         RadioHudRead(hud);
         SimHudRead(hud);
         g_gui.EndFrame();
@@ -2350,7 +2353,7 @@ void RenderFrame() {
     light.lightDebug[2] = (float)(featureOff | qualityOff | presetOff); // the spare slot; mesh shaders only
     // The city map's key light (docs/cs2_look_pass.md): CS2's sunlit and shaded walls differ about 15:1, ours were near 3:1, so the sky
     // and probe fill drops there. Real meshes and the baked far volumes both light through LitPbr, so they move together.
-    const bool cityLight = LookOn() && !(g_engine.sun.showSky && g_gfxQuality == 0) && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+    const bool cityLight = LookOn() && !(g_engine.sun.showSky && g_gfxQuality == 0) && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind >= 2; // [example map] 3 too
     light.lightDebug[3] = (cityLight ? g_engine.scene.ambientFill * 0.55f : g_engine.scene.ambientFill) + 1.0f; // +1: an unset 0 reads as the default (lighting.hlsli AmbientFill)
     g_sceneExposure = g_engine.scene.exposure; // both renderers pass it to post.hlsl ExposureValue
     light.lightDebug[0] = lightDebug; // 1 indirect diffuse, 2 sun, 3 reflections, 4 haze only, 8 surface light (vs tbd_reference); see lighting.hlsli and post.hlsl
@@ -2405,7 +2408,7 @@ void RenderFrame() {
         frameView.time = cloudTime;
         frameView.sky = g_engine.sun.showSky && g_gfxQuality == 0;
         // The city map: no marched sky, its cheap air instead (post.hlsl CityComposite; docs/cs2_look_pass.md).
-        frameView.cityAir = LookOn() && !frameView.sky && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind == 2;
+        frameView.cityAir = LookOn() && !frameView.sky && g_gfxQuality == 0 && g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind >= 2; // [example map]
         frameView.postTier = LookTier();
         frameView.dt = dt;
         static const bool motionOff = [] { char b[8] = {}; return tbd::platform::GetEnvA("TBD_TAAMV", b, 8) > 0 && b[0] == '0'; }(); // test: the old depth-only reprojection
