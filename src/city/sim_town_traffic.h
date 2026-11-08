@@ -12,6 +12,7 @@
 //   Flow trips     the same links as peak-hour OD pairs for sim_flow.h (the overlay and the TBD_HERDS=0 cosmetic cars).
 //   Parked cars    a few cars at the curb of every occupied cell: at home overnight, at work in the day (the commute curves
 //                  say how many are away). Positions are fixed per road / cell change; per frame only a copy near the camera.
+//                  A spot that empties or fills while it is in view fades (never a pop); out of view it snaps to its count.
 // Deterministic: the same roads, cells and counts give the same links and the same parked cars.
 #pragma once
 
@@ -60,6 +61,7 @@ struct TownTrafficParams {
     float homeCarsPerAdult = 0.3f, workCarsPerJob = 0.2f;
     int maxPerCell = 14;           // of each kind; spots per cell = 2 x this
     float spotSpacing = 7.0f, laneWidth = 3.2f;
+    float fadeSeconds = 0.8f;      // a curbside car that leaves or comes back in view fades over this
     int models = 8;
     uint64_t seed = 0x5EED;
 };
@@ -162,23 +164,48 @@ public:
         return away_[std::clamp((int)(m / kWindowMinutes), 0, kWindows - 1)];
     }
 
-    // The parked cars within `radius` of the focus, appended to `out` (at most `max`). No allocation once `out` has grown.
-    void Parked(V2 focus, float radius, double minuteOfDay, std::vector<CarInstance>& out, int max) {
+    // The parked cars within `radius` of the focus, appended to `out` (at most `max`, the nearest first). A spot that fills
+    // or empties while it is in view fades over fadeSeconds (dt: real seconds since the last call; 0 snaps every spot to its
+    // count, as a load or a test wants); out of view it snaps. Cars shrink away over the radius's last tenth. No allocation
+    // once `out` and the scratch list have grown.
+    void Parked(V2 focus, float radius, double minuteOfDay, std::vector<CarInstance>& out, int max, float dt = 0.0f) {
         stats.parkedShown = 0;
         if (spotsKey_ == ~0ull) return;
+        if (spotA_.size() != spots_.size()) spotA_.assign(spots_.size(), -1.0f), spotSeen_.assign(spots_.size(), 0u); // -1: never decided, snaps
+        ++parkedCall_;
         const float away = AwayShare(minuteOfDay);
         const float r2 = radius * radius, reach = radius + kCityCellSize;
+        const float step = dt > 0.0f ? dt / std::max(0.05f, params.fadeSeconds) : 2.0f;
+        near_.clear();
         for (const CellSpots& c : cellSpots_) {
-            if (stats.parkedShown >= max) break;
             if (std::fabs(c.centre.x - focus.x) > reach || std::fabs(c.centre.z - focus.z) > reach) continue;
             const int shown = std::min<int>((int)c.count, (int)std::lround(c.home * (1.0f - away)) + (int)std::lround(c.work * away));
-            for (int k = 0; k < shown && stats.parkedShown < max; ++k) {
-                const CarInstance& ci = spots_[c.off + (size_t)k];
-                const float dx = ci.p.x - focus.x, dz = ci.p.z - focus.z;
-                if (dx * dx + dz * dz > r2) continue;
-                out.push_back(ci);
-                ++stats.parkedShown;
+            for (int k = 0; k < (int)c.count; ++k) {
+                const size_t i = c.off + (size_t)k;
+                const CarInstance& ci = spots_[i];
+                const float dx = ci.p.x - focus.x, dz = ci.p.z - focus.z, d2 = dx * dx + dz * dz;
+                const float want = k < shown ? 1.0f : 0.0f;
+                float& a = spotA_[i];
+                const bool watched = spotSeen_[i] + 1 == parkedCall_; // in view on the last call too
+                spotSeen_[i] = d2 <= r2 ? parkedCall_ : 0u;
+                if (a < 0.0f || d2 > r2 || !watched) a = want; // out of sight: as the count says
+                else a = want > a ? std::min(want, a + step) : std::max(want, a - step);
+                if (d2 > r2 || a <= 0.0f) continue;
+                near_.push_back({i, d2});
             }
+        }
+        if ((int)near_.size() > max) {
+            std::nth_element(near_.begin(), near_.begin() + max, near_.end(), [](const NearSpot& a, const NearSpot& b) { return a.d2 < b.d2 || (a.d2 == b.d2 && a.i < b.i); });
+            near_.resize((size_t)std::max(0, max));
+            std::sort(near_.begin(), near_.end(), [](const NearSpot& a, const NearSpot& b) { return a.i < b.i; });
+        }
+        const float edge = std::max(1.0f, 0.1f * radius);
+        for (const NearSpot& n : near_) {
+            CarInstance ci = spots_[n.i];
+            ci.scale = spotA_[n.i] * std::clamp((radius - std::sqrt(n.d2)) / edge, 0.0f, 1.0f);
+            if (ci.scale <= 0.01f) continue;
+            out.push_back(ci);
+            ++stats.parkedShown;
         }
     }
     size_t SpotCount() const { return spots_.size(); }
@@ -205,6 +232,14 @@ private:
     uint64_t tableVersion_ = ~0ull;
     std::vector<int> segF_, segB_;
     std::vector<CarInstance> spots_;
+    std::vector<float> spotA_; // per spot: how much of its car is shown (fades in view)
+    std::vector<uint32_t> spotSeen_; // per spot: the Parked call that last had it in view
+    uint32_t parkedCall_ = 0;
+    struct NearSpot {
+        size_t i;
+        float d2;
+    };
+    std::vector<NearSpot> near_;
     std::vector<CellSpots> cellSpots_;
     uint64_t spotsKey_ = ~0ull;
     float away_[kWindows] = {};
@@ -386,7 +421,7 @@ private:
         const uint64_t key = cellKey_ * 131 + tableVersion_;
         if (key != spotsKey_) {
             spotsKey_ = key;
-            spots_.clear(), cellSpots_.clear();
+            spots_.clear(), cellSpots_.clear(), spotA_.clear(), spotSeen_.clear();
             const int perCell = 2 * std::max(1, params.maxPerCell);
             for (size_t c = 0; c < cellRoad_.size(); ++c) {
                 const CellRoad& r = cellRoad_[c];
@@ -411,7 +446,8 @@ private:
                     V2 p, d;
                     float y;
                     if (!t.PointAt(l, sAt, p, y, d)) continue;
-                    const V2 q = p + RightOf(d) * ((float)t.links[(size_t)l].lanes * params.laneWidth + 1.4f);
+                    // the curb of the link's own side: past its lanes (a one-way road's lanes straddle the centre line)
+                    const V2 q = p + RightOf(d) * (t.LaneBase(l, params.laneWidth) + (float)t.links[(size_t)l].lanes * params.laneWidth + 1.4f);
                     CarInstance ci;
                     ci.p = {q.x, y, q.z};
                     ci.dir = d;
