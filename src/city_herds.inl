@@ -10,6 +10,9 @@
 //     herdmove  every game minute: herds advance by the link speeds (BPR from their own loads) and dissolve at the destination
 //   per frame (HerdsSync, after SimSync): the children near the camera (one pool, no allocation), promotion, follow camera
 //   drawing (HerdsDraw, next to SimAgentsDraw): one instanced draw per car model; it replaces the flow-driven cosmetic cars
+//   town traffic (sim_town_traffic.h, rebuilt with the hoods): the trips inside one hood, the outside connections (dead-end
+//   roads at the map edge and the player's road outside connections) and the parked cars. Its node links go to the herds
+//   with the hood links and, as peak-hour trips, to the flow solve (SimAppendTownTrips, called by city_sim.inl).
 //
 // Environment (dev):
 //   TBD_HERDS=0          leave the old cosmetic traffic in charge
@@ -25,6 +28,9 @@ tbd::city::HerdSystem herds;
 tbd::city::RoutePicker picker;
 tbd::city::RouteCache trees;
 tbd::city::ChildSystem children;
+tbd::city::TownTraffic town; // local trips, outside connections, parked cars
+std::vector<tbd::city::V2> townFlagged; // the road outside connections' points (reused)
+constexpr int kMaxParked = 240;         // parked cars drawn near the camera
 bool registered = false, enabled = true, tableReady = false;
 uint64_t generation = ~0ull;
 double childMs = 0, childAvgMs = 0, releaseMs = 0, moveAvgMs = 0, hoodMs = 0;
@@ -46,6 +52,11 @@ void Reset() {
     picker.SetTable(nullptr);
     trees.Drop(0);
     children.pool.clear();
+    {
+        const tbd::city::TownTrafficParams keep = town.params;
+        town = tbd::city::TownTraffic();
+        town.params = keep;
+    }
     follow = -1;
 }
 
@@ -93,6 +104,7 @@ void RebuildTable() {
     const FlowGraph* g = g_simFlowJob->graph && g_simFlowJob->graph->version == net.version ? g_simFlowJob->graph.get() : nullptr;
     if (!g) local = FlowGraph::Build(net), g = &local;
     BuildLinkTable(net, *g, table, &build);
+    town.SetTable(net, *g, table, build);
     herds.SetTable(&table);
     picker.SetTable(&table);
     picker.herds = &herds;
@@ -120,18 +132,29 @@ void HoodsTick(const tbd::city::SimTick&) {
     hoods.LinksFromSuper(g_citySim, commute);
     BuildSchoolLinks();
     BuildShopLinks();
+    // town traffic: trips inside a hood, the outside connections, the parked cars
+    townFlagged.clear();
+    for (const Outside& o : g_transit.outsides)
+        if (o.alive && o.kind == OutKind::Road) townFlagged.push_back(o.p);
+    town.params.shopDecayMetres = (float)g_simTune.flowShopDecayMetres;
+    town.params.models = std::max(1, (int)g_simCars.size());
+    const int connsWere = town.stats.conns;
+    town.Build(g_citySim, hoods, commute, net, g_simSegGrid, table, townFlagged, tbd::CityMap::kHalf, herds.carShare, herds.curves);
+    if (town.stats.conns != connsWere)
+        tbd::Log("Traffic: %d outside connections; a day: %.0f through, %.0f in, %.0f out, %.0f local vehicles (%zu node links)", town.stats.conns,
+                 town.stats.throughPerDay, town.stats.inPerDay, town.stats.outPerDay, town.stats.localPerDay, town.stats.links);
     hoodMs = Now() - t0;
 }
 
 // system "herds": every 15 game minutes, the window's herds leave
 void HerdsRelease(const tbd::city::SimTick& t) {
     using namespace tbd::city;
-    if (!tableReady || hoods.hoods.empty()) return;
+    if (!tableReady || (hoods.hoods.empty() && town.links.empty())) return; // an empty map still has its through traffic
     const double t0 = Now();
     const int tod = (int)std::fmod(g_clock.minutes, 1440.0);
     if (tod < kWindowMinutes) herds.NewDay();
     picker.BeginWindow(t.minute / kWindowMinutes);
-    herds.ReleaseHerds(t.minute, tod, hoods.hoods, commute, school, shop, [](int a, int b, RouteChoice* out) { return picker.Pick(a, b, out); });
+    herds.ReleaseHerds(t.minute, tod, hoods.hoods, commute, school, shop, [](int a, int b, RouteChoice* out) { return picker.Pick(a, b, out); }, &town.links);
     releaseMs = Now() - t0;
 }
 
@@ -145,10 +168,11 @@ void HerdsMove(const tbd::city::SimTick&) {
 void Init() {
     registered = true;
     enabled = sim_host::EnvDouble("TBD_HERDS", 1.0) > 0.0;
+    picker.params.maxNewPerWindow = 32; // town traffic adds node pairs (local, outside): route them within the first windows
+    g_sim.Register("hoods", 10, 1, HoodsTick); // with the herds off too: its town traffic feeds the flow's cosmetic cars
     if (!enabled) return;
     herds.seed = children.params.citySeed = 0x5EED;
     children.params.densityScale = (float)sim_host::EnvDouble("TBD_HERD_DENSITY", 1.0); // visible cars per vehicle in the herds
-    g_sim.Register("hoods", 10, 1, HoodsTick);
     g_sim.Register("herds", tbd::city::kWindowMinutes, 1, HerdsRelease);
     g_sim.Register("herdmove", 1, 1, HerdsMove);
     children.tenant = [](const tbd::city::Herd& h, bool home, uint64_t rnd, tbd::city::TenantSlot& out) {
@@ -163,15 +187,20 @@ void Init() {
 }
 } // namespace herds_host
 
+// city_sim.inl SimBuildTrips: the town traffic's links as peak-hour flow trips (only when built on this graph's network).
+void SimAppendTownTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips) {
+    herds_host::town.FlowTrips(herds_host::herds.curves, g, trips);
+}
+
 // main.cpp: once per frame, after SimSync.
 void HerdsSync(float realDt) {
     using namespace herds_host;
     if (!registered) Init();
-    if (!enabled) { g_herdsOwnCars = false; return; }
     if (generation != g_cityGeneration) { // new map or a load wiped the city
         generation = g_cityGeneration;
         Reset();
     }
+    if (!enabled) { g_herdsOwnCars = false; return; }
     g_herdsOwnCars = tableReady;
     if (!tableReady || g_engine.camera.distance > 1400.0f) return;
     children.params.models = std::max(1, (int)g_simCars.size());
@@ -202,6 +231,7 @@ void HerdsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     if (!enabled || !tableReady || g_simCars.empty() || g_engine.camera.distance > 1400.0f) return;
     const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
     children.Collect(moving, parked, focus);
+    town.Parked(focus, children.params.radius, g_clock.minutes, parked, kMaxParked); // curbside cars: home at night, work by day
     moving.insert(moving.end(), parked.begin(), parked.end());
     for (int m = 0; m < (int)g_simCars.size(); ++m) {
         rows.clear();
@@ -307,5 +337,9 @@ bool HerdsRemote(const std::string& sub, const std::string& arg, std::string& ou
              children.stats.promoted, children.stats.parked, (unsigned long long)children.stats.spawned, picker.Pairs(), (unsigned long long)picker.pairsDeferred, childAvgMs, moveAvgMs, carsDrawn,
              g_clock.Hour(), g_clock.Minute());
     out = b;
+    const TownTrafficStats& ts = town.stats;
+    snprintf(b, sizeof(b), " | outside %d: a day %.0f through %.0f in %.0f out, local %.0f, %zu node links | through released %.0f freight %.0f | parked %d",
+             ts.conns, ts.throughPerDay, ts.inPerDay, ts.outPerDay, ts.localPerDay, ts.links, st.released[kTripThrough], st.released[kTripFreight], ts.parkedShown);
+    out += b;
     return true;
 }

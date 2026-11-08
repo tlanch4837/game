@@ -13,6 +13,10 @@
 //                 enters a link; the BPR curve slows loaded links. A herd is a train: its head and tail spread out with
 //                 speedSd as it goes, and it dissolves at the destination from head to tail (arrivals spread out).
 //   Chains        a school drop-off herd that has arrived sends a share of its vehicles on to work.
+//   Node links    trips between two graph nodes rather than two hoods (sim_town_traffic.h): the commutes and shopping inside
+//                 one hood (home cell -> job cell), and the outside connections (through traffic, commuters, visitors and
+//                 trucks from the map edge). Released by ReleaseHerds like the hood links, as a stream of small herds
+//                 spread over the window so a road shows a steady trickle rather than one bunch every 15 minutes.
 // Trips are vehicles: car share is already applied (people on foot, bus or train are not herds yet).
 #pragma once
 
@@ -88,6 +92,25 @@ struct LinkTable {
         }
         return false;
     }
+    // The point of link l nearest p: metres along the link and the distance to it (false: no polyline).
+    bool Project(int l, V2 p, float& s, float& dist) const {
+        if ((size_t)l + 1 >= ptOff.size()) return false;
+        const uint32_t a = ptOff[(size_t)l], b = ptOff[(size_t)l + 1];
+        if (b < a + 2) return false;
+        float acc = 0, best = 1e30f;
+        s = 0;
+        for (uint32_t i = a; i + 1 < b; ++i) {
+            const V2 p0{pts[i * 3], pts[i * 3 + 2]}, p1{pts[(i + 1) * 3], pts[(i + 1) * 3 + 2]};
+            const V2 d = p1 - p0;
+            const float seg = Len(d);
+            const float t = seg > 1e-4f ? std::clamp(Dot2(p - p0, d) / (seg * seg), 0.0f, 1.0f) : 0.0f;
+            const float dd = Len(p0 + d * t - p);
+            if (dd < best) best = dd, s = acc + seg * t;
+            acc += seg;
+        }
+        dist = best;
+        return true;
+    }
     // A straight link from a to b with the given class numbers (tests, and the fallback for links without geometry).
     int AddStraight(int from, int to, V2 a, V2 b, float kmh, float cap, int lanes = 1, bool pipe = false) {
         LinkInfo l;
@@ -161,7 +184,8 @@ private:
 };
 
 // ------------------------------------------------------------------------------------------------ demand over the day
-enum TripType : int { kTripCommute = 0, kTripWorkHome, kTripSchool, kTripSchoolHome, kTripShop, kTripShopHome, kTripChain, kTripTypes };
+// kTripThrough: vehicles crossing the map between two outside connections; kTripFreight: trucks to and from the map edge.
+enum TripType : int { kTripCommute = 0, kTripWorkHome, kTripSchool, kTripSchoolHome, kTripShop, kTripShopHome, kTripChain, kTripThrough, kTripFreight, kTripTypes };
 constexpr int kWindows = 96;       // 15-minute windows in a day
 constexpr int kWindowMinutes = 15;
 
@@ -183,6 +207,9 @@ struct DemandCurves {
             c[kTripShop][w] = 0.4f * bump(h, 12.4f, 1.6f) + 0.6f * bump(h, 18.4f, 1.6f);
             c[kTripShopHome][w] = 0.4f * bump(h, 13.6f, 1.6f) + 0.6f * bump(h, 19.6f, 1.6f);
             c[kTripChain][w] = 0;
+            // through traffic never stops: a floor all night, both rush hours on top
+            c[kTripThrough][w] = 0.25f + 0.5f * bump(h, 8.0f, 1.8f) + 0.5f * bump(h, 17.0f, 2.0f) + 0.3f * bump(h, 12.5f, 3.0f);
+            c[kTripFreight][w] = 0.08f + bump(h, 11.0f, 3.2f); // trucks run in the working day
         }
         for (int t = 0; t < kTripTypes; ++t) {
             float sum = 0;
@@ -201,6 +228,15 @@ struct RouteChoice {
 constexpr int kMaxAlternatives = 3;
 // Routes for a pair of graph nodes: fills up to kMaxAlternatives choices, returns how many (0: unreachable).
 using RouteFn = std::function<int(int fromNode, int toNode, RouteChoice* out)>;
+
+// A trip between two graph nodes (sim_town_traffic.h builds them): vehicles per day (car share already applied), the trip
+// type that picks the demand curve, and the hoods behind each end (-1: the outside world, no tenants to pick).
+struct NodeLink {
+    int fromNode = -1, toNode = -1;
+    float n = 0;
+    uint8_t type = kTripCommute;
+    int fromHood = -1, toHood = -1, homeHood = -1, workHood = -1;
+};
 
 struct Herd {
     uint32_t id = 0;
@@ -233,6 +269,8 @@ public:
     float chainShare = 0.6f;     // of the drop-off vehicles that go on to work
     float speedSdMin = 0.06f, speedSdMax = 0.16f;
     float bprAlpha = 0.15f, bprBeta = 4.0f;
+    float streamVehicles = 3.0f; // a node link's window releases as herds of about this many vehicles,
+    int streamMax = 6;           // at most this many, spread over the window
     uint64_t seed = 1;
 
     DemandCurves curves;
@@ -267,6 +305,7 @@ public:
     float PendingTotal() const {
         double s = 0;
         for (const auto& [k, v] : pending_) s += v;
+        for (const auto& [k, v] : pendingNode_) s += v.n;
         return (float)s;
     }
 
@@ -280,8 +319,10 @@ public:
     float LinkLoadVph(int link) const { return std::max(loadPrev[(size_t)link], loadCur[(size_t)link]) * (60.0f / kWindowMinutes); }
 
     // Scheduler system, period 15 game minutes: `tod` is the minute of the day the window starts at.
+    // `nodes` (optional): node-to-node trips, released after the hood links (see NodeLink).
     void ReleaseHerds(int64_t minute, int tod, const std::vector<Hood>& hoods, const std::vector<HoodLink>& commute,
-                      const std::vector<HoodLink>& school, const std::vector<HoodLink>& shop, const RouteFn& route) {
+                      const std::vector<HoodLink>& school, const std::vector<HoodLink>& shop, const RouteFn& route,
+                      const std::vector<NodeLink>* nodes = nullptr) {
         if (!table) return;
         const int w = ((tod % 1440) / kWindowMinutes) % kWindows;
         std::swap(loadPrev, loadCur);
@@ -325,6 +366,7 @@ public:
             if (Release(minute, from, to, home, work, type, size, w, k)) pending_[k] = 0;
             else pending_[k] = std::min(pending_[k], 400.0f); // an unreachable pair does not pile up a whole day
         }
+        if (nodes) ReleaseNodes(minute, w, *nodes);
     }
 
     // Per tick (game minutes dt): move every herd along its route, dissolve arrivals.
@@ -337,6 +379,9 @@ public:
                 h.wait -= dt;
                 if (h.wait > 0) continue;
                 EnterLink(h, 0);
+                // on the road from this tick, moving from the next: a trip shorter than a tick's drive (most trips inside a
+                // town) would otherwise start and dissolve in one call and the children would never see it
+                continue;
             }
             const RouteStore::Rec& r = routes.recs[h.route];
             const int link = routes.LinkAt(h.route, h.linkIdx);
@@ -374,8 +419,70 @@ public:
 
 private:
     std::unordered_map<uint64_t, float> pending_; // (type, home hood, work hood) -> trips not yet a vehicle
+    struct NodePending {
+        float n = 0;
+        uint32_t seen = 0; // the release that last listed the link
+        NodeLink link;
+    };
+    std::unordered_map<uint64_t, NodePending> pendingNode_; // (type, from node, to node) -> vehicles not yet released
+    uint32_t nodeRelease_ = 0;
+    std::vector<uint64_t> orderNode_;
     std::vector<uint32_t> free_;
     std::vector<uint64_t> order_;
+
+    static uint64_t NodeKey(const NodeLink& l) { return (uint64_t)l.type | ((uint64_t)(uint32_t)l.fromNode << 4) | ((uint64_t)(uint32_t)l.toNode << 34); }
+
+    // The node links' share of this window, then a stream of small herds for every pair that has a vehicle or more.
+    void ReleaseNodes(int64_t minute, int w, const std::vector<NodeLink>& links) {
+        ++nodeRelease_;
+        for (const NodeLink& l : links) {
+            if (l.fromNode < 0 || l.toNode < 0 || l.fromNode == l.toNode || !(l.n > 0) || l.type >= kTripTypes) continue;
+            NodePending& p = pendingNode_[NodeKey(l)];
+            p.n += l.n * curves.c[l.type][w];
+            p.seen = nodeRelease_;
+            p.link = l;
+        }
+        orderNode_.clear();
+        for (const auto& [k, v] : pendingNode_)
+            if (v.n >= 1.0f) orderNode_.push_back(k);
+        std::sort(orderNode_.begin(), orderNode_.end());
+        for (uint64_t k : orderNode_) {
+            NodePending& p = pendingNode_[k];
+            if (ReleaseNode(minute, w, k, p)) p.n = 0;
+            else p.n = std::min(p.n, 400.0f);
+        }
+        // settled pairs and pairs the builder no longer lists leave the map (a live one is added back next window)
+        for (auto it = pendingNode_.begin(); it != pendingNode_.end();) {
+            if (it->second.n <= 0.0f || (it->second.seen != nodeRelease_ && it->second.n < 1.0f)) it = pendingNode_.erase(it);
+            else ++it;
+        }
+    }
+    bool ReleaseNode(int64_t minute, int w, uint64_t key, const NodePending& p) {
+        const NodeLink& l = p.link;
+        if (!routeFn_ || !table || l.fromNode >= table->nodes || l.toNode >= table->nodes) return true; // nowhere to drive: dropped
+        RouteChoice ch[kMaxAlternatives];
+        const int n = routeFn_(l.fromNode, l.toNode, ch);
+        if (n <= 0) return false;
+        int big = 0;
+        for (int i = 1; i < n; ++i)
+            if (ch[i].share > ch[big].share) big = i;
+        float folded = 0;
+        for (int i = 0; i < n; ++i)
+            if (i != big && p.n * ch[i].share < 0.25f) folded += ch[i].share, ch[i].share = 0;
+        ch[big].share += folded;
+        for (int i = 0; i < n; ++i) {
+            if (ch[i].share <= 0 || ch[i].route == ~0u) continue;
+            const float part = p.n * ch[i].share;
+            const int pieces = std::clamp((int)std::ceil(part / std::max(0.5f, streamVehicles)), 1, std::max(1, streamMax));
+            for (int k = 0; k < pieces; ++k) { // evenly over the window, a little jitter inside each slice
+                SplitMix64 r(SimSeed(seed ^ 0x57EAull, key * 131 + (uint64_t)i, (uint64_t)w * 977 + (uint64_t)k + (uint64_t)(minute / 1440) * 7919));
+                const float wait = std::max(0.01f, ((float)k + (float)(r.Below(1000) / 1000.0)) * (float)kWindowMinutes / (float)pieces);
+                Spawn(minute, l.fromHood, l.toHood, l.homeHood, l.workHood, l.type, part / (float)pieces, ch[i].route, w, key, i * 16 + k, wait);
+            }
+        }
+        stats.released[l.type] += p.n;
+        return true;
+    }
     std::vector<Herd> chainQ_;
     std::vector<int> hoodNode_, topWork_;
     RouteFn routeFn_;

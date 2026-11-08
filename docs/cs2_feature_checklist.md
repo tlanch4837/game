@@ -51,7 +51,9 @@ Legend: ✅ have · 🟡 partial / visuals only, no simulation · ❌ missing
 - ✅ Small Airfield, Regional Airport
 - ❌ Lines/routes tool, stops, schedules, ticket prices, ridership
 - ❌ Bus, tram, metro, taxi, subway tunnels
-- ❌ Outside connections (highway, rail, sea, air) that bring traffic in/out
+- 🟡 Outside connections that bring traffic in/out: road done (src/city/sim_town_traffic.h: dead-end roads at the map edge and
+  player road connections give through traffic, inbound commuters, visitors, trucks and outbound commuters, scaled with the
+  city); rail, sea and air still bring no vehicles of the sim
 
 ## 8. Simulation core (the big gap)
 - ❌ Citizens / households (age, job, education, wealth, happiness, health)

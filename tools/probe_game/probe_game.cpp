@@ -51,6 +51,7 @@
 #include "city/sim.h"
 #include "city/sim_children.h"
 #include "city/sim_routes.h"
+#include "city/sim_town_traffic.h"
 #include "city/sim_cells.h"
 #include "city/sim_growth.h"
 #include "city/sim_coverage.h"
