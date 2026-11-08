@@ -11,7 +11,8 @@
 //             lane-metre. It may push the treasury below zero (the warning fires, the build goes on). It shows on the next
 //             day's ledger as "construction" but is not part of the running expenses (it is already paid).
 //   Bankrupt  the treasury below zero raises one warning event; it clears once the treasury is back above zero. The game
-//             goes on (no game over).
+//             goes on (no game over). The news about it waits out SimTuning::budgetNewsGraceDays (BudgetNewsAllowed).
+//   Map roads the corridor a new map starts with is not the city's: no upkeep (PaidLaneMetres).
 //   Save      SaveFields / LoadFields: loans, the warning flag and the history as one text field (city_sim.inl's M record).
 //   Taxes     the rates stay in SimEconomy (0 .. 30 %, default 10 %); their demand effect is SimEconomy::DemandOffset,
 //             which the host feeds into SimGrowth::offset.
@@ -232,6 +233,22 @@ inline double RoadLaneMetres(double lengthMetres, int lanes) { return std::max(0
 constexpr double kRoadUpkeepPerLaneKmDay = 20.0; // whole currency a day per lane-km (a 2-lane km: 40, as before)
 constexpr int64_t kRoadCostPerLaneMetre = 1000;  // cents (a 2-lane km: 20,000 to build)
 inline int64_t RoadCost(double laneMetres) { return (int64_t)(std::max(0.0, laneMetres) * (double)kRoadCostPerLaneMetre + 0.5); }
+// The lane-metres the city pays upkeep for: everything but the map's own corridor (the highways, railway and flyover a
+// new map starts with: the city did not build them, so an empty city's ledger is zero, not -2,067 a day).
+inline double PaidLaneMetres(double totalLaneMetres, double mapLaneMetres) { return std::max(0.0, totalLaneMetres - std::max(0.0, mapLaneMetres)); }
+
+// Budget news (city_radio.inl's deficit / surplus, city_sim.inl's bankrupt story) waits for graceDays ledger days: a
+// fresh city or a new map is not in deficit on its first day, whatever its first placements cost.
+inline bool BudgetNewsAllowed(const SimEconomy& e, int graceDays) { return e.days >= (int64_t)std::max(0, graceDays); }
+// The budget's mood for the news: -1 in the red, 1 a surplus, 0 neither; prev is kept in between (hysteresis). A surplus
+// needs a few days of positive net; nothing at all is said inside the grace days.
+inline int BudgetMood(const SimEconomy& e, int prev, int graceDays) {
+    if (!BudgetNewsAllowed(e, graceDays)) return 0;
+    if (e.treasury < 0) return -1;
+    if (e.days > 3 && e.LastNet() > 0) return 1;
+    if (e.treasury > 0 && e.LastNet() <= 0) return 0;
+    return prev;
+}
 
 } // namespace city
 } // namespace tbd

@@ -223,6 +223,41 @@ int main() {
         CHECK(on[0] > 0 && off[0] * 2 <= on[0] + 1 && off[0] * 2 >= on[0] - 1);
     }
 
+    // A fresh start: enough money for a first neighbourhood, no budget news on day 1, a zero ledger for an empty city.
+    {
+        SimTuning t;
+        SimEconomy e;
+        e.Reset(t);
+        CHECK(e.treasury >= 100000000LL);   // at least 1,000,000
+        CHECK(t.budgetNewsGraceDays >= 1.0);
+        const int grace = (int)t.budgetNewsGraceDays;
+        CHECK(!BudgetNewsAllowed(e, grace));
+        CHECK(BudgetMood(e, 0, grace) == 0);
+        // a first-day spending spree into the red: toasted by the host, but no deficit story yet
+        SimBudget b;
+        b.Charge(e, e.treasury + 5000000);
+        CHECK(e.treasury < 0 && b.bankrupt);
+        CHECK(BudgetMood(e, 0, grace) == 0 && !BudgetNewsAllowed(e, grace));
+        // the map's own corridor costs no upkeep: an empty city's first day nets zero
+        const double corridor = 103350.0; // lane-metres, about what DefaultInfrastructure lays (was -2,067 a day)
+        CHECK(RoadUpkeepPerDay(corridor, kRoadUpkeepPerLaneKmDay) == 206700); // the old charge, cents
+        DayUpkeep up;
+        up.roads = RoadUpkeepPerDay(PaidLaneMetres(corridor, corridor), kRoadUpkeepPerLaneKmDay);
+        CHECK(up.roads == 0);
+        CHECK(PaidLaneMetres(corridor + 2000.0, corridor) == 2000.0); // the city's own roads are paid for
+        CHECK(PaidLaneMetres(500.0, corridor) == 0.0);
+        CitySim s;
+        SimEconomy f;
+        f.Reset(t);
+        SimBudget fb;
+        fb.Day(f, s, t, up);
+        CHECK(f.LastNet() == 0 && f.LastIncome() == 0 && fb.LastExpenses() == 0 && f.treasury == (int64_t)t.startingMoney);
+        CHECK(BudgetNewsAllowed(f, grace) && BudgetMood(f, 0, grace) == 0); // after a day: allowed, but nothing to say
+        // after the grace day the spree's city is in deficit: the story may run
+        b.Day(e, s, t, DayUpkeep{});
+        CHECK(BudgetNewsAllowed(e, grace) && BudgetMood(e, 0, grace) == -1);
+    }
+
     if (failures) {
         std::printf("sim_economy_test: %d failure(s)\n", failures);
         return 1;

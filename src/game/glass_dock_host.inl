@@ -212,7 +212,7 @@ void LoadAtlas(tbd::Renderer& r) {
 // The sim's numbers into the model.
 void FillStatus(tbd::gui::CityHud& hud) {
     auto& M = g_model;
-    M.money = hud.money >= 0 ? Money(hud.money) : "$0";
+    M.money = Money(hud.money); // in the red it reads "-$12k", not "$0"
     M.pop = hud.population >= 0 ? Thousands(hud.population) : "0";
     long long income = 0;
     for (long long v : hud.incomeDay) income += v;
