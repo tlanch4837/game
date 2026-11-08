@@ -525,7 +525,7 @@ void GameSync() {
     for (PendingLot& pl : g_pendingLots) {
         pl.lot.cells.clear();
         for (const V2& p : pl.cellCentres) pl.lot.cells.push_back(g_zones.NearestCell(p, 3.0f));
-        lotsBack += g_zones.AddLoadedLot(pl.lot) ? 1 : 0;
+        lotsBack += g_zones.AddLoadedLot(pl.lot) || g_zones.AdoptLoadedLot(pl.lot, g_roads.net) ? 1 : 0; // adopt: its cells moved (zoning precedence)
     }
     if (!g_pendingLots.empty()) tbd::Log("Zone-grown buildings restored: %d of %zu", lotsBack, g_pendingLots.size());
     g_pendingLots.clear();

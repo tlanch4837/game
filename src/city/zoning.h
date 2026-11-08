@@ -4,10 +4,14 @@
 // for bigger lots. Platform free: the host feeds the road network, the catalog and game time, and draws the results.
 //
 // Overlap rule (blocks between parallel roads, junction corners, curves): all candidate cells of all roads are sorted
-// shallow first (depth 0 = on the road), wider roads first within a depth, then accepted one by one. A candidate is
-// dropped when any of its points lies on a road surface or its square overlaps an already accepted cell (spatial hash
-// + oriented-square SAT test); once a column (road, side, column) loses a cell, everything behind it goes too, so a
-// block's cells always connect to their road and a block between two roads splits evenly down the middle.
+// by road class first (ZoneRoadRank: large over medium over small), then shallow first (depth 0 = on the road), wider
+// roads first within a depth, then accepted one by one. A candidate is dropped when any of its points lies on a road
+// surface or its square overlaps an already accepted cell (spatial hash + oriented-square SAT test); once a column
+// (road, side, column) loses a cell, everything behind it goes too, so a block's cells always connect to their road.
+// So where a small road meets or crosses a medium one, the medium road keeps its whole strip (all 6 cells deep, its
+// frontage continuous up to the small road's edge) and the small road's cells start beyond it; between two roads of
+// one class a block still splits evenly down the middle. When the cells are rebuilt (a road changed) the paint follows
+// the ground it was on, to whichever road now owns it, and built lots are never taken down for it (see Rebuild).
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -89,6 +93,10 @@ inline bool CarriesUtilities(const Network& net, int s) {
     return p.cat != Cat::Highway && p.cat != Cat::Path && p.cat != Cat::Rail && p.fwd + p.back > 0;
 }
 
+// Zoning precedence by road class (the CS2 category, which follows the lane count: small 2-3 lanes, medium 4-5, large
+// 6+): a higher rank's cells are laid first and win every cell they reach. Equal ranks: the old order (depth, then width).
+inline int ZoneRoadRank(const Profile& p) { return p.cat == Cat::Large ? 2 : p.cat == Cat::Medium ? 1 : 0; }
+
 struct Lot {
     uint64_t id = 0;
     std::vector<int> cells;
@@ -129,6 +137,7 @@ public:
         struct Cand {
             ZoneCell cell;
             float roadW;
+            int rank; // ZoneRoadRank of its road
         };
         std::vector<Cand> cand;
         std::vector<std::array<float, 4>> boxes(net.segs.size()); // seg AABB grown by its half width
@@ -180,12 +189,14 @@ public:
                         cd.cell.dir = T, cd.cell.out = out;
                         cd.cell.seg = (int)s, cd.cell.side = side, cd.cell.col = i, cd.cell.depth = d;
                         cd.roadW = p.width;
+                        cd.rank = ZoneRoadRank(p);
                         cand.push_back(cd);
                     }
                 }
             }
         }
         std::stable_sort(cand.begin(), cand.end(), [](const Cand& a, const Cand& b) {
+            if (a.rank != b.rank) return a.rank > b.rank; // the bigger road's whole strip first (ZoneRoadRank)
             if (a.cell.depth != b.cell.depth) return a.cell.depth < b.cell.depth;
             return a.roadW > b.roadW;
         });
@@ -255,6 +266,16 @@ public:
                         }
                     }
                 if (map[o] >= 0) fresh[map[o]].zone = oc.zone;
+            }
+            // A fresh cell no old cell lines up with (a bigger road took the ground over at a junction, or a road moved):
+            // it takes the paint of the old cell its centre stands in, so the zoning follows the ground to its new road.
+            std::vector<char> matched(fresh.size(), 0);
+            for (int j : map)
+                if (j >= 0) matched[(size_t)j] = 1;
+            for (size_t i = 0; i < fresh.size(); ++i) {
+                if (matched[i]) continue;
+                const int o = CellAt(fresh[i].c); // still the old cells: hash_ indexes them until the end of Rebuild
+                if (o >= 0 && cells[(size_t)o].zone != kNoZone) fresh[i].zone = cells[(size_t)o].zone;
             }
         }
         for (Lot& l : lots) {
@@ -497,6 +518,32 @@ public:
         l.alive = true;
         const int li = (int)lots.size();
         for (int ci : l.cells) cells[ci].lot = li;
+        nextLot_ = std::max(nextLot_, l.id + 1);
+        lots.push_back(std::move(l));
+        ++version;
+        return true;
+    }
+    // A saved lot AddLoadedLot refused because its cells no longer line up (the zoning precedence moved them: a bigger
+    // road now owns that junction): it stays where it stood, on the free cells under it, as a lot that lost its cells in
+    // Rebuild does. False (dropped, as before) when it would stand on a road or on another lot's cells.
+    bool AdoptLoadedLot(Lot l, const Network& net) {
+        if (l.w <= 0 || l.d <= 0 || FootprintOnRoad(net, l)) return false;
+        const V2 side{l.front.z, -l.front.x};
+        std::vector<int> under;
+        bool clash = false;
+        CellsNear(l.c, std::sqrt((float)(l.w * l.w + l.d * l.d)) * kCell * 0.5f + kCell, [&](int j) {
+            const V2 d = cells[(size_t)j].c - l.c;
+            if (std::fabs(Dot2(d, side)) > l.w * kCell * 0.5f - 1.0f || std::fabs(Dot2(d, l.front)) > l.d * kCell * 0.5f - 1.0f) return;
+            if (cells[(size_t)j].lot >= 0) clash = true;
+            under.push_back(j);
+        });
+        if (clash) return false;
+        const int li = (int)lots.size();
+        for (int j : under) cells[(size_t)j].lot = li, cells[(size_t)j].zone = (uint8_t)l.type;
+        l.cells = std::move(under);
+        l.frontSeg = RoadFront(net, l);
+        l.hasRoad = l.frontSeg >= 0;
+        l.alive = true;
         nextLot_ = std::max(nextLot_, l.id + 1);
         lots.push_back(std::move(l));
         ++version;
