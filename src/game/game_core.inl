@@ -1952,6 +1952,7 @@ void RoadsWorldLabels() {
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
+#include "city_interact.inl"  // [interact] info card, bulldoze, touch placement pin, rotate dial (src/city/city_interact.h)
 #include "gui_preview_dump.inl" // TBD_GUI_PREVIEW_DUMP: the procedural build items as triangles for tools/gui_atlas/render.html
 
 // Which HUD button the open transport panel belongs to: Transportation, or the service tab's own (Fire, Healthcare, Police, ...).
@@ -2211,6 +2212,7 @@ void RenderFrame() {
     FrameMark("transport-sync");
     GameSync(); // HUD save / load / new map, restored zone paint // transport buildings: planned -> building -> done on the same clock
     IndustrySync(dt); // specialized industry output
+    InteractSync();   // [interact] the pin, the dial, bulldoze marks and the info card follow the tools and the city
     FrameMark("industry-sync");
     GarbageSync(dt);  // garbage produced, collected and processed
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
@@ -3217,6 +3219,7 @@ void RenderFrame() {
         if (!ghostTris.empty()) r.DrawTransient(ghostTris.data(), (uint32_t)ghostTris.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), false);
         if (!ghostLines.empty()) r.DrawTransient(ghostLines.data(), (uint32_t)ghostLines.size(), tbd::Topology::Lines, viewProj, tbd::Mat4::Identity(), false);
     }
+    if (!g_play.active && !testShot) InteractDraw(r, viewProj); // [interact] bulldoze marks, the info outline, the rotate ring
     static const bool navDebug = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_NAVDEBUG", v, sizeof(v)) > 0 && v[0] != '0'; }();
     if (navDebug && !testShot && g_npcs.Active()) g_npcs.DebugDraw(r, viewProj, g_player.Placed() ? g_player.State().feet : g_engine.camera.target);
     if (static std::vector<tbd::Vertex> brush; !testShot && !g_play.active && (brush.clear(), tbd::shell::EditorBrushLines(brush))) // Character Creator hair brush
@@ -3787,6 +3790,11 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         if (HandleKey(e.key, e.repeat)) return true;
         break;
     case VpEv::LeftDown:
+        if (const int used = InteractLeftDown(e.x, e.y)) { // [interact] the rotate dial, bulldoze, the touch placement pin, info
+            host.Focus();
+            if (used == 2) host.Capture();
+            return true;
+        }
         if (tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) {
             BeginDragHost(host, Drag::Orbit, 0, e.x, e.y);
         } else if (g_roads.active && gdock::ReticleOn()) { // [road ux] the aim dot: only its tick places; a tap on the map does not
@@ -3847,6 +3855,7 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         return true;
     case VpEv::MiddleDown: BeginDragHost(host, Drag::Pan, 2, e.x, e.y); return true;
     case VpEv::LeftUp:
+        if (InteractLeftUp(e.x, e.y)) { host.Release(); return true; } // [interact]
         if (g_indTool.dragIdx >= 0) {
             host.Release();
             g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;
@@ -3877,6 +3886,7 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
     case VpEv::Move:
         g_terrainEdit.mouseX = e.x;
         g_terrainEdit.mouseY = e.y;
+        if (InteractMove(e.x, e.y)) return true; // [interact] the dial / bulldoze box drag, bulldoze hover
         if (g_engine.drag != Drag::None) {
             ContinueDrag(e.x, e.y);
         } else {

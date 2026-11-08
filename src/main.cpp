@@ -78,6 +78,8 @@
 #include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building
 #include "city/road_names.h"     // road / street / highway names, house numbers (chip under the road tool's cursor, F2 renames)
+#include "city/city_interact.h"  // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)
+#include "gui/info_card.h"       // [interact] the tap-for-info card
 #include "undo.h" // engine-wide undo stack (shared with the Character Creator)
 #include "gizmo.h"
 #include "inspector.h"

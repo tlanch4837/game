@@ -15,6 +15,7 @@ struct ZoneInput {
     bool have = false;   // cursor on the ground
     tbd::Vec3 hit{};
     tbd::city::V2 boxStart{}, boxDir{1, 0};
+    tbd::city::PlaneLock plane; // [interact] a drag stays on the horizontal world plane of the cell it started on (src/city/city_interact.h)
 } g_zoneIn;
 // TBD_ZONE_ENTITIES=1: the old path, one scene entity (and mesh upload) per lot. Otherwise city_buildings.inl draws lots per CityCell.
 const bool g_zoneEntities = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_ZONE_ENTITIES", v, sizeof(v)) > 0 && v[0] == '1'; }();
@@ -189,8 +190,9 @@ void ZonesSync(float realDt) {
 void ZonesCursor() {
     tbd::Vec3 hit;
     const bool overGui = g_gui.WantsMouseAt((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY);
-    g_zoneIn.have = g_terrainEdit.mouseX >= 0 && !overGui &&
-                    GroundHit(g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+    const tbd::Ray ray = g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH);
+    if (g_zoneIn.held && g_zoneIn.plane.on) g_zoneIn.have = g_terrainEdit.mouseX >= 0 && g_zoneIn.plane.Hit(ray, hit); // [interact] the world plane, not the terrain under the finger
+    else g_zoneIn.have = g_terrainEdit.mouseX >= 0 && !overGui && GroundHit(ray, hit);
     if (g_zoneIn.have) g_zoneIn.hit = hit;
     if (g_zoneIn.held && g_zoneIn.have && g_zoneTool.mode == tbd::gui::ZoneToolState::Brush)
         g_zones.Brush({hit.x, hit.z}, g_zoneTool.radius, g_zoneTool.Paint());
@@ -200,6 +202,10 @@ void ZonesPress() {
     ZonesCursor();
     if (!g_zoneIn.have) return;
     const tbd::city::V2 p{g_zoneIn.hit.x, g_zoneIn.hit.z};
+    { // [interact] lock the drag to the plane of the first cell (its ground height), or of the ground hit off the grid
+        const int c0 = g_zones.CellAt(p);
+        g_zoneIn.plane.Begin(c0 >= 0 ? g_zones.cells[(size_t)c0].yc : g_zoneIn.hit.y);
+    }
     switch (g_zoneTool.mode) {
     case tbd::gui::ZoneToolState::Brush:
         g_zoneIn.held = true;
@@ -222,6 +228,7 @@ void ZonesRelease() {
     ZonesCursor();
     if (g_zoneTool.mode == tbd::gui::ZoneToolState::Box)
         g_zones.Box(g_zoneIn.boxStart, {g_zoneIn.hit.x, g_zoneIn.hit.z}, g_zoneIn.boxDir, g_zoneTool.Paint());
+    g_zoneIn.plane.End(); // [interact]
 }
 
 // ---- drawing

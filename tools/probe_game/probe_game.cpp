@@ -68,6 +68,8 @@
 #include "city/sim_people.h"
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
+#include "city/city_interact.h" // [interact]
+#include "gui/info_card.h"      // [interact]
 #include "undo.h"
 #include "gizmo.h"
 #include "mesh_import.h"

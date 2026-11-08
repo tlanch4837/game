@@ -66,6 +66,8 @@
 #include "city/sim_people.h"
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
+#include "city/city_interact.h" // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)
+#include "gui/info_card.h"      // [interact] the tap-for-info card
 #include "undo.h"
 #include "gizmo.h"
 #include "mesh_import.h"
@@ -150,6 +152,7 @@ bool tbd::shell::EditorClayDraw(std::vector<tbd::Vertex>&, std::vector<tbd::Vert
 // ---- tbd::host
 void tbd::host::Init(const std::wstring& assetsRoot) {
     GameInit(assetsRoot);
+    g_touchInput = true; // [interact] this host is the touch shell: taps pick / place, one finger pans (city_interact.inl)
     // Sound reads <assets>\audio (the shell copies the bundled UI sfx into it on first run, so the folder exists). Without
     // this every audio:: call is a silent no-op; on Windows main.cpp starts it.
     if (!tbd::audio::Start(assetsRoot)) tbd::Log("Audio: not started (no %s\\audio folder, or TBD_NOAUDIO)", tbd::WideToUtf8(assetsRoot).c_str());
@@ -211,9 +214,12 @@ void tbd::host::PointerCancel() {
     g_buttonsDown = 0;
 }
 
-// [road ux] with the aim dot out a finger on the map moves the camera; the dot's tick places (gui/road_reticle.h)
+// [road ux] with the aim dot out a finger on the map moves the camera; the dot's tick places (gui/road_reticle.h).
+// [interact] otherwise the tools that draw with one finger (roads, zones, lines, terrain, bulldoze's zone area, the rotate dial) get the
+// finger, and a building being placed, bulldoze's tap mode and no tool pan with it and act on a tap (city_interact.inl TouchFingerDraws)
 bool tbd::host::TouchBuilds(float x, float y) {
-    return tbd::gui::reticle::RouteTouch(g_gui.WantsMouseAt(x, y), gdock::ToolActive(), gdock::ReticleOn()) != tbd::gui::reticle::Route::Camera;
+    if (tbd::gui::reticle::RouteTouch(g_gui.WantsMouseAt(x, y), gdock::ToolActive(), gdock::ReticleOn()) == tbd::gui::reticle::Route::Camera) return false;
+    return g_gui.WantsMouseAt(x, y) || TouchFingerDraws();
 }
 
 // [safe area] device pixels; the GUI converts them to its points each frame (game/glass_dock_host.inl FillSafe)
