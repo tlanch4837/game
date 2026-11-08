@@ -372,7 +372,7 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
         Color col = kMuted;
         if (st.captionT < 3.0f && !st.caption.empty()) c = st.caption, col = Fade(kInk, std::min(1.0f, (3.0f - st.captionT) * 2.0f) * 0.9f);
         else if (!t.error.empty()) c = t.error, col = Rgba(255, 140, 120);
-        else if (rail) c = "Rail: curves 45 m radius or wider, grades up to 6 %";
+        else if (rail) c = "Rail: min radius 45 m, max grade 6 %";
         else if (t.Pending()) c = "Tap to continue; End stops the road";
         P.Text(c, x0, y - kRowGap + kCaptionH * 0.5f + 2, 11, col, false, 0, inner);
     }
