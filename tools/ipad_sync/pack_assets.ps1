@@ -47,5 +47,6 @@ foreach ($dir in "audio\sfx", "audio\radio", "audio\music", "audio\ambience") {
 Get-ChildItem "$Out\shaders" -File | Remove-Item
 if ($Shaders) { Copy-Item "$repo\src\shaders\msl\*.metal" "$Out\shaders" }
 
-$size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum)"{0} files, {1:N0} MB in {2}" -f $size.Count, ($size.Sum / 1MB), $Out
+$size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum)
+"{0} files, {1:N0} MB in {2}" -f $size.Count, ($size.Sum / 1MB), $Out
 exit 0 # robocopy's 1 ("files copied") is success
