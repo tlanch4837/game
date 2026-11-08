@@ -12,7 +12,8 @@
 //   level 1  < 90 m                ~375 triangles                    4 walk frames + idle
 //   level 2  < 220 m               ~190 triangles                    2 walk frames + idle; none past 220 m
 // The frame is the stride phase (metres walked / the clip's measured stride), so feet do not slide whatever the walking
-// speed. Near people (< 60 m) cast sun shadows: the level-1 frames of one look (the shapes are the same), 5 draws at most.
+// speed. Near people (< 60 m) cast sun shadows with the very level and frame they are drawn with (one look: the shapes are the
+// same), 14 draws at most.
 // TBD_WALKERS=0 turns them off; TBD_WALKERS_MAX=<n> sets the cap (default 320).
 // src/city/sim_walkers.h is included by the translation units (main.cpp, game_host.cpp, probe_game.cpp) before game_core.inl,
 // which they open inside an anonymous namespace.
@@ -40,7 +41,7 @@ float doorsTimer = 0;
 std::vector<tbd::city::WalkDoor> doorScratch;
 std::vector<std::string> doorLabels;            // per sim.doors entry: what the info card calls it
 std::vector<float> rows[kLevels * kLooks * kSlots];
-std::vector<float> shadowRows[5];
+std::vector<float> shadowRows[kLevels * kSlots]; // per (level, frame) of look 0: the casters match what is drawn
 uint32_t drawn = 0, draws = 0;
 bool On() {
     static const bool on = [] { char v[8] = {}; return !(tbd::platform::GetEnvA("TBD_WALKERS", v, sizeof(v)) > 0 && v[0] == '0'); }();
@@ -53,14 +54,14 @@ struct Welded {
     std::vector<tbd::Vertex> verts;
     std::vector<uint32_t> index, first;
 };
-inline Welded Weld(const std::vector<tbd::Vertex>& flat) {
+inline Welded Weld(const std::vector<tbd::Vertex>& flat, const std::vector<uint32_t>& corners) {
     Welded w;
     std::unordered_map<std::string, uint32_t> seen;
-    seen.reserve(flat.size());
-    for (size_t i = 0; i < flat.size(); ++i) {
+    seen.reserve(corners.size());
+    for (uint32_t i : corners) {
         const std::string key(reinterpret_cast<const char*>(&flat[i]), sizeof(tbd::Vertex));
         const auto it = seen.try_emplace(key, (uint32_t)w.verts.size());
-        if (it.second) w.verts.push_back(flat[i]), w.first.push_back((uint32_t)i);
+        if (it.second) w.verts.push_back(flat[i]), w.first.push_back(i);
         w.index.push_back(it.first->second);
     }
     return w;
@@ -109,8 +110,32 @@ inline bool Bake() {
             stride = s > 0.8f && s < 3.2f ? s : 1.4f * dur;
             tbd::Log("Walkers: walk cycle %.2f s, stride %.2f m (%s), %zu triangles a body", dur, stride, s > 0.8f && s < 3.2f ? "measured" : "fallback", flat.size() / 3);
         }
-        // the levels: decimated in the bind pose, the same collapses applied to every pose (vertices are copies of the welded ones)
-        const Welded w = Weld(flat);
+        // The distance skinning of the generated bodies leaves some triangles bridging an arm and the torso or the two legs
+        // (clothes modelled in the rest pose): stretched into webs once the limbs swing. A triangle whose edge grows past 1.7x
+        // its rest length (and past 10 cm) in any baked pose is left out of every pose.
+        std::vector<uint32_t> body;
+        body.reserve(flat.size());
+        int webs = 0;
+        for (size_t t = 0; t + 2 < flat.size(); t += 3) {
+            bool web = false;
+            for (int e = 0; e < 3 && !web; ++e) {
+                const tbd::Vertex& a = flat[t + (size_t)e];
+                const tbd::Vertex& b = flat[t + (size_t)((e + 1) % 3)];
+                const float rest = std::sqrt((a.px - b.px) * (a.px - b.px) + (a.py - b.py) * (a.py - b.py) + (a.pz - b.pz) * (a.pz - b.pz));
+                for (int f = 0; f < kSlots && !web; ++f) {
+                    const tbd::Vertex& pa = posed[f][t + (size_t)e];
+                    const tbd::Vertex& pb = posed[f][t + (size_t)((e + 1) % 3)];
+                    const float len = std::sqrt((pa.px - pb.px) * (pa.px - pb.px) + (pa.py - pb.py) * (pa.py - pb.py) + (pa.pz - pb.pz) * (pa.pz - pb.pz));
+                    web = len > 0.10f && len > rest * 1.7f;
+                }
+            }
+            if (web) { ++webs; continue; }
+            for (int k = 0; k < 3; ++k) body.push_back((uint32_t)(t + (size_t)k));
+        }
+        if (l == 0) tbd::Log("Walkers: %d stretched triangles left out of %s's poses", webs, path.c_str());
+        // the levels: decimated in the standing pose (arms down: in the file's T pose a collapse may join an arm to the torso,
+        // a flap once the arm hangs), the same collapses applied to every pose (level vertices are copies of the welded ones)
+        const Welded w = Weld(posed[8], body);
         const std::vector<tbd::LodLevel> chain = tbd::BuildLodChain(w.verts, w.index, 0.5f, 0.9f);
         std::unordered_map<std::string, uint32_t> byBytes;
         for (size_t i = 0; i < w.verts.size(); ++i) byBytes.emplace(std::string(reinterpret_cast<const char*>(&w.verts[i]), sizeof(tbd::Vertex)), (uint32_t)i);
@@ -125,8 +150,7 @@ inline bool Bake() {
         for (int lv = 0; lv < kLevels; ++lv) {
             std::vector<uint32_t> corner; // flat corner (of the file's list) for each corner of this level
             if (lv == 0 || !pick[lv]) {
-                corner.resize(flat.size());
-                for (size_t i = 0; i < flat.size(); ++i) corner[i] = (uint32_t)i;
+                corner = body;
             } else {
                 for (uint32_t i : pick[lv]->indices) {
                     const tbd::Vertex& v = pick[lv]->vertices[i];
@@ -141,8 +165,7 @@ inline bool Bake() {
                 const std::vector<tbd::Vertex>& src = posed[isIdle ? 8 : f * (8 / kFrames[lv])];
                 tri.clear();
                 for (uint32_t c : corner) tri.push_back(src[c]);
-                levels[lv].mesh[l][f] = g_engine.renderer->CreateMesh(tri.data(), (uint32_t)tri.size(), tbd::Topology::Triangles);
-            }
+                levels[lv].mesh[l][f] = g_engine.renderer->CreateMesh(tri.data(), (uint32_t)tri.size(), tbd::Topology::Triangles);            }
         }
     }
     tbd::Log("Walkers: baked %d looks x (%d + %d + %d frames + idle): %u / %u / %u triangles", kLooks, kFrames[0], kFrames[1], kFrames[2], levels[0].tris, levels[1].tris, levels[2].tris);
@@ -252,12 +275,15 @@ void WalkerInfo(tbd::gui::InfoCardData& d, const tbd::city::Walker& w) {
 void WalkersSync(float realDt) {
     namespace wh = walkers_host;
     if (!wh::On() || !g_engine.renderer || g_play.active) return;
-    if (!g_clock.paused) wh::clock += (double)realDt * (1.0 + 0.5 * g_clock.speed);
+    static const bool freeze = tbd::platform::GetEnvA("TBD_WALKERS_FREEZE", nullptr, 0) > 0; // dev: stop them after 30 s (captures)
+    if (!g_clock.paused && !(freeze && wh::clock > 30.0)) wh::clock += (double)realDt * (1.0 + 0.5 * g_clock.speed);
     if (!wh::tried) {
         if (g_roads.net.segs.empty() || g_zones.lots.empty()) return; // nothing to walk yet: the files load with the first street
         wh::tried = true;
         char v[16] = {};
         if (tbd::platform::GetEnvA("TBD_WALKERS_MAX", v, sizeof(v)) > 0) wh::sim.params.maxWalkers = std::clamp(atoi(v), 0, 2000);
+        wh::sim.params.rate = 2.0f; // busier than the headless calibration: streets read as lived in (the cap still holds)
+        if (tbd::platform::GetEnvA("TBD_WALKERS_RATE", v, sizeof(v)) > 0) wh::sim.params.rate = std::clamp((float)atof(v), 0.0f, 20.0f);
         wh::ready = wh::Bake();
     }
     if (!wh::ready) return;
@@ -287,6 +313,15 @@ void WalkersSync(float realDt) {
         logT = 10.0f;
         size_t homes = 0, people = 0;
         for (const tbd::city::WalkDoor& d : wh::sim.doors) homes += d.kind == tbd::city::DoorKind::Home, people += (size_t)d.people;
+        int inRange = 0, inView = 0;
+        float nearest = 1e9f;
+        for (const tbd::city::Walker& w : wh::sim.walkers) {
+            const tbd::Vec3 d{w.pos.x - view.eye.x, w.y - view.eye.y, w.pos.z - view.eye.z};
+            const float dist = std::sqrt(tbd::Dot(d, d));
+            nearest = std::min(nearest, dist);
+            inRange += dist < view.range, inView += view.InView(w.pos, w.y, 0.15f);
+        }
+        tbd::Log("Walkers: %d within %.0f m of the eye (%.1f %.1f %.1f), %d in view, nearest %.0f m", inRange, view.range, view.eye.x, view.eye.y, view.eye.z, inView, nearest);
         tbd::Log("Walkers: %zu out (%u drawn in %u draws), %zu doors (%zu homes, %zu people), %.1f h, keep %.2f, disk %.0f m, eye %.0f m up; %llu planned, %llu hidden on arrival",
                  wh::sim.walkers.size(), wh::drawn, wh::draws, wh::sim.doors.size(), homes, people, hour, wh::sim.keep, radius, h,
                  (unsigned long long)wh::sim.planned, (unsigned long long)wh::sim.suppressed);
@@ -319,8 +354,8 @@ void WalkersDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
         std::vector<float>& dst = wh::rows[(size_t)((lv * wh::kLooks + w.look % wh::kLooks) * wh::kSlots + slot)];
         dst.insert(dst.end(), row, row + 12);
         if (dist < wh::kShadowRange) {
-            const int sf = w.moving ? std::min(3, (int)(frac * 4.0f)) : 4;
-            wh::shadowRows[sf].insert(wh::shadowRows[sf].end(), row, row + 12);
+            std::vector<float>& sh = wh::shadowRows[(size_t)(lv * wh::kSlots + slot)];
+            sh.insert(sh.end(), row, row + 12);
         }
         ++wh::drawn;
     }
@@ -336,13 +371,15 @@ void WalkersDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
             }
 }
 
-// The sun's shadow pass (next to SimAgentsCasters): last frame's near walkers, the level-1 shapes of one look.
+// The sun's shadow pass (next to SimAgentsCasters): last frame's walkers within kShadowRange, each as the same level and frame
+// it was drawn with (one look: the shapes are the same), so a body never shadows itself with a different pose.
 void WalkersCasters(tbd::Renderer& r) {
     namespace wh = walkers_host;
-    if (!wh::ready || g_play.active) return;
-    for (int f = 0; f < 5; ++f) {
-        const std::vector<float>& v = wh::shadowRows[f];
-        const tbd::MeshId mesh = wh::levels[1].mesh[0][f == 4 ? wh::kSlots - 1 : f];
+    static const bool off = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_WALKERS_SHADOWS", v, sizeof(v)) > 0 && v[0] == '0'; }();
+    if (!wh::ready || g_play.active || off) return;
+    for (int b = 0; b < wh::kLevels * wh::kSlots; ++b) {
+        const std::vector<float>& v = wh::shadowRows[b];
+        const tbd::MeshId mesh = wh::levels[b / wh::kSlots].mesh[0][b % wh::kSlots];
         if (v.empty() || mesh == tbd::kInvalidMesh) continue;
         r.DrawShadowInstancedTransient(mesh, v.data(), (uint32_t)(v.size() / 12));
     }
