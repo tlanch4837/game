@@ -10,7 +10,24 @@
 
 namespace tbd::gfx {
 
-constexpr int kScaleCount = 5, kScalePct[kScaleCount] = {50, 67, 75, 85, 100}; // internal render resolution, percent of the screen
+// The 3D scene's internal render resolution, percent of the screen's native pixels (the last step, "Native", is 100%). The GUI
+// is never scaled by it: it draws on the full-size drawable after the scene is upscaled (renderer: the overlay pass).
+// Version 2 of the steps (settings.ini "scalev=2"); version 1 was 50 / 67 / 75 / 85 / 100, each the nearest of the new ones.
+constexpr int kScaleCount = 5, kScalePct[kScaleCount] = {50, 60, 75, 90, 100};
+constexpr int kScaleVersion = 2;
+inline const char* ScaleLabel(int i) {
+    static const char* const k[kScaleCount] = {"50%", "60%", "75%", "90%", "Native"};
+    return k[std::clamp(i, 0, kScaleCount - 1)];
+}
+// Each preset's resolution step. iOS draws at the screen's native pixels (2x or 3x points), four times the pixels of the
+// 1x drawable it had before the GUI sharpness fix, so its presets keep the scene nearer that cost; the player can still pick
+// any step, Native included, on the Graphics page.
+#if defined(__APPLE__)
+constexpr int kPresetScale[4] = {0, 1, 1, 2}; // Low 50%, Med 60%, High 60%, Ultra 75%
+#else
+constexpr int kPresetScale[4] = {1, 2, 3, 4}; // Low 60%, Med 75%, High 90%, Ultra native
+#endif
+constexpr int kDefaultScale = kPresetScale[2]; // before the player has a settings file: the High preset's step
 constexpr int kDistanceCount = 3, kRadius[kDistanceCount] = {5, 8, 12};       // terrain chunks drawn: Near, Medium, Far
 constexpr int kTiers = 5;                                                     // lighting/post tier and building detail: Low, Low/Med, Med, High, Ultra
 
@@ -18,7 +35,7 @@ enum Preset { kLow = 0, kMed = 1, kHigh = 2, kUltra = 3, kCustom = 4 };
 
 struct Settings {
     int preset = kHigh;
-    int scale = 4;     // index into kScalePct
+    int scale = kDefaultScale; // index into kScalePct
     int look = 3;      // lighting and post tier 0..4 (shadow taps, AO, bloom)
     int detail = 3;    // building detail tier 0..4 (the zoned-building draw and triangle budget)
     int distance = 1;  // index into kRadius
@@ -28,13 +45,13 @@ struct Settings {
 
 inline void ApplyPreset(Settings& s, int preset) {
     //                      scale look detail dist shadows lighting
-    static const int t[4][6] = {{1, 0, 0, 0, 1, 1},   // Low: 67%, fast lighting
-                                {2, 1, 1, 1, 1, 0},   // Med: 75%
-                                {3, 3, 3, 1, 1, 0},   // High: 85%
-                                {4, 4, 4, 2, 1, 0}};  // Ultra: native
+    static const int t[4][6] = {{0, 0, 0, 0, 1, 1},   // Low: fast lighting
+                                {0, 1, 1, 1, 1, 0},   // Med
+                                {0, 3, 3, 1, 1, 0},   // High
+                                {0, 4, 4, 2, 1, 0}};  // Ultra (resolution: kPresetScale)
     preset = std::clamp(preset, 0, 3);
     s.preset = preset;
-    s.scale = t[preset][0], s.look = t[preset][1], s.detail = t[preset][2];
+    s.scale = kPresetScale[preset], s.look = t[preset][1], s.detail = t[preset][2];
     s.distance = t[preset][3], s.shadows = t[preset][4], s.lighting = t[preset][5];
 }
 
@@ -58,7 +75,7 @@ inline float ScaleFraction() { return (float)kScalePct[std::clamp(g.scale, 0, kS
 inline std::string Serialize(const Settings& s) {
     std::ostringstream o;
     o << "preset=" << s.preset << "\nscale=" << s.scale << "\nlook=" << s.look << "\ndetail=" << s.detail << "\ndistance=" << s.distance
-      << "\nshadows=" << s.shadows << "\nlighting=" << s.lighting << '\n';
+      << "\nshadows=" << s.shadows << "\nlighting=" << s.lighting << "\nscalev=" << kScaleVersion << '\n';
     return o.str();
 }
 
@@ -79,7 +96,11 @@ inline bool Find(const std::string& text, const char* key, int& out) {
 inline void Parse(const std::string& text, Settings& s) {
     Find(text, "preset", s.preset), Find(text, "scale", s.scale), Find(text, "look", s.look), Find(text, "detail", s.detail);
     Find(text, "distance", s.distance), Find(text, "shadows", s.shadows), Find(text, "lighting", s.lighting);
+    int version = 1;
+    Find(text, "scalev", version);
     Clamp(s);
+    // an older file: a preset takes its current resolution step; a Custom pick keeps its index (the nearest new step)
+    if (version < kScaleVersion && s.preset < kCustom) s.scale = kPresetScale[s.preset];
 }
 
 } // namespace tbd::gfx

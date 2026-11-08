@@ -368,6 +368,10 @@ std::wstring SettingsFilePath() {
     return tbd::Join(dir, L"settings.ini");
 }
 void LoadSettingsFile() {
+#if defined(__APPLE__)
+    // An iPad is read at arm's length: Large text until the player picks otherwise (a saved "text=" below wins).
+    if (g_state.pad) g_model.textSize = 1;
+#endif
     FILE* f = tbd::platform::WOpen(SettingsFilePath().c_str(), L"rb");
     if (!f) return;
     std::string text;

@@ -1296,7 +1296,12 @@ static float g_dynamicScale = 0.0f; // set by UpdateDynamicResolution; 0 = TBD_S
 float RenderScale() {
     static const float scale = [] {
         char v[32] = {};
-        if (tbd::platform::GetEnvA("TBD_SCALE", v, sizeof(v)) == 0) return 1.0f;
+#if defined(__APPLE__) // iOS draws at the screen's native pixels: without a settings file the scene starts at the High step
+        const float unset = (float)tbd::gfx::kScalePct[tbd::gfx::kDefaultScale] / 100.0f;
+#else
+        const float unset = 1.0f;
+#endif
+        if (tbd::platform::GetEnvA("TBD_SCALE", v, sizeof(v)) == 0) return unset;
         char* end = nullptr;
         const float s = strtof(v, &end);
         return end == v ? 1.0f : tbd::ClampRenderScale(s);

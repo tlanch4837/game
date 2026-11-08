@@ -820,7 +820,33 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         P.alpha = a;
         P.dl.Glass(0, 0, in.viewW, in.viewH, 0, Rgba(0, 0, 0, 102), 14 * s, 0.8f, 0, 0);
         g.Block({0, 0, in.viewW, in.viewH});
-        const float cardW = padSizes ? 340 : (st.gfx ? 330 : 260), gap = padSizes ? 8 : 6, bh = (padSizes ? 14 : 11) * 2 + 14 * P.text * 1.25f;
+        static const char* const kOnOff[] = {"Off", "On"};
+        static const char* const kPreset[] = {"Low", "Med", "High", "Ultra"};
+        static const char* const kPresetC[] = {"Low", "Med", "High", "Ultra", "Custom"};
+        static const char* const kRes[] = {tbd::gfx::ScaleLabel(0), tbd::gfx::ScaleLabel(1), tbd::gfx::ScaleLabel(2), tbd::gfx::ScaleLabel(3), tbd::gfx::ScaleLabel(4)};
+        static const char* const kTier[] = {"Low", "L/M", "Med", "High", "Ultra"};
+        static const char* const kDist[] = {"Near", "Med", "Far"};
+        static const char* const kLight[] = {"Full", "Fast", "Unlit"};
+        static const char* const kText[] = {"Normal", "Large"};
+        // A settings row is the icon, its label and a segmented choice on the right: the card is as wide as the widest row
+        // needs (the touch layout's 1.3x and Large text's 1.15x text made the Graphics rows' choices run over their labels).
+        auto rowNeed = [&](const char* label, const char* const* opts, int n) {
+            float w = 44 + P.TextW(label, 13) + 12 + 6;
+            for (int i = 0; i < n; ++i) w += P.TextW(opts[i], 11, true) + 16;
+            return w;
+        };
+        float cardW = padSizes ? 340 : (st.gfx ? 330 : 260);
+        if (st.settings) {
+            float need = 0;
+            if (st.gfx) {
+                need = std::max({rowNeed("Preset", kPresetC, 5), rowNeed("Resolution", kRes, 5), rowNeed("Effects", kTier, 5), rowNeed("Buildings", kTier, 5),
+                                 rowNeed("Draw distance", kDist, 3), rowNeed("Sun shadows", kOnOff, 2), rowNeed("Lighting mode", kLight, 3)});
+            } else {
+                need = std::max({rowNeed("Sound effects", kOnOff, 2), rowNeed("Graphics", kPreset, 4), rowNeed("Text size", kText, 2), rowNeed("Edge pan", kOnOff, 2)});
+            }
+            cardW = std::min(std::max(cardW, need), W - 24);
+        }
+        const float gap = padSizes ? 8 : 6, bh = (padSizes ? 14 : 11) * 2 + 14 * P.text * 1.25f;
         const float popScale = 0.6f + 0.4f * a; // pop: scale(.6) -> 1
         auto btnRect = [&](float x, float y, float w, float h) { return R(W * 0.5f + (x - W * 0.5f) * popScale, H * 0.5f + (y - H * 0.5f) * popScale, w * popScale, h * popScale); };
         auto drawBtn = [&](float x, float y, float w, float h, const std::string& icon, const std::string& label, int style, bool centre) {
@@ -912,14 +938,6 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 y += rowH + gap;
                 return picked;
             };
-            static const char* const kOnOff[] = {"Off", "On"};
-            static const char* const kPreset[] = {"Low", "Med", "High", "Ultra"};
-            static const char* const kPresetC[] = {"Low", "Med", "High", "Ultra", "Custom"};
-            static const char* const kRes[] = {"50%", "67%", "75%", "85%", "100%"};
-            static const char* const kTier[] = {"Low", "L/M", "Med", "High", "Ultra"};
-            static const char* const kDist[] = {"Near", "Med", "Far"};
-            static const char* const kLight[] = {"Full", "Fast", "Unlit"};
-            static const char* const kText[] = {"Normal", "Large"};
             int v;
             if (st.gfx) {
                 // Graphics: a preset, or every option on its own. Touching any option makes the preset Custom.
