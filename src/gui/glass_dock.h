@@ -300,6 +300,8 @@ struct Tapper {
     }
 };
 
+inline void MenuFrame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out, bool standalone); // [title]
+
 // ---------------------------------------------------------------- the frame
 // s: pixels per point. viewW / viewH: the viewport in pixels.
 inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out) {
@@ -855,6 +857,22 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         }
     }
 
+    MenuFrame(g, st, m, atlas, out, false); // [title]
+}
+
+// [title] The pause menu and Settings on their own: the title screen (gui/title_screen.h) shows Settings without the dock.
+// standalone: called by itself (not from Frame): it keeps the menu's clock.
+inline void MenuFrame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out, bool standalone) {
+    const Input& in = g.In();
+    const float s = g.Scale();
+    Painter P(g, atlas, s);
+    P.text = (!st.pcUi && st.pad ? 1.3f : 1.0f) * (m.textSize ? 1.15f : 1.0f);
+    const float SL = m.safe.L(), ST = m.safe.T();
+    const float W = in.viewW / s - m.safe.R(), H = in.viewH / s - m.safe.B();
+    Tapper T{g, st};
+    auto R = [&](float x, float y, float w, float h) { return Rect{x * s, y * s, w * s, h * s}; };
+    auto sfx = [&](float pitch) { if (m.sound) out.sfx.push_back(pitch); };
+    if (standalone) st.menuT += in.dt;
     // ================================================================ pause menu / settings (frosted scrim, centred card)
     out.menuOpen = st.menu;
     if (st.menu) {
