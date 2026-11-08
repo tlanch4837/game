@@ -1265,9 +1265,7 @@ void WasteStartPlace(int type) { // type: index into kWasteTypes, or -1 for the 
 void IndustryCursor() {
     auto& T = g_indTool;
     tbd::Vec3 hit;
-    const bool overGui = g_gui.WantsMouseAt((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY);
-    T.have = g_terrainEdit.mouseX >= 0 && !overGui &&
-             GroundHit(g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+    T.have = PlaceCursorHit(hit); // [interact] was the cursor's ground hit (not over the GUI); the same for everything but a touch ghost
     if (!T.have) return;
     T.cur = {hit.x, hit.z};
     if (T.mode == IndustryTool::Place && T.point) {
@@ -1888,8 +1886,8 @@ bool IndustryToolbar(float lift) {
 }
 
 // ---- rotating the building being placed (every placement tool: utilities, transport / services, industry hubs, waste)
-// R turns it 90 degrees, Shift+R back (game_core.inl HandleKey); Ctrl + wheel 15 degrees free / 90 snapped; on touch the
-// placement bar's two rotate buttons (glass_dock_host.inl). The ghost, the validation (footprint, the pumps' and outlets'
+// R turns it 90 degrees, Shift+R back (game_core.inl HandleKey); Ctrl + wheel 15 degrees free / 90 snapped; the placement
+// bar's Rotate toggle opens the dial (city_interact.inl: a drag turns it, Snap 15 / 90 degree steps or free). The ghost, the validation (footprint, the pumps' and outlets'
 // shoreline, the road in the way), the placed building and the save (its front, already in B / U / D records) all follow
 // the tool's rotation (src/city/placement_rotation.h). Snapped to a road a building turns in quarter turns from facing it.
 // Which tool has a building ghost out, and whether it snaps to a road (0 none, 1 free heading, 2 road-snapped).

@@ -26,6 +26,7 @@ std::string g_utilGhost;                                // the entity that follo
 int g_utilGhostDef = -1;
 
 void TransportRefreshZoning(); // city_transport.inl: sets the zone grid's blockers (it adds ours)
+bool PlaceCursorHit(tbd::Vec3& hit); // [interact] city_interact.inl: the ghost's ground point (the touch pin, the dial, else the cursor)
 
 void UtilAppendBlockers(std::vector<tbd::city::BlockRect>& out) {
     const auto b = g_util.Blockers();
@@ -121,9 +122,7 @@ bool UtilTouches(tbd::city::V2 p, tbd::city::Util kind) {
 // ---- input
 void UtilCursor() {
     tbd::Vec3 hit;
-    const bool overGui = g_gui.WantsMouseAt((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY);
-    g_utilIn.have = g_terrainEdit.mouseX >= 0 && !overGui &&
-                    GroundHit(g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+    g_utilIn.have = PlaceCursorHit(hit); // [interact] was the cursor's ground hit (not over the GUI); the same for everything but a touch ghost
     g_utilIn.hover = g_utilIn.hoverLine = -1;
     if (!g_utilIn.have) return;
     g_utilIn.hit = hit;

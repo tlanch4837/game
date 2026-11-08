@@ -64,6 +64,8 @@
 #include "city/sim_people.h"
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
+#include "city/city_interact.h" // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)
+#include "gui/info_card.h"      // [interact] the tap-for-info card
 #include "undo.h"
 #include "gizmo.h"
 #include "mesh_import.h"
@@ -148,6 +150,7 @@ bool tbd::shell::EditorClayDraw(std::vector<tbd::Vertex>&, std::vector<tbd::Vert
 // ---- tbd::host
 void tbd::host::Init(const std::wstring& assetsRoot) {
     GameInit(assetsRoot);
+    g_touchInput = true; // [interact] this host is the touch shell: taps pick / place, one finger pans (city_interact.inl)
     // Sound reads <assets>\audio (the shell copies the bundled UI sfx into it on first run, so the folder exists). Without
     // this every audio:: call is a silent no-op; on Windows main.cpp starts it.
     if (!tbd::audio::Start(assetsRoot)) tbd::Log("Audio: not started (no %s\\audio folder, or TBD_NOAUDIO)", tbd::WideToUtf8(assetsRoot).c_str());
@@ -209,7 +212,9 @@ void tbd::host::PointerCancel() {
     g_buttonsDown = 0;
 }
 
-bool tbd::host::TouchBuilds(float x, float y) { return g_gui.WantsMouseAt(x, y) || gdock::ToolActive(); }
+// [interact] the tools that draw with one finger (roads, zones, lines, terrain, bulldoze's zone area, the rotate dial); a building being placed,
+// bulldoze's tap mode and no tool pan with it and act on a tap (city_interact.inl TouchFingerDraws)
+bool tbd::host::TouchBuilds(float x, float y) { return g_gui.WantsMouseAt(x, y) || TouchFingerDraws(); }
 
 bool tbd::host::TouchOnGui(float x, float y) { return g_gui.WantsMouseAt(x, y); }
 

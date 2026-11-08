@@ -283,6 +283,8 @@ void FillTool() {
         static const char* const ti[] = {"raise", "dig", "flatten"};
         M.tool = tn[std::clamp(g_terrainEdit.mode, 0, 2)], M.toolIcon = ti[std::clamp(g_terrainEdit.mode, 0, 2)];
     }
+    InteractFillTool(M.tool, M.toolIcon, M.modeName, M.modeIcon, M.toolCost, M.toolOpts, M.toolOptOn); // [interact] bulldoze, Rotate toggle + Snap
+    M.bulldozeOn = g_doze.active;
 }
 
 // Settings > Edge pan: a finger held at the screen's edge keeps a drag going (game_host.h EdgePan).
@@ -303,6 +305,7 @@ void CloseTools() {
     g_indTool.active = false, g_indTool.mode = IndustryTool::Pick, g_indTool.drawing = -1, g_indTool.wsel = -1, g_indTool.point = 0;
     g_terrainEdit.on = false;
     if (utilWasOpen) UtilToolClosed();
+    InteractCloseTools(); // [interact] bulldoze, the rotate dial, the touch pin
 }
 
 void Pick(int id, tbd::gui::CityHud& hud) {
@@ -340,6 +343,7 @@ void Pick(int id, tbd::gui::CityHud& hud) {
 // The placement bar's buttons on the active tool.
 void ToolButton(const tbd::gui::dock::Out& o) {
     using namespace tbd::city;
+    if (InteractToolButton(o, o.opt >= 0 && o.opt < (int)g_model.toolOpts.size() ? g_model.toolOpts[(size_t)o.opt].first : std::string())) return; // [interact]
     if (o.cancel) { // Esc semantics: drop the pick, then close
         if (g_roads.active) g_roads.Close();
         CloseTools();
@@ -537,6 +541,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
         if ((o.pickItem >> 16) != kOverlay) g_state.lastCat = g_state.cat, g_state.cat = -1, g_state.catT = 0, g_state.closing = true, g_state.open = false;
     }
     ToolButton(o);
+    if (o.bulldozePressed) InteractBulldozeButton(); // [interact] the dock's Bulldoze button
     if (o.toggledPause) g_clock.paused = !g_clock.paused;
     if (o.setSpeed) g_clock.speed = o.speed - 1, g_clock.paused = false;
     if (o.layersPressed) { // the layers button: the Views category
@@ -559,6 +564,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;
     RoadKit(o.menuOpen); // [road toolkit]
     NewsCard(hud, o.menuOpen);
+    InteractGuiFrame(g_atlas, o.menuOpen, !g_state.pad, g_model.textSize ? 1.15f : 1.0f); // [interact] the info card, the dial's degrees, bulldoze's prompt
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
     if (tbd::gui::CityInfoPanel(g_gui, hud.notDoneName, hud.stats) == 2) hud.Dismiss();
     return true;

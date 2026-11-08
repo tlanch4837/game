@@ -41,9 +41,7 @@ void TransportRefreshZoning() {
 
 void TransportCursor() {
     tbd::Vec3 hit;
-    const bool overGui = g_gui.WantsMouseAt((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY);
-    g_transportIn.have = g_terrainEdit.mouseX >= 0 && !overGui &&
-                         GroundHit(g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+    g_transportIn.have = PlaceCursorHit(hit); // [interact] was the cursor's ground hit (not over the GUI); the same for everything but a touch ghost
     g_transportIn.hover = -1;
     if (!g_transportIn.have) return;
     g_transportIn.hit = hit;
