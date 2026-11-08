@@ -257,7 +257,10 @@ void FillTool() {
         const Asset& a = g_roads.Current();
         M.tool = a.name, M.toolIcon = RoadTabIcon(a.tab);
         if (a.kind == AssetKind::Road) M.modeName = kModeNames[(int)g_roads.mode], M.modeIcon = kModeIcons[(int)g_roads.mode];
-        M.toolOpts = {{"Elevation", "elev"}, {"Parallel", "parallel"}, {"Snapping", "snap"}, {"Lower", "under"}, {"Bulldoze", "bulldoze"}};
+        // [road toolkit] Lower / Raise first: the Phone UI shows only the first two options, and it used to show "Elevation"
+        // (raise only) with "Lower" fourth, out of reach: on the iPad roads could go up but never down. The full controls
+        // are in the toolkit panel (RoadKit).
+        M.toolOpts = {{"Lower", "down"}, {"Raise", "up"}, {"Snapping", "snap"}, {"Parallel", "parallel"}, {"Bulldoze", "bulldoze"}};
     } else if (g_zoneTool.active) {
         static const char* const zm[] = {"Brush", "Fill block", "Box"};
         static const char* const zi[] = {"brush", "bucket", "box"};
@@ -352,6 +355,7 @@ void ToolButton(const tbd::gui::dock::Out& o) {
         if (n == "Rotate") g_utilTool.Rotate(90), g_transportTool.Rotate(90);
         else if (n == "Elevation") { if (g_roads.active) g_roads.Raise(1); else g_utilTool.Raise(1); }
         else if (n == "Lower") g_roads.Raise(-1);
+        else if (n == "Raise") g_roads.Raise(1); // [road toolkit]
         else if (n == "Parallel") g_roads.parallel = !g_roads.parallel;
         else if (n == "Snapping") g_roads.snapAll = !g_roads.snapAll;
         else if (n == "Bulldoze") g_roads.SetMode(ToolMode::Bulldoze);
@@ -516,6 +520,20 @@ void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
     (void)rw;
 }
 
+// [road toolkit] The road / rail tool's CS2 panel (tool modes, elevation down / readout / up / step / ground level,
+// parallel, snapping) and its road-type palette, above the placement controls (gui/road_toolkit.h). Hidden while a
+// catalogue panel or the pause menu is open.
+void RoadKit(bool menuOpen) {
+    static tbd::gui::road_kit::State kit;
+    if (!g_roads.active || menuOpen || g_state.cat >= 0) return;
+    // the panels' bottoms: over the PC UI placement bar (iPad / iPhone sizes), or over the Phone UI's corner buttons
+    const float bottom = g_state.pcUi ? (g_state.pad ? 146.0f : 116.0f) : 76.0f;
+    tbd::gui::road_kit::Out ko;
+    tbd::gui::road_kit::Frame(g_gui, g_atlas, g_roads, kit, bottom, g_state.pad, ko, g_model.textSize ? 1.15f : 1.0f);
+    if (g_model.sound)
+        for (float p : ko.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
+}
+
 bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     static bool built = false;
     if (!built) { // the atlas came in with the font (outside a frame: InitGameGui)
@@ -588,6 +606,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     // the pause menu pauses the sim under it
     if (o.menuOpen && !g_menuPaused && !g_clock.paused) g_menuPaused = true, g_clock.paused = true;
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;
+    RoadKit(o.menuOpen); // [road toolkit]
     NewsCard(hud, o.menuOpen);
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
     if (tbd::gui::CityInfoPanel(g_gui, hud.notDoneName, hud.stats) == 2) hud.Dismiss();

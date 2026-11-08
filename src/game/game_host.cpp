@@ -38,6 +38,7 @@
 #include "gui/gui.h"
 #include "gui/terrain_toolbar.h"
 #include "gui/glass_dock.h"    // Glass Dock+: the mobile / tablet GUI (game/glass_dock_host.inl)
+#include "gui/road_toolkit.h"  // [road toolkit] the road / rail touch panel + palette (game/glass_dock_host.inl RoadKit)
 #include "gui/city_hud.h"
 #include "gui/city_overlays.h"
 #include "gui/zone_toolbar.h"
