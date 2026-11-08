@@ -255,8 +255,8 @@ void CityStressSync() {
             popBefore = g_citySim.Population(), lotsBefore = liveLots(), moneyBefore = g_simEcon.treasury, peopleBefore = g_simPeople.people.size();
             tbd::Log("City save test: before: %llu lots, pop %llu, money %lld cents, %zu tracked", (unsigned long long)lotsBefore, (unsigned long long)popBefore,
                      (long long)moneyBefore, peopleBefore);
-            SaveCityGame(9);
-            LoadCityGame(9);
+            SaveCityGame(tbd::saves::kScratchSlot); // [title] scratch.*, not the player's Save 10
+            LoadCityGame(tbd::saves::kScratchSlot);
             saveStep = 1;
             saveAt = now;
         } else if (saveStep == 1 && now - saveAt > 8000) {

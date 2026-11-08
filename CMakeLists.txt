@@ -108,8 +108,15 @@ set(TBD_GUI_FONT ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/ui_font_sdf.png ${CM
 set_source_files_properties(${TBD_GUI_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/gui XCODE_EXPLICIT_FILE_TYPE file)
 set_source_files_properties(${TBD_GUI_SFX} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/audio/sfx XCODE_EXPLICIT_FILE_TYPE file)
 set_source_files_properties(${TBD_GUI_FONT} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/ui XCODE_EXPLICIT_FILE_TYPE file)
+# [title] The Optima Engine logo (white on transparent: tools/branding/make_logo_png.py) for the loading and title screens,
+# and the example city "Bayside" that becomes Save 1 on first run (game/title_host.inl); both land in Documents/assets.
+set(TBD_BRANDING ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/branding/optima_engine_1024.png)
+set(TBD_SAVE_TEMPLATE ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/saves_template/bayside.tbdgame ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/saves_template/bayside.hfd
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/saves_template/bayside.meta)
+set_source_files_properties(${TBD_BRANDING} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/branding XCODE_EXPLICIT_FILE_TYPE file)
+set_source_files_properties(${TBD_SAVE_TEMPLATE} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/saves_template XCODE_EXPLICIT_FILE_TYPE file)
 add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} ${TBD_THIRD_PARTY_SOURCES} "${TBD_METALLIB}" ${TBD_MSL} ${TBD_GUI_RES} ${TBD_GUI_SFX}
-    ${TBD_GUI_FONT})
+    ${TBD_GUI_FONT} ${TBD_BRANDING} ${TBD_SAVE_TEMPLATE})
 target_include_directories(cityengine PRIVATE src third_party/metal-cpp ${TBD_JOLT}
     ${TBD_RECAST}/Recast/Include ${TBD_RECAST}/Detour/Include ${TBD_RECAST}/DetourCrowd/Include
     ${TBD_LUAU}/VM/include ${TBD_LUAU}/Compiler/include ${TBD_LUAU}/Ast/include ${TBD_LUAU}/Common/include
