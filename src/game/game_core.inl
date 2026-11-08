@@ -1952,6 +1952,7 @@ void RoadsWorldLabels() {
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
 #include "city_buildings.inl" // zoned buildings per CityCell: instanced near, chunk bakes and volumes or merged proxies far (Track R)
+#include "city_walkers.inl"   // [walkers] people on the sidewalks: baked walk-cycle meshes, instanced (src/city/sim_walkers.h)
 #include "city_interact.inl"  // [interact] info card, bulldoze, touch placement pin, rotate dial (src/city/city_interact.h)
 #include "gui_preview_dump.inl" // TBD_GUI_PREVIEW_DUMP: the procedural build items as triangles for tools/gui_atlas/render.html
 
@@ -2217,6 +2218,7 @@ void RenderFrame() {
     GarbageSync(dt);  // garbage produced, collected and processed
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
     HerdsSync(dt);    // the cars near the camera made from the herds (city_herds.inl)
+    WalkersSync(dt);  // [walkers] the people on the sidewalks near the camera (city_walkers.inl)
     OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
     RadioSync(dt);    // the city radio reacts to what changed this frame
     CityAudioSync(dt); // music, ambience and build / demolish / money sounds (city_audio.inl)
@@ -2956,6 +2958,7 @@ void RenderFrame() {
             if (g_engine.sunMoving[i] && (g_engine.entityVisible[i] & kVisibleSun)) DrawEntityCaster(r, i, kVisibleSun);
         g_vegetation.DrawShadows(r, vegetationTime); // it sways, so it is never kept
         SimAgentsCasters(r);                         // near cosmetic cars: they move, so never kept either
+        WalkersCasters(r);                           // [walkers] near people, likewise
         r.EndShadowPass();
     }
     if (takeCapture) {
@@ -3133,6 +3136,7 @@ void RenderFrame() {
     g_drawCats.Add(kCatCity, cityMark, agentsMark);
     SimAgentsDraw(r, sceneViewProj); // cosmetic traffic from the flow solve: one instanced draw per car model
     HerdsDraw(r, sceneViewProj);     // the herd children (replace the cosmetic cars when the herd system is running)
+    WalkersDraw(r, sceneViewProj);   // [walkers] people on the sidewalks: one instanced draw per (level, look, frame)
     g_drawCats.Add(kCatAgents, agentsMark, r.Counts());
     const tbd::FrameCounts waterMark = r.Counts();
     g_water.SubmitDraw(r, sceneViewProj, waterJitter);
