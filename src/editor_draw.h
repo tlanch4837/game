@@ -99,7 +99,8 @@ inline void DrawOrientationGizmo(Renderer& r, const Mat4& view, int w, int h, in
 //   bottom-centre:   any other line (the toast messages) as an accent-blue chip.
 // Returns the y just below the top-left block (chips and stats), so the in-game GUI can keep its panels out of it.
 // showStats false (the game's Show stats off): only the toast chip is drawn, and nothing is reserved at the top (returns 0).
-inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector<std::string>& lines, bool showStats = true) {
+inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector<std::string>& lines, bool showStats = true,
+                            float toastLift = 0.0f) { // toastLift: pixels the toast rides up (the safe area, a bottom bar)
     using editor_draw::Chip;
     using editor_draw::ChipHeight;
     using editor_draw::ChipWidth;
@@ -126,7 +127,7 @@ inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector
     const float chipH = ChipHeight(cell, s);
     if (!showStats) {
         if (toast.empty()) return 0.0f;
-        Chip(v, ((float)w - ChipWidth(toast, cell, s)) * 0.5f, (float)h - margin - chipH, cell, s, toast, accent, white);
+        Chip(v, ((float)w - ChipWidth(toast, cell, s)) * 0.5f, (float)h - margin - toastLift - chipH, cell, s, toast, accent, white);
         r.DrawTransient(v.data(), (uint32_t)v.size(), Topology::Triangles, OrthoPixels((float)w, (float)h), Mat4::Identity(), false);
         return 0.0f;
     }
@@ -135,7 +136,7 @@ inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector
     else x += Chip(v, x, margin, cell, s, "FLY CAMERA -" + fly.substr(3), accent, white) + gap;
     if (!api.empty()) Chip(v, x, margin, cell, s, api, chipFill, chipText);
     if (!fps.empty()) Chip(v, (float)w - margin - ChipWidth(fps, cell, s), margin, cell, s, fps, chipFill, chipText);
-    if (!toast.empty()) Chip(v, ((float)w - ChipWidth(toast, cell, s)) * 0.5f, (float)h - margin - chipH, cell, s, toast, accent, white);
+    if (!toast.empty()) Chip(v, ((float)w - ChipWidth(toast, cell, s)) * 0.5f, (float)h - margin - toastLift - chipH, cell, s, toast, accent, white);
 
     float bottom = margin + chipH;
     for (int pass = 0; pass < 2; ++pass) {

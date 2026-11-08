@@ -1780,9 +1780,16 @@ void RoadsInit() {
     }
 }
 
+namespace gdock { bool ReticleOn(); } // [road ux] game/glass_dock_host.inl: the aim dot is the cursor
 // Keeps the cursor's snapped point current (the GUI and Alt-orbit leave it alone).
 void RoadsCursor() {
     tbd::Vec3 hit;
+    if (gdock::ReticleOn()) { // [road ux] the aim dot: the screen centre, whatever the finger does
+        const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f;
+        const bool on = GroundHit(g_engine.camera.ScreenRay(cx, cy, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+        g_roads.Move(on, hit);
+        return;
+    }
     const bool overGui = g_gui.WantsMouseAt((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY);
     const bool on = g_terrainEdit.mouseX >= 0 && !overGui &&
                     GroundHit(g_engine.camera.ScreenRay((float)g_terrainEdit.mouseX, (float)g_terrainEdit.mouseY, (float)g_engine.vpW, (float)g_engine.vpH), hit);
@@ -1899,7 +1906,8 @@ void RoadsWorldLabels() {
     float x, y;
     for (const tbd::city::WorldLabel& l : labels)
         if (project(l.p, x, y)) g_gui.Chip(x, y, l.text);
-    if (!g_roads.error.empty() && g_roads.haveCursor && project(g_roads.cursor.p, x, y))
+    if (gdock::ReticleOn()) { // [road ux] the aim dot draws the snap, the error and the mode under itself
+    } else if (!g_roads.error.empty() && g_roads.haveCursor && project(g_roads.cursor.p, x, y))
         g_gui.Chip(x, y + 34.0f * DpiScale(), g_roads.error.c_str(), tbd::gui::Rgba(170, 40, 34, 230));
     else if (g_roads.haveCursor && g_roads.Current().kind == tbd::city::AssetKind::Road && !g_roads.Pending() &&
              g_roads.mode != tbd::city::ToolMode::Replace && g_roads.mode != tbd::city::ToolMode::Swap &&
@@ -2033,7 +2041,11 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         if (pointer.down && ++pointer.frames == 30) g_guiInput.Down(pointer.x, pointer.y);
         g_terrainEdit.mouseX = (int)pointer.x, g_terrainEdit.mouseY = (int)pointer.y; // the status line reads the cursor
     }
-    g_gui.SetInsets(0.0f, topInset, 0.0f, 0.0f);
+    { // [safe area] the GUI's own panels (budget, info) keep out of the notch / island / home indicator too
+        float sl = 0, st = 0, sr = 0, sb = 0;
+        if (!gdock::Legacy()) gdock::SafePixels(sl, st, sr, sb);
+        g_gui.SetInsets(sl, std::max(topInset, st), sr, sb);
+    }
     static int64_t last = {};
     int64_t now;
     now = tbd::platform::Ticks();
@@ -2409,7 +2421,13 @@ void RenderFrame() {
         if (GroundHit(ray, hit)) {
             const int mode = TerrainBrushModeNow(); // the toolbar's mode; Ctrl / Shift override it
             if (mode == (int)tbd::gui::TerrainBrushMode::Flatten) g_engine.terrain.Brush(hit.x, hit.z, g_terrainEdit.radius, std::min(1.0f, 3.0f * dt), tbd::HeightField::BrushMode::Flatten, g_terrainEdit.flattenTarget);
-            else g_engine.terrain.Brush(hit.x, hit.z, g_terrainEdit.radius, (mode == (int)tbd::gui::TerrainBrushMode::Dig ? -1.0f : 1.0f) * g_terrainEdit.metresPerSecond * dt);
+            else if (mode == (int)tbd::gui::TerrainBrushMode::Smooth) { // [road ux] Smooth: level toward the brush area's mean height
+                const float r = g_terrainEdit.radius;
+                float sum = 0;
+                for (int dz = -2; dz <= 2; ++dz)
+                    for (int dx = -2; dx <= 2; ++dx) sum += RoadsGround(hit.x + dx * r * 0.4f, hit.z + dz * r * 0.4f);
+                g_engine.terrain.Brush(hit.x, hit.z, r, std::min(1.0f, 1.5f * dt * g_terrainEdit.metresPerSecond / 6.0f), tbd::HeightField::BrushMode::Flatten, sum / 25.0f);
+            } else g_engine.terrain.Brush(hit.x, hit.z, g_terrainEdit.radius, (mode == (int)tbd::gui::TerrainBrushMode::Dig ? -1.0f : 1.0f) * g_terrainEdit.metresPerSecond * dt);
         }
     }
     { // TBD_BRUSHSTREAM="x z radius metres": one stroke every frame, sweeping 400 m east and back, to time a brush drag without a mouse
@@ -3248,7 +3266,8 @@ void RenderFrame() {
     }
     float statsBottom = 0.0f; // where the top-left stats text ends: the in-game GUI keeps its panels below it
     const bool statsOn = g_play.active || gdock::StatsOverlayOn(); // Settings > Graphics > Show stats (off on iOS / Phone UI): toasts only
-    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines, statsOn);
+    const float toastLift = gdock::Legacy() ? 0.0f : gdock::g_dockBottom * g_gui.Scale(); // [safe area] over the dock (and the home indicator)
+    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines, statsOn, toastLift);
     if (!testShot && g_profiler.Enabled()) // nullptr: the per-pass GPU times are not exposed by the renderers yet
         g_profiler.Draw(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, r.Name(), profSample, g_stream.Snapshot(), nullptr);
     DrawGameGui(r, statsBottom); // in-game GUI last, over every other overlay
@@ -3770,6 +3789,7 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
     case VpEv::LeftDown:
         if (tbd::platform::KeyDownSync(tbd::platform::Key::Alt)) {
             BeginDragHost(host, Drag::Orbit, 0, e.x, e.y);
+        } else if (g_roads.active && gdock::ReticleOn()) { // [road ux] the aim dot: only its tick places; a tap on the map does not
         } else if (g_roads.active && g_engine.drag == Drag::None && !g_play.active) {
             host.Focus();
             g_terrainEdit.mouseX = e.x, g_terrainEdit.mouseY = e.y;

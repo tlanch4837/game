@@ -468,18 +468,103 @@ void DeviceAndScale(float& scale) {
     }
 }
 
+// ---------------------------------------------------------------- [road ux] safe area, touch, the compact kits, the aim dot
+// The platform's safe area in device pixels (left, top, right, bottom, corner radius): game_host.h SetSafeArea (iOS).
+float g_safePx[5] = {0, 0, 0, 0, 0};
+// A touch screen: iOS, or TBD_GUI_TOUCH=1 on Windows (screenshots of the touch layout: the mini kit, the aim dot).
+bool Touch() {
+#if defined(__APPLE__)
+    return true;
+#else
+    static const bool on = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_GUI_TOUCH", v, sizeof(v)) > 0 && v[0] != '0'; }();
+    return on;
+#endif
+}
+// The safe area in the dock's points this frame: TBD_GUI_SAFE="top,left,bottom,right[,corner]" (points) wins, for
+// Windows screenshots of a notched device; else the platform's pixels at the dock's scale.
+void FillSafe(float scale) {
+    static tbd::gui::SafeInsets env;
+    static const bool fromEnv = [] {
+        char v[64] = {};
+        return tbd::platform::GetEnvA("TBD_GUI_SAFE", v, sizeof(v)) > 0 && tbd::gui::SafeInsets::Parse(v, env);
+    }();
+    g_model.safe = fromEnv ? env : tbd::gui::SafeInsets::FromPixels(g_safePx, scale);
+}
+// The safe area in pixels (for the GUI's own panels: Context::SetInsets, and the toasts).
+void SafePixels(float& l, float& t, float& r, float& b) {
+    const float s = g_gui.Scale() > 0 ? g_gui.Scale() : 1.0f;
+    l = g_model.safe.L() * s, t = g_model.safe.T() * s, r = g_model.safe.R() * s, b = g_model.safe.B() * s;
+}
+
+tbd::gui::road_kit::State g_kit = [] { // [road ux] the mini strips and the aim dot by default on touch
+    tbd::gui::road_kit::State k;
+    k.mini = k.dotAvail = Touch();
+    return k;
+}();
+tbd::gui::reticle::State g_dot;
+tbd::gui::terrain_kit::State g_terrainKit;
+float g_dockBottom = 0; // points the dock and the kits took from the bottom edge last frame (the toasts ride above them)
+
+// The aim dot is the road tool's cursor (touch, the kit's toggle, not Swap): RoadsCursor reads the screen centre and a
+// one-finger touch on the map moves the camera (game_host.cpp TouchBuilds).
+bool ReticleOn() { return !Legacy() && tbd::gui::reticle::Wanted(g_roads, Touch(), g_kit.dotOn); }
+
+// The road tool's snap radius on touch: about a fingertip (56 px) at the screen centre, in metres on the ground.
+void TouchSnapRadius() {
+    if (!Touch()) return;
+    const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f, d = 40.0f;
+    tbd::Vec3 a, b;
+    if (GroundHit(g_engine.camera.ScreenRay(cx, cy, (float)g_engine.vpW, (float)g_engine.vpH), a) &&
+        GroundHit(g_engine.camera.ScreenRay(cx + d, cy, (float)g_engine.vpW, (float)g_engine.vpH), b)) {
+        const float mpp = std::hypot(b.x - a.x, b.z - a.z) / d;
+        g_roads.snapRadius = tbd::gui::reticle::SnapRadiusMetres(mpp, 28.0f * g_gui.Scale()); // a fingertip: 28 pt
+    }
+}
+
 // [road toolkit] The road / rail tool's CS2 panel (tool modes, elevation down / readout / up / step / ground level,
-// parallel, snapping) and its road-type palette, above the placement controls (gui/road_toolkit.h). Hidden while a
-// catalogue panel or the pause menu is open.
-void RoadKit(bool menuOpen) {
-    static tbd::gui::road_kit::State kit;
+// parallel, snapping) and its road-type palette, above the placement controls (gui/road_toolkit.h); on touch the mini
+// strips. Hidden while a catalogue panel or the pause menu is open. Then the aim dot and its tick / cross.
+void RoadKit(bool menuOpen, float dockBottom) {
+    g_kit.safe = g_model.safe;
     if (!g_roads.active || menuOpen || g_state.cat >= 0) return;
-    // the panels' bottoms: over the PC UI placement bar (iPad / iPhone sizes), or over the Phone UI's corner buttons
-    const float bottom = g_state.pcUi ? (g_state.pad ? 146.0f : 116.0f) : 76.0f;
+    // the panels' bottoms: over the PC UI placement bar (iPad / iPhone sizes), or over the Phone UI's corner buttons;
+    // mini: right over the (slim) dock
+    float bottom = g_state.pcUi ? (g_state.pad ? 146.0f : 116.0f) : 76.0f;
+    if (g_kit.mini) bottom = dockBottom + 8.0f;
     tbd::gui::road_kit::Out ko;
-    tbd::gui::road_kit::Frame(g_gui, g_atlas, g_roads, kit, bottom, g_state.pad, ko, g_model.textSize ? 1.15f : 1.0f);
+    const tbd::gui::road_kit::Layout kl = tbd::gui::road_kit::Frame(g_gui, g_atlas, g_roads, g_kit, bottom, g_state.pad, ko, g_model.textSize ? 1.15f : 1.0f);
+    g_dockBottom = std::max(g_dockBottom, g_gui.In().viewH / g_gui.Scale() - kl.top); // the toasts ride over the kit
     if (g_model.sound)
         for (float p : ko.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
+    if (ko.close) {
+        CloseTools();
+        return;
+    }
+    TouchSnapRadius();
+    if (ReticleOn()) {
+        const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f;
+        tbd::Vec3 hit;
+        const bool on = GroundHit(g_engine.camera.ScreenRay(cx, cy, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+        tbd::gui::reticle::Out ro;
+        tbd::gui::reticle::Frame(g_gui, g_atlas, g_roads, g_dot, g_model.safe, kl.rightTop, on, hit, ro);
+        if (g_model.sound)
+            for (float p : ro.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
+    }
+}
+
+// [road ux] The terrain tools on the dock: the compact strip (gui/terrain_kit.h) over the slim bar.
+void TerrainKit(bool menuOpen, float dockBottom) {
+    g_terrainKit.safe = g_model.safe;
+    if (!g_terrainEdit.on || menuOpen || g_state.cat >= 0) return;
+    const tbd::gui::terrain_kit::Brush b{&g_terrainEdit.mode, &g_terrainEdit.radius, &g_terrainEdit.metresPerSecond};
+    tbd::gui::terrain_kit::Out to;
+    const tbd::gui::terrain_kit::Layout tl = tbd::gui::terrain_kit::Frame(g_gui, g_atlas, b, g_terrainKit, dockBottom + 8.0f, g_engine.drag == Drag::Terrain, to);
+    g_dockBottom = std::max(g_dockBottom, g_gui.In().viewH / g_gui.Scale() - tl.top);
+    if (g_model.sound)
+        for (float p : to.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
+    if (to.save) SaveTerrainEdits();
+    if (to.load) LoadTerrainEdits();
+    if (to.close) CloseTools();
 }
 
 // One frame of the dock: replaces the CS2 HUD and the tools' own panels. Returns true when it ran.
@@ -529,8 +614,12 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     for (auto& c : g_model.cats)
         if (c.id == "views")
             for (auto& it : c.groups[0].items) it.on = (int)g_overlayHud.on == (it.id & 0xFFFF);
+    // [road ux] the safe area; a road kit in its mini strips or the terrain kit slims the bar and takes the placement bar's place
+    FillSafe(g_gui.Scale());
+    g_model.slim = g_model.hidePlaceBar = (g_roads.active && g_kit.mini) || g_terrainEdit.on;
     tbd::gui::dock::Out o;
     tbd::gui::dock::Frame(g_gui, g_state, g_model, g_atlas, o);
+    g_dockBottom = o.bottomH;
     for (float p : o.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
     if (o.pickItem >= 0) {
         Pick(o.pickItem, hud);
@@ -557,7 +646,8 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     // the pause menu pauses the sim under it
     if (o.menuOpen && !g_menuPaused && !g_clock.paused) g_menuPaused = true, g_clock.paused = true;
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;
-    RoadKit(o.menuOpen); // [road toolkit]
+    RoadKit(o.menuOpen, o.bottomH);    // [road toolkit] [road ux]
+    TerrainKit(o.menuOpen, o.bottomH); // [road ux]
     NewsCard(hud, o.menuOpen);
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
     if (tbd::gui::CityInfoPanel(g_gui, hud.notDoneName, hud.stats) == 2) hud.Dismiss();
