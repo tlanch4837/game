@@ -181,6 +181,36 @@ public:
     }
     float ClipDuration(const std::string& path) { const AnimClip* clip = Clip(path); return clip ? clip->duration : 0.0f; }
 
+    // [walkers] One pose of a skinned model, skinned once on the CPU with no renderer mesh (baked crowds, src/city_walkers.inl):
+    // `out` gets `flat` (the file's vertices, one per corner) posed at `time` of the clip, `stripJoint`'s horizontal travel
+    // removed. False when the clip or the skin is unusable.
+    bool BakePose(const std::string& clipPath, const ImportedModel& model, const std::vector<Vertex>& flat, float time, const std::string& stripJoint,
+                  std::vector<Vertex>& out) {
+        const AnimClip* clip = Clip(clipPath);
+        if (!clip || model.joints.empty() || model.vertexSkin.size() != flat.size()) return false;
+        Instance inst;
+        inst.model = &model;
+        inst.clip = clip;
+        inst.dqLogged = true;
+        BlendLayer layer;
+        layer.time = time, layer.weight = 1.0f;
+        for (size_t j = 0; j < model.joints.size(); ++j) {
+            const auto it = clip->joints.find(model.joints[j].name);
+            const AnimJointTracks* tr = it == clip->joints.end() ? nullptr : &it->second;
+            layer.tracks.push_back(tr), inst.tracks.push_back(tr);
+            if (model.joints[j].name == stripJoint) inst.stripJoint = (int)j;
+        }
+        inst.layers.push_back(std::move(layer));
+        inst.palette.resize(model.joints.size() * 16);
+        inst.world.resize(model.joints.size() * 16);
+        inst.bind = flat;
+        inst.skin = model.vertexSkin;
+        inst.EvaluatePose(time);
+        out.resize(flat.size());
+        inst.Skin(out.data(), 0, flat.size());
+        return true;
+    }
+
     void Forget(MeshId mesh) {
         for (size_t i = 0; i < instances_.size(); ++i)
             if (instances_[i]->mesh == mesh) {

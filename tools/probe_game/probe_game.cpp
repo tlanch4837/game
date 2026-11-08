@@ -68,6 +68,7 @@
 #include "city/sim_flow.h"
 #include "city/sim_agents.h"
 #include "city/sim_people.h"
+#include "city/sim_walkers.h"      // [walkers] people on the sidewalks (city_walkers.inl hosts them; included here: game_core.inl sits in a namespace)
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
 #include "city/city_interact.h" // [interact]

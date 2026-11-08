@@ -325,6 +325,8 @@ void InfoAgents() {
     }
     for (size_t i = 0; i < g_transit.citizens.size(); ++i)
         if (g_transit.citizens[i].alive) g_infoAgents.push_back({g_transit.citizens[i].pos, 1.1f, PickKind::Person, (int)i, 3});
+    for (size_t i = 0; i < walkers_host::sim.walkers.size(); ++i) // [walkers] the people on the sidewalks
+        g_infoAgents.push_back({walkers_host::sim.walkers[i].pos, 1.1f, PickKind::Person, (int)i, 4});
 }
 
 uint64_t InfoIdOf(const PickHit& h) {
@@ -336,7 +338,7 @@ uint64_t InfoIdOf(const PickHit& h) {
     case PickKind::IndSite: return g_ind.sites[(size_t)h.index].id;
     case PickKind::Waste: return g_wasteB[(size_t)h.index].id;
     case PickKind::Vehicle: return h.sub == 0 ? herds_host::children.pool[(size_t)h.index].herdId : h.sub == 2 ? g_transit.vehicles[(size_t)h.index].id : 0;
-    case PickKind::Person: return g_transit.citizens[(size_t)h.index].id;
+    case PickKind::Person: return h.sub == 4 ? walkers_host::sim.walkers[(size_t)h.index].id : g_transit.citizens[(size_t)h.index].id; // [walkers]
     default: return 0;
     }
 }
@@ -383,7 +385,7 @@ bool InfoResolve() {
     case PickKind::Waste: return byId(g_wasteB, always);
     case PickKind::Road: return h.index >= 0 && h.index < (int)g_roads.net.segs.size() && g_roads.net.segs[(size_t)h.index].alive;
     case PickKind::ZoneCell: return g_zones.builtFrom == g_info.zonesBuilt && h.index >= 0 && h.index < (int)g_zones.cells.size();
-    case PickKind::Person: return byId(g_transit.citizens, isAlive);
+    case PickKind::Person: return h.sub == 4 ? byId(walkers_host::sim.walkers, always) : byId(g_transit.citizens, isAlive); // [walkers]
     case PickKind::Vehicle:
         if (h.sub == 0) {
             const auto& pool = herds_host::children.pool;
@@ -565,6 +567,7 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
         break;
     }
     case PickKind::Person: {
+        if (h.sub == 4) { WalkerInfo(d, walkers_host::sim.walkers[(size_t)h.index]); break; } // [walkers] city_walkers.inl
         const Citizen& c = g_transit.citizens[(size_t)h.index];
         d.icon = "ppl", d.accent = Rgba(94, 234, 212), d.title = "Pedestrian";
         d.sub = std::string("Arrived by ") + TModeName(c.from);
@@ -643,6 +646,7 @@ bool InfoShape(tbd::city::V2& c, tbd::city::V2& f, float& W, float& D, float& y,
             const Vehicle& v = g_transit.vehicles[(size_t)h.index];
             p = v.pos, f = v.dir, r = v.mode == TMode::Train ? 26.0f : v.mode == TMode::Bus ? 6.0f : 10.0f;
         } else if (h.sub == 3) p = g_transit.citizens[(size_t)h.index].pos, r = 1.0f;
+        else if (h.sub == 4) p = walkers_host::sim.walkers[(size_t)h.index].pos, f = walkers_host::sim.walkers[(size_t)h.index].dir, r = 1.0f; // [walkers]
         c = p, W = r * (h.kind == PickKind::Person ? 2.0f : 1.0f), D = h.kind == PickKind::Person ? r * 2.0f : r * 2.0f, y = RoadsGround(p.x, p.z), H = h.kind == PickKind::Person ? 2.0f : 1.8f;
         return true;
     }
