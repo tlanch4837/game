@@ -685,9 +685,10 @@ void SimInit() {
     done = true;
     g_sim.budgetMs = sim_host::EnvDouble("TBD_SIM_BUDGET_MS", 2.0);
     {
-        std::FILE* f = nullptr;
-        const std::wstring path = tbd::ExeDirectory() + L"\\..\\src\\city\\news_lines.json";
-        if ((f = tbd::platform::WOpen(path.c_str(), L"rb")) != nullptr) {
+        std::FILE* f = nullptr; // the repo's copy on the PC, assets\news on the iPad (tools\ipad_sync\pack_assets.ps1)
+        for (const wchar_t* rel : {L"\\..\\src\\city\\news_lines.json", L"\\..\\assets\\news\\news_lines.json"})
+            if (!f) f = tbd::platform::WOpen((tbd::ExeDirectory() + rel).c_str(), L"rb");
+        if (f) {
             std::string text;
             char buf[4096];
             for (size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) text.append(buf, n);

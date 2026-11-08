@@ -24,6 +24,16 @@ New-Item -ItemType Directory -Force "$Out\assets\gui", "$Out\assets\audio\sfx" |
 Copy-Item "$repo\assets_src\gui\glass_atlas.png", "$repo\assets_src\gui\glass_atlas.txt" "$Out\assets\gui" -Force
 Copy-Item "$repo\assets_src\gui\ui_category_select.mp3" "$Out\assets\audio\sfx" -Force
 
+# The City News lines (the radio's written headlines, the neighbour pairs): on the PC the game reads src\city\, on the
+# iPad assets\news\ (city_radio.inl, city_sim.inl). Without it the feed shows plain fallback headlines.
+New-Item -ItemType Directory -Force "$Out\assets\news" | Out-Null
+Copy-Item "$repo\src\city\news_lines.json" "$Out\assets\news" -Force
+
+# What the radio and the sim read; a missing one is only a warning (the game runs without it, quieter or untuned).
+foreach ($need in "audio\radio", "sim\tuning.json", "buildings") {
+    if (-not (Test-Path "$Out\assets\$need")) { Write-Warning "assets\$need is missing from $Assets" }
+}
+
 Get-ChildItem "$Out\shaders" -File | Remove-Item
 if ($Shaders) { Copy-Item "$repo\src\shaders\msl\*.metal" "$Out\shaders" }
 
