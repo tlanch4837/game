@@ -1,7 +1,7 @@
-// Headless checks for visible children and promotion (src/city/sim_children.h):
+// Headless checks for the visible cars (src/city/sim_children.h; the consistency checks are in sim_cars_consistency_test):
 //   the IDM never collides and queues behind a stopped car; the same tenant slot always gives the same look and car; the
-//   number of cars on a link tracks the herd load (and the budget caps it); cars leave when the herds are out of range; no
-//   allocation after warm-up; a car watched for a second is promoted (at most 32), drives its own route and parks.
+//   herds' releases on a route become a stream whose cars track the release rate (and the budget caps them); cars go when
+//   the camera leaves; no allocation after warm-up; a followed (promoted) car is kept and drives to its driveway.
 // Build and run: tests\sim_children_test.bat
 #include <cstdio>
 #include <set>
@@ -29,18 +29,18 @@ struct Scene {
         t.nodes = 3;
         t.BuildAdjacency();
         hs.SetTable(&t);
+        hs.rateMinutes = 15; // a release is a window's rate at once (the clock stands still here)
         route = hs.routes.Intern(t, {0, 1});
         cs.params.maxChildren = maxChildren;
         cs.params.radius = 600;
         cs.SetTable(&t, &hs.routes);
         cs.nextHop = [this](int node, int dest) { return node == 0 && dest > 0 ? 0 : node == 1 && dest == 2 ? 1 : -1; };
     }
-    void SetHerd(float size, float progress = 1000, float sd = 0.1f) {
-        hs.herds.clear();
+    // A window's herd on the route (commuters from the map edge to hood 5's driveways): `size` vehicles over 15 game minutes.
+    void SetHerd(float size) {
         Herd h;
-        h.id = 7, h.alive = true, h.size = size, h.route = route, h.progress = progress, h.speedSd = sd, h.to = 5, h.homeHood = 3, h.workHood = 5;
-        h.distance = hs.routes.recs[route].len;
-        hs.herds.push_back(h);
+        h.size = size, h.route = route, h.from = -1, h.to = 5, h.homeHood = 3, h.workHood = 5; // in from the map edge (node 0)
+        hs.Inject(h);
     }
     int Active(bool promotedToo = false) const {
         int n = 0;
@@ -142,88 +142,90 @@ int main() {
         CHECK(!PickTenantSlot(sim, hoods, 0, false, 1, a)); // nobody works in a housing hood
     }
 
-    // ---- spawn counts track herd load, take their look from the slot, and stay in budget
+    // ---- the herds' releases on a route become a stream of trips: the cars on the road track the release rate, take their
+    // look from a tenant slot, keep their trip's speed, and never overlap in a lane
+    auto run = [](Scene& s, int frames, V2 focus) {
+        for (int i = 0; i < frames; ++i) s.cs.Update(0.05, 0.05, focus, s.hs, 0);
+    };
+    int n450 = 0;
     {
         Scene s(2);
+        s.cs.params.densityScale = 1;
         uint32_t next = 0;
         s.cs.tenant = [&](const Herd&, bool, uint64_t, TenantSlot& out) {
             out.cell = 1, out.index = next++, out.address = 0xABCD;
             return true;
         };
-        s.SetHerd(40, 1000, 0.25f);
-        for (int i = 0; i < 80; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
-        const int n40 = s.Active();
-        CHECK(n40 >= 10 && n40 <= 14); // 40 vehicles over a 200 m span x 0.3
+        s.SetHerd(450); // 450 vehicles in a 15-minute window: one every two seconds
+        run(s, 40, {1000, 0});
+        n450 = s.Active();
+        const float want = s.cs.LinkRate(0) * 1720.0f / s.cs.FreeSpeed(0); // over the detail radius's 1720 m of road
+        std::printf("stream of 0.5/s: %d cars near the camera (the stream says %.0f), budget x%.2f\n", n450, want, s.cs.BudgetScale());
+        CHECK(std::fabs(s.cs.LinkRate(0) - 0.5f) < 1e-3f);
+        CHECK(n450 > 0.75f * want && n450 < 1.15f * want);
         for (const Child& c : s.cs.pool)
             if (c.active) {
                 const Look l = LookFor(s.cs.params.citySeed, c.slot.address, c.slot.index, s.cs.params.models);
-                CHECK(c.look.model == l.model && c.look.speedFactor == l.speedFactor);
-                CHECK(c.link == 0 && c.s >= 650 && c.s <= 1350);
+                CHECK(c.look.model == l.model && c.look.speedFactor >= 0.9f && c.look.speedFactor <= 1.1f); // the trip's speed, the slot's car
+                CHECK(c.slot.address == 0xABCD && c.route == s.route);
             }
-        s.SetHerd(80, 1000, 0.25f);
-        for (int i = 0; i < 80; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
-        const int n80 = s.Active();
-        CHECK(n80 > n40 * 1.5 && n80 <= n40 * 2 + 3);
-        // cars never overlap in a lane
         for (const Child& a : s.cs.pool)
             for (const Child& b : s.cs.pool)
                 if (&a != &b && a.active && b.active && a.link == b.link && a.lane == b.lane) CHECK(std::fabs(a.s - b.s) > 4.5f);
-        // the herds are out of range: the cars go
-        for (int i = 0; i < 60; ++i) s.cs.Update(0.05, 0.05, {-5000, 0}, s.hs, 0);
+        // the camera leaves: the cars go (past the detail radius, out of sight)
+        run(s, 60, {-5000, 0});
         CHECK(s.Active() == 0);
     }
     {
+        Scene s(2);
+        s.cs.params.densityScale = 1;
+        s.SetHerd(900);
+        run(s, 40, {1000, 0});
+        const int n900 = s.Active();
+        std::printf("stream of 1/s: %d cars\n", n900);
+        CHECK(n900 > n450 * 1.6 && n900 < n450 * 2.4);
+    }
+    {
         Scene s(1, 40); // budget of 40
-        s.SetHerd(4000, 2000, 0.4f);
-        for (int i = 0; i < 80; ++i) s.cs.Update(0.05, 0.05, {1500, 0}, s.hs, 0);
-        CHECK(s.Active() <= 40 && s.Active() >= 28);
+        s.cs.params.densityScale = 1;
+        s.SetHerd(9000);
+        run(s, 80, {1500, 0});
+        std::printf("budget 40: %d cars, scale x%.3f\n", s.Active(), s.cs.BudgetScale());
+        CHECK(s.Active() <= 40 && s.Active() >= 24);
+        CHECK(s.cs.BudgetScale() < 0.2f);
     }
 
-    // ---- no allocation after warm-up: the pool and the tables keep their size under changing loads
+    // ---- no allocation after warm-up: the pool and the tables keep their size under a moving camera and new releases
     {
         Scene s;
-        s.SetHerd(60);
-        for (int i = 0; i < 20; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
+        s.cs.params.densityScale = 1;
+        s.SetHerd(600);
+        run(s, 20, {1000, 0});
         const size_t fp = s.cs.Fingerprint();
         CHECK(s.cs.pool.size() == 300);
-        for (int i = 0; i < 400; ++i) {
-            if (i % 50 == 0) s.SetHerd(10.0f + (float)((i / 50) * 70 % 500), 400.0f + 20.0f * (float)i);
-            s.cs.Update(0.05, 0.05, {1000.0f + (float)(i % 90) * 10.0f, 0}, s.hs, 0);
+        double minute = 0;
+        for (int i = 0; i < 2000; ++i) {
+            minute += 0.1;
+            if (i % 150 == 0) s.SetHerd(100.0f + (float)((i / 150) * 70 % 500));
+            s.cs.Update(0.05, 0.05, {1000.0f + (float)(i % 900) * 2.0f, 0}, s.hs, minute);
         }
         CHECK(s.cs.Fingerprint() == fp && s.cs.pool.size() == 300);
-        CHECK(s.cs.stats.clamps == 0);
     }
 
-    // ---- promotion: watched in the middle for a second, capped at 32, then it drives to its destination and parks
+    // ---- promotion: the followed car is never dropped; it drives on to its driveway and is gone
     {
-        Scene s(4);
-        s.cs.params.watchRadius = 200;
-        s.SetHerd(2500, 1000, 0.15f);
-        for (int i = 0; i < 10; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
-        CHECK(s.cs.stats.promotions == 0); // half a second so far
-        CHECK(s.Active(true) > 40);
-        for (int i = 0; i < 40; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
-        CHECK(s.cs.stats.promoted == 32 && s.cs.stats.promotions == 32);
-        for (int i = 0; i < 40; ++i) s.cs.Update(0.05, 0.05, {1000, 0}, s.hs, 0);
-        CHECK(s.cs.stats.promoted <= 32);
-        // they drive on: destination is the end of the herd's route (node 2); each ends parked on the last link
-        for (int i = 0; i < 4000 && s.cs.stats.parked < 20; ++i) s.cs.Update(0.1, 0.05, {3000, 0}, s.hs, 0);
-        int parked = 0;
-        for (const Child& c : s.cs.pool)
-            if (c.active && c.parked) {
-                ++parked;
-                CHECK(c.link == 1 && c.promoted && c.v == 0 && c.s > 1900 - 1 && c.s <= 2000);
-            }
-        CHECK(parked >= 20);
-        CHECK(s.cs.stats.arrivals >= 20);
-        std::vector<CarInstance> moving, park;
-        s.cs.Update(0.1, 0.05, {3900, 0}, s.hs, 0); // the camera comes to the parking lot
-        s.cs.Collect(moving, park, {3900, 0});
-        CHECK(!park.empty());
-        for (const CarInstance& ci : park) CHECK(std::fabs(ci.p.z) > 4 * 3.2f); // on the strip beside the four lanes
-        // after the parked time the car leaves
-        s.cs.Update(0.1, 0.05, {3000, 0}, s.hs, 1e6);
-        CHECK(s.cs.stats.parked == 0);
+        Scene s;
+        s.cs.params.densityScale = 1;
+        s.SetHerd(300);
+        run(s, 20, {1000, 0});
+        const int i = s.cs.Nearest({1000, 0}, 400);
+        CHECK(i >= 0);
+        CHECK(s.cs.Promote(i) && s.cs.stats.promoted == 1 && !s.cs.Promote(i));
+        const uint32_t serial = s.cs.pool[(size_t)i].serial;
+        run(s, 100, {-5000, 0}); // the camera looks elsewhere: the followed car stays
+        CHECK(s.cs.pool[(size_t)i].active && s.cs.pool[(size_t)i].serial == serial);
+        for (int k = 0; k < 6000 && s.cs.pool[(size_t)i].active; ++k) s.cs.Update(0.1, 0.1, {-5000, 0}, s.hs, 0);
+        CHECK(!s.cs.pool[(size_t)i].active && s.cs.stats.promoted == 0 && s.cs.stats.arrivals > 0);
     }
 
     if (failures == 0) std::printf("sim_children_test: all checks passed\n");

@@ -199,6 +199,28 @@ int main() {
         CHECK(nightWest > noonWest);                                   // the residents drove to work
         CHECK((int)noon.size() - noonWest > (int)night.size() - nightWest); // and parked by the offices
         for (const CarInstance& c : night) CHECK(std::fabs(c.p.z - 40.0f) > 3.0f && std::fabs(c.p.z - 40.0f) < 8.0f); // at the curb
+        // in view, the curbside cars never flip: from night to noon in one frame, the ones leaving shrink, nobody pops
+        {
+            std::vector<CarInstance> a, b;
+            w.town.Parked({380, 40}, 600, 2 * 60, a, 300);          // settled at night
+            w.town.Parked({380, 40}, 600, 12 * 60, b, 300, 1.0f / 30.0f); // the clock jumps to noon; one frame later
+            int full = 0, fading = 0;
+            for (const CarInstance& c : b) {
+                full += c.scale >= 0.999f;
+                fading += c.scale < 0.999f && c.scale > 0.0f;
+            }
+            std::printf("  parked fade: night %zu, a frame after the jump %zu (%d full, %d fading)\n", a.size(), b.size(), full, fading);
+            CHECK(b.size() >= a.size() - 0 && fading > 0); // the cars that leave are still there, fading; the ones arriving start small
+            for (int k = 0; k < 60; ++k) b.clear(), w.town.Parked({380, 40}, 600, 12 * 60, b, 300, 1.0f / 30.0f);
+            CHECK(b.size() == noon.size()); // two seconds on: noon's cars
+            // out of view a spot snaps (nobody sees it)
+            std::vector<CarInstance> far, back;
+            w.town.Parked({5000, 5000}, 600, 12 * 60, far, 300, 1.0f / 30.0f); // looking away at noon
+            w.town.Parked({380, 40}, 600, 2 * 60, back, 300, 1.0f / 30.0f);       // back at night: settled, no fades
+            int small = 0;
+            for (const CarInstance& c : back) small += c.scale < 0.999f;
+            CHECK(far.empty() && small == 0 && back.size() == night.size());
+        }
     }
 
     // ---- an outside connection: a highway across the whole map

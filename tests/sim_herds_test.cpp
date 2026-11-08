@@ -164,6 +164,43 @@ int main() {
     CHECK(sch.stats.released[kTripSchool] > 0 && sch.deliveredChain > 0);
     CHECK(sch.deliveredChain <= sch.stats.delivered[kTripSchool] + 0.01f);
 
+    // every release is counted on its route (the visible cars' streams run on these counts), with who the latest herd was
+    {
+        Scene s;
+        s.commute = {{0, 1, 4000.0f}};
+        s.hs.ReleaseHerds(7 * 60, 7 * 60, s.hoods, s.commute, s.school, s.shop, s.Fn());
+        double sum = 0;
+        for (double v : s.hs.routeReleased) sum += v;
+        float sizes = 0;
+        for (const Herd& h : s.hs.herds) sizes += h.alive ? h.size : 0.0f;
+        CHECK(sum > 0 && std::fabs(sum - sizes) < 1e-3);
+        const uint32_t r = s.r[0][2];
+        CHECK(r < s.hs.routeReleased.size() && s.hs.routeReleased[r] > 0 && s.hs.routeLast[r].from == 0 && s.hs.routeLast[r].to == 1 && s.hs.routeLast[r].herd > 0);
+        Herd h; // an injected herd counts the same
+        h.route = r, h.size = 10, h.from = 0, h.to = 1;
+        const double before = s.hs.routeReleased[r];
+        const uint32_t id = s.hs.Inject(h);
+        CHECK(std::fabs(s.hs.routeReleased[r] - before - 10.0) < 1e-6 && s.hs.routeLast[r].herd == id);
+        // the decayed release rate: a window's release is size / rateMinutes now, and fades over the next hour
+        const double now = s.hs.RouteRate(r, 7 * 60 + 15), later = s.hs.RouteRate(r, 7 * 60 + 15 + 60);
+        CHECK(now > 0 && std::fabs(later / now - std::exp(-1.0)) < 1e-3);
+        s.hs.SetTable(&s.t); // a new table: the counts start again
+        CHECK(s.hs.routeReleased.empty());
+    }
+    // lanes beside the centre line: a two-way road's lanes start at it, a one-way road's straddle it
+    {
+        LinkTable t;
+        t.AddStraight(0, 1, {0, 0}, {100, 0}, 50, 1200, 2);
+        t.AddStraight(1, 0, {100, 0}, {0, 0}, 50, 1200, 2);
+        t.AddStraight(1, 2, {100, 0}, {200, 0}, 50, 1200, 2); // one way
+        t.AddStraight(2, 3, {200, 0}, {300, 0}, 50, 1200, 2); // asymmetric: two lanes east, one west
+        t.AddStraight(3, 2, {300, 0}, {200, 0}, 50, 1200, 1);
+        t.nodes = 4;
+        t.BuildAdjacency();
+        CHECK(t.Reverse(0) == 1 && t.Reverse(1) == 0 && t.Reverse(2) == -1);
+        CHECK(t.LaneBase(0, 3.2f) == 0.0f && t.LaneBase(2, 3.2f) == -3.2f && t.LaneBase(3, 3.2f) == -1.6f && t.LaneBase(4, 3.2f) == 1.6f);
+    }
+
     // deterministic for the same seed; a different seed changes the departures
     const DayResult a = RunDay(3000, 9), b = RunDay(3000, 9), c = RunDay(3000, 10);
     CHECK(a.loadDay == b.loadDay && a.stats.herdsReleased == b.stats.herdsReleased && a.meanCommuteMinutes == b.meanCommuteMinutes);
