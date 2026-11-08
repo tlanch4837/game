@@ -468,7 +468,6 @@ void DeviceAndScale(float& scale) {
     }
 }
 
-// One frame of the dock: replaces the CS2 HUD and the tools' own panels. Returns true when it ran.
 // [road toolkit] The road / rail tool's CS2 panel (tool modes, elevation down / readout / up / step / ground level,
 // parallel, snapping) and its road-type palette, above the placement controls (gui/road_toolkit.h). Hidden while a
 // catalogue panel or the pause menu is open.
@@ -483,6 +482,7 @@ void RoadKit(bool menuOpen) {
         for (float p : ko.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
 }
 
+// One frame of the dock: replaces the CS2 HUD and the tools' own panels. Returns true when it ran.
 bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     static bool built = false;
     if (!built) { // the atlas came in with the font (outside a frame: InitGameGui)
