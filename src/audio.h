@@ -13,12 +13,19 @@
 // Zone ambience: Assets\audio\zones.txt, one rule per line, '#' starts a comment:
 //     default ambience/wind_desert 0.7            the bed heard everywhere that no zone covers
 //     zone <name> <x> <z> <radius> <sound> [volume]    a bed that fades in over the outer 30% of the radius
-// Without the file, "ambience/wind" is the default bed. Ambience, footsteps and the music start only while Play mode runs
-// (the `playing` argument of UpdateFrame); music is "music/theme" if the file exists.
+// Without the file, "ambience/wind" is the default bed. In Play mode (the `playing` argument of UpdateFrame) the zone beds,
+// footsteps and "music/theme" play.
+//
+// The city view (SetCityScene, every frame from src/city_audio.inl) has its own music and ambience, decided by
+// src/audio_director.h: the playlist in Assets\audio\music\playlist.txt (theme first, then tracks for the game clock's time
+// of day, shuffled, crossfaded), and the ambience beds ambience/city_air, city_birds, city_crickets, city_hum,
+// city_traffic, water and crowd, mixed by the camera's height, the hour, and how built-up, busy and wet the view is. The
+// music dips about 12 dB (the ambience about 3 dB) while a radio clip plays. The pause menu lowers both.
 #pragma once
 #include <string>
 #include <vector>
 
+#include "audio_director.h" // the city music / ambience rules (headless), Nearness for the game's own sound choices
 #include "vecmath.h"
 
 namespace tbd::audio {
@@ -35,6 +42,22 @@ void Stop();
 void Resume();
 
 void SetBusVolume(Bus bus, float volume);
+// The player's volume for a bus (the Settings page), 0..1. It multiplies whatever SetBusVolume set: the game's own bus
+// levels (the radio's, the sound on/off switch) and the player's do not overwrite each other.
+void SetUserVolume(Bus bus, float volume);
+
+// What the city view looks at, once per frame (city_audio.inl). active false (Play mode, no city) stops the city's music
+// and beds; Play mode's own music and zones are unaffected.
+struct CityScene {
+    bool active = false;
+    bool menu = false;     // the pause menu is up: music lower, ambience much lower
+    float hour = 12.0f;    // the game clock, 0..24
+    float height = 120.0f; // camera eye above the ground, metres
+    float built = 0.0f;    // 0..1, see audio_director.h CityView
+    float traffic = 0.0f;
+    float water = 0.0f;
+};
+void SetCityScene(const CityScene& scene);
 
 // Once per frame. The listener follows (eye, forward, up). `playing` is Play mode; `onFoot` is Play mode's walking, in
 // which case a footstep is queued every stride of horizontal travel at the feet, eyeHeight below the eye.
