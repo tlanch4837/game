@@ -478,6 +478,7 @@ struct Walker {
     WalkLeg legs[kWalkMaxLegs];
     // where they are (Evaluate)
     V2 pos{}, dir{0, 1};
+    V2 line{};                       // pos before the keep-right shift: on the walking line
     float y = 0;
     float walked = 0;                // metres walked so far: the walk cycle's phase is walked / stride
     bool moving = false;
@@ -539,11 +540,19 @@ public:
         pending_.reserve(2048);
     }
 
+    // The roads changed. The walkers out now keep walking: each one walks on from where it is to its destination over the new
+    // sidewalks (nobody vanishes because a street was built elsewhere); the ones with no way left go.
     void RebuildGraph(const Network& net) {
         graph.Build(net);
-        walkers.clear(); // every route referred to the old graph: they come back from the schedule
-        std::fill(cache_.begin(), cache_.end(), CacheEntry{});
         AttachDoors();
+        size_t kept = 0;
+        for (size_t i = 0; i < walkers.size(); ++i) {
+            if (Reroute(walkers[i])) {
+                if (kept != i) walkers[kept] = walkers[i];
+                ++kept;
+            } else Forget(walkers[i].id);
+        }
+        walkers.resize(kept);
     }
     // The host's door list (rebuilt when lots or buildings change). Walkers keep their routes; their door ids still name them.
     void SetDoors(const std::vector<WalkDoor>& list) {
@@ -562,8 +571,8 @@ public:
             Walker& w = walkers[i];
             Evaluate(w, T);
             const bool done = T - w.start >= (double)w.dur;
-            const bool far = Len(w.pos - centre) > radius + 40.0f && !view.InView(w.pos, w.y);
-            if (done || far) {
+            const bool tooFar = Len(w.pos - centre) > radius + 40.0f && !view.InView(w.pos, w.y);
+            if (done || tooFar) {
                 if (done) ++finished, Remember(w.id, w.start + params.maxTrip, false);
                 else ++dropped, Forget(w.id); // it may come back when the camera does
                 walkers[i] = walkers.back();
@@ -612,6 +621,7 @@ public:
         w.walked = L.walked + d;
         V2 travel = w.dir;
         LegAt(L, d, w.pos, w.y, travel);
+        w.line = w.pos;
         w.pos = w.pos + Offset(w, w.cur, d, travel); // keep right of the walking line, eased across every change of leg
         w.dir = travel;
         if (!w.moving && rel >= L.t0 && w.cur + 1 < w.nLegs) { // waiting at the leg's end (a red crossing, the stop): face the way on
@@ -906,9 +916,9 @@ private:
         return push(e1, bestEnd == 0 ? 0.0f : B.len, s1);
     }
 
-    int PickDoor(uint64_t id, uint64_t salt, int from, WalkPurpose p, V2 near, float r) const {
+    int PickDoor(uint64_t id, uint64_t salt, int from, WalkPurpose p, V2 around, float r) const {
         cand_.clear();
-        ForDoorsNear(near, r, [&](int i) {
+        ForDoorsNear(around, r, [&](int i) {
             if (i != from && PurposeGoesTo(p, doors[(size_t)i].kind) && Len(doors[(size_t)i].p - doors[(size_t)from].p) > 12.0f) cand_.push_back(i);
         });
         if (cand_.empty()) return -1;
@@ -961,9 +971,13 @@ private:
         const WalkDoor& T = doors[(size_t)to];
         if (!doorLeg(T.at, T.atY, T.p, T.y)) return false;
         w.to = to, w.toId = T.id, w.via = via, w.viaId = via >= 0 ? doors[(size_t)via].id : 0;
-        // timing: stand at the door, walk; wait at red crossings and at the stop
-        float t = params.stepOut, walked = 0;
         const float stopWait = 15.0f + 30.0f * walk::U01(walk::Hash(id, 13));
+        Time(w, params.stepOut, 0.0f, stopLeg, stopWait);
+        if (w.dur > params.maxTrip + stopWait + 60.0f) return false;
+        return true;
+    }
+    // The legs' start times: stand t first, walk; wait at red crossings and at the stop (before leg stopLeg).
+    void Time(Walker& w, float t, float walked, int stopLeg, float stopWait) const {
         for (int i = 0; i < w.nLegs; ++i) {
             WalkLeg& L = w.legs[i];
             if (i == stopLeg) t += stopWait;
@@ -971,7 +985,7 @@ private:
                 const WalkEdge& E = graph.edges[(size_t)L.edge];
                 if (E.kind == WalkEdgeKind::Crossing && E.signal && L.len > 1.0f) {
                     const float off = walk::U01(walk::Hash((uint64_t)E.node, 0xC5)) * walk::kSignalCycle;
-                    const double abs = start + (double)t + (double)off;
+                    const double abs = w.start + (double)t + (double)off;
                     const float local = (float)std::fmod(abs, (double)walk::kSignalCycle);
                     const float open = (float)E.group * walk::kSignalCycle * 0.5f;
                     float into = local - open;
@@ -985,7 +999,32 @@ private:
         w.stopAt = stopLeg;
         w.dur = t + params.stepIn;
         w.length = walked;
-        if (w.dur > params.maxTrip + stopWait + 60.0f) return false;
+    }
+    // After a road change: from where the walker is now to its destination door, on the current graph.
+    bool Reroute(Walker& w) {
+        const int to = DoorIndex(w.toId);
+        if (to < 0 || doors[(size_t)to].edge < 0) return false;
+        int e;
+        float s, y;
+        V2 at;
+        if (!graph.Nearest(w.line, 30.0f, e, s, at, y)) return false;
+        const float walkedBefore = w.walked;
+        Walker n = w;
+        n.nLegs = 0, n.cur = 0, n.via = -1, n.viaId = 0, n.start = now;
+        WalkLeg& first = n.legs[n.nLegs++];
+        first = WalkLeg{};
+        first.a = w.line, first.b = at, first.ya = w.y, first.yb = y, first.len = Len(at - w.line);
+        first.kind = OnCrossing(w) ? WalkLegKind::Crossing : WalkLegKind::Link; // mid-crossing: they finish it to the nearest kerb
+        const WalkDoor& D = doors[(size_t)to];
+        if (!Route(e, s, D.edge, D.s, D.at, n, params.maxTrip * n.speed)) return false;
+        if (n.nLegs >= kWalkMaxLegs) return false;
+        WalkLeg& last = n.legs[n.nLegs++];
+        last = WalkLeg{};
+        last.a = D.at, last.b = D.p, last.ya = D.atY, last.yb = D.y, last.len = Len(D.p - D.at), last.kind = WalkLegKind::Door;
+        n.to = to;
+        Time(n, 0.0f, walkedBefore, -1, 0.0f);
+        w = n;
+        Evaluate(w, now);
         return true;
     }
 };

@@ -388,9 +388,41 @@ static void TestBudget() {
     CHECK(sim.keep < 1.0f);
 }
 
+// A street built while people walk: nobody vanishes or jumps; they walk on over the new graph and get home.
+static void TestReroute() {
+    Town town;
+    WalkerSim sim;
+    sim.RebuildGraph(town.net), sim.SetDoors(town.doors);
+    const V2 c = town.Centre();
+    Run run;
+    Step(sim, town, 0.0, 300.0, 12.5f, [&](double) { return c; }, run, false);
+    std::unordered_map<uint64_t, V2> before;
+    for (const Walker& w : sim.walkers) before[w.id] = w.pos;
+    // a new street across a block (two new junctions split the old streets)
+    const int a = town.net.Split(1 * town.n + 1, 0.5f), b = town.net.Split(2 * town.n + 1, 0.5f); // mid-block on the z = 90 and 180 streets
+    const int road = ProfileIndex("Two-Lane Road");
+    town.net.AddSeg(a, b, Cubic::Line(XZ(town.net.nodes[(size_t)a].p), XZ(town.net.nodes[(size_t)b].p)), road);
+    sim.RebuildGraph(town.net);
+    int kept = 0, jumped = 0;
+    for (const Walker& w : sim.walkers) {
+        const auto it = before.find(w.id);
+        if (it == before.end()) continue;
+        ++kept;
+        if (Len(it->second - w.pos) > 1.5f) ++jumped;
+    }
+    std::printf("reroute: %zu walking before the new street, %d still walking after, %d moved more than 1.5 m\n", before.size(), kept, jumped);
+    CHECK(kept >= (int)before.size() * 9 / 10);
+    CHECK(jumped == 0);
+    Run after;
+    Step(sim, town, 300.0, 500.0, 12.5f, [&](double) { return c; }, after);
+    CHECK(after.offSidewalk == 0);
+    CHECK(after.popsIn == 0 && after.popsOut == 0);
+}
+
 int main() {
     TestGraph();
     TestWalkAndPops();
+    TestReroute();
     TestDeterminism();
     TestTimeOfDay();
     TestBudget();
