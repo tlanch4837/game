@@ -30,7 +30,12 @@ public:
         const float smallX = (Fbm(x / 420.0f + 11.0f, z / 420.0f + 5.0f, s + 31) - 0.5f) * 2.0f * 150.0f;
         return -z + bigX + smallX; // the coast sits near z = 0
     }
-    static float Height(float x, float z, int seed) {
+    // The hills' height scale of a new map: 1 is the original, hilly map (old saves keep it: city_game.inl's T record);
+    // 0.3 leaves mostly buildable plains with a few soft rolling hills. The coast, the sea floor, the beach and the
+    // corridor do not scale. TBD_TERRAIN_RELIEF=<0.05..2> overrides it for a new map (city_game.inl NewCityGame).
+    static constexpr float kDefaultRelief = 0.3f;
+
+    static float Height(float x, float z, int seed, float relief = 1.0f) {
         const int s = seed * 7 + 3;
         const float sd = Land(x, z, seed);
         if (sd <= 0.0f) {
@@ -40,8 +45,9 @@ public:
         const float ramp = Smooth(sd / 160.0f); // the beach
         const float inland = Smooth(sd / 2600.0f);
         const float hills = Fbm(x / 1300.0f, z / 1300.0f, s + 5);
-        float h = 5.0f + 24.0f * Fbm(x / 800.0f, z / 800.0f, s + 9) + inland * (30.0f + 150.0f * hills * hills);
-        h += 9.0f * (Fbm(x / 230.0f, z / 230.0f, s + 77) - 0.5f) * Smooth(sd / 300.0f);
+        // relief 1 multiplies by exactly 1: the same floats as before the relief scale existed
+        float h = 5.0f + relief * (24.0f * Fbm(x / 800.0f, z / 800.0f, s + 9)) + inland * (relief * (30.0f + 150.0f * hills * hills));
+        h += relief * (9.0f * (Fbm(x / 230.0f, z / 230.0f, s + 77) - 0.5f)) * Smooth(sd / 300.0f);
         h *= ramp;
         // the corridor band is eased toward a smooth, low profile so track and highway lie easy on the land
         const float cz = CorridorZ(x, seed);

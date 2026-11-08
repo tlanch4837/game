@@ -26,6 +26,7 @@ struct TerrainParams {
     int radius = 8;            // chunks loaded around the camera
     bool flatStart = true;     // keep the ground around the origin flat; a terrain sandbox turns this off so all of it is hills
     int mapKind = 0;           // 0: endless procedural hills; 1: the hand-shaped island with sea and river (island_map.h); 2: the random city map, north land / south sea (city_map.h)
+    float relief = 1.0f;       // mapKind 2: the hills' height scale (CityMap::Height). 1 = the original hilly map (what saves without a T record were made on); new maps use CityMap::kDefaultRelief
 };
 
 class Terrain {
@@ -49,7 +50,7 @@ public:
     // default scene (a ground plane and a box) sits on it.
     float BaseHeightAt(float x, float z) const {
         if (params.mapKind == 1) return IslandMap::Height(x, z);
-        if (params.mapKind == 2) return CityMap::Height(x, z, params.seed);
+        if (params.mapKind == 2) return CityMap::Height(x, z, params.seed, params.relief);
         const float d = std::sqrt(x * x + z * z);
         const float mask = params.flatStart ? Smooth((d - 30.0f) / 70.0f) : 1.0f;
         float sum = 0, amp = 1, total = 0, freq = params.frequency;
@@ -107,7 +108,7 @@ public:
             const float snap = cell * 8.0f;
             const int sx = (int)std::floor(center.x / snap), sz = (int)std::floor(center.z / snap);
             const float ext = FarExtent(level), ccx = ((float)sx + 0.5f) * snap, ccz = ((float)sz + 0.5f) * snap;
-            const bool placed = f.mesh != kInvalidMesh && f.sx == sx && f.sz == sz && f.seed == params.seed && f.amp == params.amplitude &&
+            const bool placed = f.mesh != kInvalidMesh && f.sx == sx && f.sz == sz && f.seed == params.seed && f.amp == params.amplitude && f.relief == params.relief &&
                                 f.radius == params.radius && f.kind == params.mapKind;
             // Edits under a ring rebuild it, but at most twice a second: a brush drag changes the field every frame.
             const bool stale = placed && f.editVersion != field.TileVersionInRect(ccx - ext, ccz - ext, ccx + ext, ccz + ext) &&
@@ -152,7 +153,7 @@ public:
                 const int lod = d2 < 3 * 3 ? 0 : (d2 < 5 * 5 ? 1 : 2);
                 auto it = chunks_.find(Key(ccx + dx, ccz + dz));
                 if (it == chunks_.end() || it->second.lod != lod || it->second.seed != params.seed ||
-                    it->second.amp != params.amplitude || it->second.kind != params.mapKind ||
+                    it->second.amp != params.amplitude || it->second.relief != params.relief || it->second.kind != params.mapKind ||
                     it->second.editVersion != ChunkEditVersion(ccx + dx, ccz + dz))
                     wanted.push_back({ccx + dx, ccz + dz, lod, d2});
             }
@@ -235,6 +236,7 @@ private:
         uint32_t editVersion = 0; // HeightField::TileVersionInRect over the ring when built
         double builtAt = 0.0;     // seconds; edits rebuild a ring at most every kFarEditInterval
         int kind = -1;            // TerrainParams::mapKind when built
+        float relief = -1.0f;     // TerrainParams::relief when built
     };
     static constexpr double kFarEditInterval = 0.5;
 
@@ -281,6 +283,7 @@ private:
         f.editVersion = field.TileVersionInRect(cx - FarExtent(level), cz - FarExtent(level), cx + FarExtent(level), cz + FarExtent(level));
         f.builtAt = NowSeconds();
         f.kind = params.mapKind;
+        f.relief = params.relief;
     }
 
     static double NowSeconds() {
@@ -303,6 +306,7 @@ private:
         MeshId mesh;
         uint32_t editVersion;
         int kind;
+        float relief;
     };
 
     static uint64_t Key(int cx, int cz) { return ((uint64_t)(uint32_t)cx << 32) | (uint32_t)cz; }
@@ -398,7 +402,7 @@ private:
             r.RetireMesh(it->second.mesh);
         }
         const int tris = (int)(v.size() / 3);
-        chunks_[key] = {cx, cz, lod, tris, params.seed, params.amplitude, mesh, ChunkEditVersion(cx, cz), params.mapKind};
+        chunks_[key] = {cx, cz, lod, tris, params.seed, params.amplitude, mesh, ChunkEditVersion(cx, cz), params.mapKind, params.relief};
         triangles_ += tris;
     }
 
