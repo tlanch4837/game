@@ -1999,6 +1999,7 @@ void HudOpenTool(int tool) {
 
 float g_guiScaleSel = 1.0f; // the HUD Options menu: interface size multiplier
 #include "glass_dock_host.inl" // the Glass Dock+ GUI (src/gui/glass_dock.h) on the city game
+#include "city_audio.inl"      // the city view's music, ambience and event sounds (after the dock: it reads the pause menu)
 
 // ------------------------------------------------------------------- in-game GUI, per frame
 // Runs the GUI frame (input queued by GuiMouse since the last frame), the terrain toolbar, and draws it over everything.
@@ -2204,6 +2205,7 @@ void RenderFrame() {
     HerdsSync(dt);    // the cars near the camera made from the herds (city_herds.inl)
     OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
     RadioSync(dt);    // the city radio reacts to what changed this frame
+    CityAudioSync(dt); // music, ambience and build / demolish / money sounds (city_audio.inl)
     FrameMark("sim-sync");
     CityStressSync(); // TBD_CITY_STRESS only
     CityChunkCheckSync(); // TBD_CHUNK_CHECK only
