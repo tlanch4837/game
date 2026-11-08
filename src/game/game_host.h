@@ -42,6 +42,9 @@ bool TouchBuilds(float x, float y);
 void EdgePan(float dxPx, float dyPx);
 // Does a finger landing at (x, y) hit the GUI (as opposed to a build tool or the city)? Edge pan never runs for a GUI drag.
 bool TouchOnGui(float x, float y);
+// [safe area] The screen's safe area in device pixels: the strips the Dynamic Island / notch, the rounded corners and the
+// home indicator cover (UIView safeAreaInsets times the scale), and the display's corner radius. The GUI keeps out of them.
+void SetSafeArea(float left, float top, float right, float bottom, float cornerRadius);
 // Turns the camera about its target by `radians` (a two-finger twist).
 void Twist(float radians);
 // Tilts the camera about its target by `radians`: positive towards straight down, negative towards the horizon (a two-finger

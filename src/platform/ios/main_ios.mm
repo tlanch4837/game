@@ -4,6 +4,8 @@
 // Touch scheme (CS2 / Maps style; the city camera's limits are in src/city_camera.h):
 //   one finger on the GUI or with a build tool out   the left button (press, draw, place) - unchanged;
 //   one finger on the city otherwise                 a drag pans (the ground follows the finger), a tap selects (a click);
+//   one finger with the road / rail aim dot out      [road ux] a drag pans the map under the screen-centre dot and a tap
+//                                                    does nothing; only the dot's tick places (TouchBuilds says camera);
 //   two fingers, after 12 pt of movement, lock into ONE of two gestures until a finger lifts:
 //     TILT   both fingers move the same way vertically (each mostly vertical, their spacing and angle nearly unchanged):
 //            fingers up = tilt toward the horizon / street level, fingers down = toward straight down (top-down);
@@ -99,6 +101,23 @@
     return CGPointMake(p.x * s, p.y * s);
 }
 
+// [safe area] The view's safe area (the Dynamic Island / notch, the home indicator; landscape iPad: left, right and top)
+// to the GUI in device pixels, with the display's corner radius. UIKit has no public corner radius: a screen with a home
+// indicator (any bottom or side inset) has rounded corners, about 18 pt on iPad and 47 pt on a notched / island iPhone.
+- (void)pushSafeArea {
+    const CGFloat s = [self pixelScale];
+    const UIEdgeInsets e = self.view.safeAreaInsets;
+    const BOOL rounded = e.bottom > 0 || e.left > 0 || e.right > 0;
+    const BOOL pad = self.traitCollection.userInterfaceIdiom == UIUserInterfaceIdiomPad;
+    const CGFloat corner = rounded ? (pad ? 18.0 : 47.0) : 0.0;
+    tbd::host::SetSafeArea((float)(e.left * s), (float)(e.top * s), (float)(e.right * s), (float)(e.bottom * s), (float)(corner * s));
+}
+
+- (void)viewSafeAreaInsetsDidChange {
+    [super viewSafeAreaInsetsDidChange];
+    if (_started) [self pushSafeArea];
+}
+
 // First frame with a window and a size: the game, its Metal renderer and a new city.
 - (BOOL)startGame {
     CAMetalLayer* layer = (CAMetalLayer*)self.view.layer;
@@ -152,6 +171,7 @@
     }
     tbd::host::AttachRenderer(std::move(renderer), w, h);
     tbd::host::Resize(w, h, (float)scale);
+    [self pushSafeArea]; // [safe area]
     tbd::host::StartCity();
     tbd::Log("iOS: city started (%d x %d, scale %.1f)", w, h, (double)scale);
     return YES;
@@ -162,6 +182,7 @@
     if (!_started) return;
     const CGFloat scale = [self pixelScale];
     tbd::host::Resize((int)(self.view.bounds.size.width * scale), (int)(self.view.bounds.size.height * scale), (float)scale);
+    [self pushSafeArea]; // [safe area] a rotation moves the island from one side to the other
 }
 
 - (void)frame:(CADisplayLink*)link {

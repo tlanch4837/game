@@ -14,6 +14,7 @@
 // Platform free: the host feeds the cursor's ground point and clicks, and draws the preview this returns.
 #pragma once
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@ enum SnapBit : uint32_t {
     SnapGuide = 1u << 4,
     SnapZone = 1u << 5,
     SnapContour = 1u << 6,
+    // Connection snaps: a new road / track's ends find existing ends (dead ends first, from further away), nodes and
+    // the points along a segment (its middle pulls), within snapRadius on touch; from or onto a dead end the new piece
+    // continues the old one's tangent (roads within 35 deg, track always); track joins track only through a switch
+    // (within 35 deg of a through route) and never overlaps it.
+    SnapConnect = 1u << 7,
 };
 enum class Tab : int { Small, Medium, Large, Highway, Quay, Path, Rail, Intersection, Roundabout, Count }; // the first seven follow city::Cat
 enum class AssetKind { Road, Intersection, Roundabout };
@@ -83,6 +89,23 @@ struct Snap {
     bool lane = false; // locked onto a highway lane's centre: the new road leaves / joins along that lane
     V2 laneDir{};      // the lane's direction there (a -> b of its road)
 };
+// Snap::kind values that join the new piece to the network (the connection snaps' marker and the aim dot's label).
+inline bool IsConnection(const char* k) {
+    if (!k || !k[0]) return false;
+    for (const char* c : {"node", "end", "switch", "middle", "road", "lane"})
+        if (std::strcmp(k, c) == 0) return true;
+    return false;
+}
+// What a snap kind is called on screen (the aim dot's label).
+inline const char* SnapLabel(const char* k) {
+    static const char* const kinds[][2] = {{"node", "Junction"}, {"end", "Connect end"}, {"switch", "Switch"}, {"middle", "Mid-point"},
+                                           {"road", "T-junction"}, {"lane", "Lane"}, {"guide", "Guideline"}, {"length", "Length"},
+                                           {"angle", "Angle"}, {"net side", "Lot depth"}, {"grid", "Grid"}};
+    if (!k || !k[0]) return "";
+    for (const auto& p : kinds)
+        if (std::strcmp(k, p[0]) == 0) return p[1];
+    return k;
+}
 struct PreviewCurve {
     Cubic c;
     float ya = 0, yb = 0;
@@ -110,7 +133,12 @@ public:
     bool parallel = false;
     float parallelOffset = 0; // 0: auto (profile width + 8 m)
     bool snapAll = true;
-    uint32_t snaps = SnapLength | SnapGeometry | SnapStraight | SnapNetSide | SnapGuide;
+    uint32_t snaps = SnapLength | SnapGeometry | SnapStraight | SnapNetSide | SnapGuide | SnapConnect;
+    // Metres the connection snaps reach (0: the mouse's own radii). The host sets it from a finger's width at the aim dot
+    // or the touch point, so the snap radius follows the zoom.
+    float snapRadius = 0;
+    static constexpr float kRailSwitchCos = 0.819f; // cos 35 deg: the sharpest a train turns through a switch
+    static constexpr float kAlignCos = 0.819f;      // a road within 35 deg of a dead end's tangent carries it on
     float gridSpacing = 96.0f; // 12 zone cells
     float rotationDeg = 0;     // intersections / roundabouts
     GroundFn ground;
@@ -456,7 +484,7 @@ public:
                     if (cursor.lane) d1 = cursor.laneDir * (Dot2(cursor.laneDir, ab) >= 0 ? 1.0f : -1.0f);
                     curve = {A, A + d0 * (L * 0.4f), c - d1 * (L * 0.4f), c};
                 }
-            }
+            } else if (mode == ToolMode::Straight && On(SnapConnect)) curve = Aligned(A, c, pts.front(), cursor); // [connect]
             break;
         }
         out.push_back({curve, ya, yb, prof});
@@ -566,6 +594,18 @@ public:
         if (!pts.empty()) line({pts.back().p.x, pts.back().p.y + 0.5f, pts.back().p.z}, {cursor.p.x, cursor.p.y + 0.5f, cursor.p.z}, {0.7f, 0.8f, 1.0f});
         const bool snapped = cursor.kind && cursor.kind[0];
         circle({cursor.p.x, cursor.p.y + 0.5f, cursor.p.z}, snapped ? 2.2f : 1.4f, snapped ? Vec3{1.0f, 0.85f, 0.2f} : handle);
+        if (IsConnection(cursor.kind)) { // [connect] the join marker: a green ring; an open end shows the way it carries on
+            const Vec3 join{0.35f, 1.0f, 0.55f};
+            circle({cursor.p.x, cursor.p.y + 0.6f, cursor.p.z}, std::max(3.6f, Prof().Half() + 1.0f), join);
+            V2 d;
+            if (cursor.node >= 0 && LiveSegs(cursor.node) == 1) {
+                const int sg = net.nodes[cursor.node].segs.front();
+                d = net.OutDir(sg, cursor.node) * -1.0f;
+                for (int i = 0; i < 6; i += 2) // dashes along the extension
+                    line({cursor.p.x + d.x * (2 + i * 2.0f), cursor.p.y + 0.6f, cursor.p.z + d.z * (2 + i * 2.0f)},
+                         {cursor.p.x + d.x * (4 + i * 2.0f), cursor.p.y + 0.6f, cursor.p.z + d.z * (4 + i * 2.0f)}, join);
+            }
+        }
         if (cursor.p.y - Ground(cursor.p.x, cursor.p.z) > 0.5f || cursor.p.y < Ground(cursor.p.x, cursor.p.z) - 0.5f) // elevation stick
             line(cursor.p, {cursor.p.x, Ground(cursor.p.x, cursor.p.z), cursor.p.z}, {0.8f, 0.85f, 0.95f});
         if (On(SnapContour)) Contours(XZ(cursor.p), 140.0f, 5.0f, lines);
@@ -653,6 +693,58 @@ private:
             }
     }
 
+    // ------------------------------------------------------------------------------------------------ connections
+    int LiveSegs(int n) const {
+        int k = 0;
+        for (int sg : net.nodes[n].segs) k += net.segs[sg].alive ? 1 : 0;
+        return k;
+    }
+    // The nearest open end (a node with one segment) a piece of the current profile may join, within radius.
+    int NearestEnd(V2 p, float radius, int profile) const {
+        int best = -1;
+        float bd = radius;
+        for (size_t i = 0; i < net.nodes.size(); ++i) {
+            if (!net.nodes[i].alive || LiveSegs((int)i) != 1 || !net.CanConnect((int)i, profile)) continue;
+            const float d = Len(XZ(net.nodes[i].p) - p);
+            if (d < bd) bd = d, best = (int)i;
+        }
+        return best;
+    }
+    // A snap on an open end of the same kind: the direction that carries the old piece on. start: the new piece leaves
+    // the end that way; else: it arrives at the end moving that way.
+    // Roads: only an end the connection snap found ("end"; a chained road's own end stays a free corner, as in CS2).
+    bool EndTangent(const Snap& sp, bool start, V2& dir) const {
+        if (!IsRail() && std::strcmp(sp.kind ? sp.kind : "", "end") != 0) return false;
+        if (sp.node < 0 || sp.node >= (int)net.nodes.size() || !net.nodes[sp.node].alive || LiveSegs(sp.node) != 1) return false;
+        int sg = -1;
+        for (int k : net.nodes[sp.node].segs)
+            if (net.segs[k].alive) sg = k;
+        if (sg < 0 || net.IsRailSeg(sg) != IsRail()) return false;
+        const V2 u = net.OutDir(sg, sp.node);
+        dir = start ? u * -1.0f : u;
+        return true;
+    }
+    // Straight mode from / onto an open end: bend so the new piece continues the old one's tangent (roads only when the
+    // chord is within 35 deg of it: a sharper angle is a deliberate corner; track whenever it heads forward).
+    Cubic Aligned(V2 A, V2 C, const Snap& a, const Snap& b) const {
+        const V2 ab = C - A;
+        const float L = Len(ab);
+        if (L < 1.0f) return Cubic::Line(A, C);
+        const V2 chord = ab * (1.0f / L);
+        const float need = IsRail() ? 0.05f : kAlignCos;
+        V2 d0, d1;
+        const bool h0 = EndTangent(a, true, d0) && Dot2(d0, chord) >= need;
+        const bool h1 = EndTangent(b, false, d1) && Dot2(d1, chord) >= need;
+        if (h0 && h1) return {A, A + d0 * (L * 0.36f), C - d1 * (L * 0.36f), C};
+        if (h0 || h1) {
+            const V2 d = h0 ? d0 : d1;
+            const float cosPhi = Dot2(d, chord);
+            if (cosPhi > 0.9995f) return Cubic::Line(A, C);
+            return h0 ? Cubic::Quad(A, A + d * (L / (2.0f * cosPhi)), C) : Cubic::Quad(A, C - d * (L / (2.0f * cosPhi)), C);
+        }
+        return Cubic::Line(A, C);
+    }
+
     // ------------------------------------------------------------------------------------------------ snapping
     Snap SnapAt(Vec3 hit, bool endpoint) {
         Snap s;
@@ -666,13 +758,18 @@ private:
         if (!snapAll) return withY(s, p);
         // 1. existing geometry: nodes, then road surfaces (endpoints only)
         if (endpoint && On(SnapGeometry)) {
-            const int n = net.NearestNode(p, std::max(5.0f, hwNew + 3.0f), -1, as.profile);
+            const bool connect = On(SnapConnect);
+            const float reach = std::max(std::max(5.0f, hwNew + 3.0f), connect ? snapRadius : 0.0f);
+            int n = connect ? NearestEnd(p, reach * 1.5f, as.profile) : -1; // [connect] open ends pull from further away
+            if (n < 0) n = net.NearestNode(p, reach, -1, as.profile);
             if (n >= 0) {
                 s.p = net.NodePos(n), s.node = n, s.kind = "node";
+                if (connect) s.kind = LiveSegs(n) == 1 ? "end" : IsRail() && LiveSegs(n) >= 2 ? "switch" : "node";
                 return s;
             }
             float t, d;
-            const int seg = as.kind == AssetKind::Road ? net.SegmentAt(p, 1.5f, t, d, as.profile) : net.SegmentAt(p, 0.0f, t, d, as.profile);
+            const float pad = std::max(1.5f, connect ? snapRadius * 0.6f : 0.0f);
+            const int seg = as.kind == AssetKind::Road ? net.SegmentAt(p, pad, t, d, as.profile) : net.SegmentAt(p, 0.0f, t, d, as.profile);
             if (seg >= 0 && net.Prof(seg).cat == Cat::Highway && net.Prof(seg).fwd + net.Prof(seg).back > 0) {
                 // highways: lock onto the nearest lane centre (exits and on-ramps), not the centre line
                 const Profile& hp = net.Prof(seg);
@@ -696,8 +793,14 @@ private:
                 return s;
             }
             if (seg >= 0) {
+                bool mid = false;
+                if (connect && as.kind == AssetKind::Road) { // [connect] the segment's middle pulls (a T at its centre)
+                    const float len = net.Curve(seg).Length();
+                    if (std::fabs(t - 0.5f) * len < std::max(3.0f, snapRadius * 0.5f)) t = 0.5f, mid = true;
+                }
                 const V2 q = net.Curve(seg).At(t);
-                s.p = {q.x, net.YAt(net.segs[seg], t), q.z}, s.seg = seg, s.t = t, s.kind = "road";
+                s.p = {q.x, net.YAt(net.segs[seg], t), q.z}, s.seg = seg, s.t = t;
+                s.kind = !connect ? "road" : mid ? "middle" : IsRail() ? "switch" : "road";
                 return s;
             }
         }
@@ -841,6 +944,16 @@ private:
                 else if (sp.seg >= 0 && sp.seg < (int)net.segs.size() && net.segs[sp.seg].alive) {
                     const V2 t = net.Curve(sp.seg).Tan(sp.t);
                     arms.push_back(t), arms.push_back(t * -1.0f);
+                }
+                if (Profiles()[pc.profile].cat == Cat::Rail && On(SnapConnect)) { // [connect] track: through a switch
+                    if (arms.empty()) continue;
+                    bool through = false;
+                    for (const V2& u : arms) {
+                        if (Dot2(u * -1.0f, d) >= kRailSwitchCos) through = true;
+                        if (Dot2(u, d) > 0.9995f && pc.c.MaxTurnPerMetre() < 1e-3f) { error = "Track overlaps a track"; return false; }
+                    }
+                    if (!through) { error = "Track joins need a switch: within 35 deg of the line"; return false; }
+                    continue;
                 }
                 for (const V2& u : arms)
                     if (Dot2(u, d) > 0.96f) { error = "Angle too sharp"; return false; } // under ~16 degrees

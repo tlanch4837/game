@@ -39,6 +39,8 @@
 #include "gui/terrain_toolbar.h"
 #include "gui/glass_dock.h"    // Glass Dock+: the mobile / tablet GUI (game/glass_dock_host.inl)
 #include "gui/road_toolkit.h"  // [road toolkit] the road / rail touch panel + palette (game/glass_dock_host.inl RoadKit)
+#include "gui/road_reticle.h"  // [road ux] the aim dot (game/glass_dock_host.inl RoadKit)
+#include "gui/terrain_kit.h"   // [road ux] the compact terrain tools (game/glass_dock_host.inl TerrainKit)
 #include "gui/city_hud.h"
 #include "gui/city_overlays.h"
 #include "gui/zone_toolbar.h"
@@ -209,7 +211,16 @@ void tbd::host::PointerCancel() {
     g_buttonsDown = 0;
 }
 
-bool tbd::host::TouchBuilds(float x, float y) { return g_gui.WantsMouseAt(x, y) || gdock::ToolActive(); }
+// [road ux] with the aim dot out a finger on the map moves the camera; the dot's tick places (gui/road_reticle.h)
+bool tbd::host::TouchBuilds(float x, float y) {
+    return tbd::gui::reticle::RouteTouch(g_gui.WantsMouseAt(x, y), gdock::ToolActive(), gdock::ReticleOn()) != tbd::gui::reticle::Route::Camera;
+}
+
+// [safe area] device pixels; the GUI converts them to its points each frame (game/glass_dock_host.inl FillSafe)
+void tbd::host::SetSafeArea(float left, float top, float right, float bottom, float cornerRadius) {
+    gdock::g_safePx[0] = std::max(0.0f, left), gdock::g_safePx[1] = std::max(0.0f, top), gdock::g_safePx[2] = std::max(0.0f, right);
+    gdock::g_safePx[3] = std::max(0.0f, bottom), gdock::g_safePx[4] = std::max(0.0f, cornerRadius);
+}
 
 bool tbd::host::TouchOnGui(float x, float y) { return g_gui.WantsMouseAt(x, y); }
 

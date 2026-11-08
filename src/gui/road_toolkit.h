@@ -12,6 +12,14 @@
 //     caption       what the last tap did (a tablet has no hover tooltips), or the rail limits
 //   palette (bottom, right of the panel): the category tabs and a row of road-type tiles (drag to scroll).
 // Collapsed it keeps the header and the Elevation row. Everything is a 44 pt target; nothing needs a keyboard.
+//
+// Mini (State::mini, the default on touch: the host sets it): the whole kit is two slim 52 pt strips along the bottom so
+// the city stays in view (the user's "as compact as possible" ask):
+//   tools    close, tool mode (a popover row of the 7 modes) or the prefab's rotation, the elevation chip (down, the
+//            readout - a tap cycles the step - , up, and 0 when off the ground), End, snapping (a popover row of all + 8),
+//            parallel, undo, redo, bulldoze, the aim dot (touch), expand (back to the full panel)
+//   palette  the tab (a popover row of the 9 tabs) and one row of icon tiles (drag to scroll)
+// The caption floats above as a small pill for 3 s. Targets are 40 pt. Both strips keep inside State::safe.
 // It edits the RoadTool directly; it draws into the GUI's one UI vertex list (no extra draw calls but the glass).
 // Platform free (tests/road_toolkit_test.cpp drives it headless).
 #pragma once
@@ -24,12 +32,19 @@
 #include "../city/road_tool.h"
 #include "glass_dock.h"
 #include "road_toolbar.h" // road_ui::DrawProfileTile: the tiles' top-down cross-sections
+#include "safe_area.h"
 
 namespace tbd {
 namespace gui {
 namespace road_kit {
 
 struct State {
+    bool mini = false;     // the slim strips (touch default: the host sets it once)
+    SafeInsets safe;       // points, the host sets it every frame
+    bool dotAvail = false; // the aim dot exists here (touch): its toggle shows
+    bool dotOn = true;     // the player's toggle: the screen centre is the cursor (gui/road_reticle.h)
+    int pop = 0;           // the mini strip's open popover: 0 none, 1 tool modes, 2 snapping, 3 tabs
+    float popX = 0;        // its anchor (points)
     bool collapsed = false;
     // the palette's horizontal scroll (points) and its drag
     float scroll = 0, scrollMax = 0;
@@ -48,6 +63,7 @@ struct State {
 struct Out {
     std::vector<float> sfx; // UI tick pitches (the host plays them like the dock's)
     bool changed = false;   // a control was used this frame
+    bool close = false;     // the mini strip's close: the host closes the road tool
 };
 
 // The rectangles the toolkit takes this frame, in points (for tests and for the host's layout).
@@ -55,10 +71,51 @@ struct Layout {
     float panelX = 0, panelY = 0, panelW = 0, panelH = 0;
     float palX = 0, palY = 0, palW = 0, palH = 0;
     bool palette = false;
+    float top = 0; // the highest point the kit reaches (popovers and the caption aside): the reticle's buttons stay above
+    float rightTop = 0; // ... at the screen's right side (the palette strip, or the panel when the palette sits above it)
 };
 
-constexpr float kPanelW = 404, kPad = 12, kB = 44, kGap = 4, kLabelH = 16, kRowGap = 8, kCaptionH = 18;
+constexpr float kPanelW = 452, kPad = 12, kB = 44, kGap = 4, kLabelH = 16, kRowGap = 8, kCaptionH = 18;
 constexpr float kTileW = 88, kTileH = 72;
+// mini: 40 pt targets in 52 pt strips
+constexpr float kMB = 40, kMPad = 6, kMGap = 4, kMH = kMB + 2 * kMPad, kMTileW = 60, kMValueW = 64;
+
+// The snapping toggles, in the row's order (the first is "all")
+struct SnapDef {
+    Icon icon;
+    uint32_t bit;
+    const char* name;
+};
+inline const SnapDef* Snaps() {
+    static const SnapDef k[] = {{Icon::SnapAll, 0, "All snapping"},
+                                {Icon::SnapGeometry, city::SnapGeometry, "Existing geometry"},
+                                {Icon::SnapLength, city::SnapLength, "Cell length (8 m)"},
+                                {Icon::SnapStraight, city::SnapStraight, "Straight directions (15 / 90 deg)"},
+                                {Icon::SnapNetSide, city::SnapNetSide, "Building sides (zone-cell distances)"},
+                                {Icon::SnapGuide, city::SnapGuide, "Guidelines"},
+                                {Icon::SnapZone, city::SnapZone, "Zone grid"},
+                                {Icon::SnapContour, city::SnapContour, "Contour lines"},
+                                {Icon::None, city::SnapConnect, "Connections: ends, nodes, mid-points, aligned (rail: switches)"}};
+    return k;
+}
+constexpr int kSnapCount = 9;
+
+// The connection snap's glyph (gui.h has none): a road end meeting a node ring, with a branch.
+inline void DrawConnectGlyph(DrawList& dl, float cx, float cy, float size, float stroke, Color c) {
+    const float h = size * 0.5f;
+    dl.Line(cx - h, cy + h * 0.55f, cx - h * 0.18f, cy + h * 0.02f, stroke, c);
+    dl.Line(cx + h * 0.2f, cy - h * 0.2f, cx + h, cy - h * 0.75f, stroke, c);
+    dl.Line(cx + h * 0.22f, cy + h * 0.12f, cx + h * 0.95f, cy + h * 0.55f, stroke, c);
+    dl.Circle(cx, cy, h * 0.3f, 0, stroke, c);
+}
+// The aim dot's glyph: a ring with a centre dot and four ticks.
+inline void DrawDotGlyph(DrawList& dl, float cx, float cy, float size, float stroke, Color c) {
+    const float h = size * 0.5f;
+    dl.Circle(cx, cy, h * 0.55f, 0, stroke, c);
+    dl.Circle(cx, cy, std::max(1.5f, stroke * 1.1f), c);
+    dl.Line(cx - h, cy, cx - h * 0.7f, cy, stroke, c), dl.Line(cx + h * 0.7f, cy, cx + h, cy, stroke, c);
+    dl.Line(cx, cy - h, cx, cy - h * 0.7f, stroke, c), dl.Line(cx, cy + h * 0.7f, cx, cy + h, stroke, c);
+}
 
 inline const char* TabAtlasIcon(city::Tab t) {
     static const char* const k[] = {"road_s", "road_m", "road_l", "highway", "quay", "path", "rail", "xing", "roundabout"};
@@ -77,22 +134,71 @@ inline float PanelHeight(const city::RoadTool& t, bool collapsed) {
     return h + kCaptionH + kPad - kRowGap;
 }
 
-// bottom: points from the screen's bottom edge to the panels' bottoms. tablet: false = a phone (collapsed, no palette).
+// The mini tool strip's items, left to right (Place and Frame share it).
+enum MiniItem { kClose, kMode, kRotL, kRotV, kRotR, kDown, kValue, kUp, kZero, kEnd, kSnap, kPar, kUndo, kRedo, kDoze, kDot, kExpand };
+struct MiniSlot {
+    MiniItem id;
+    float w;
+};
+inline std::vector<MiniSlot> MiniItems(const city::RoadTool& t, const State& st, bool tablet) {
+    const bool prefab = t.Current().kind != city::AssetKind::Road;
+    std::vector<MiniSlot> v = {{kClose, kMB}};
+    if (prefab) v.push_back({kRotL, kMB}), v.push_back({kRotV, 52}), v.push_back({kRotR, kMB});
+    else v.push_back({kMode, kMB});
+    v.push_back({kDown, kMB}), v.push_back({kValue, kMValueW}), v.push_back({kUp, kMB});
+    if (t.elevation != 0) v.push_back({kZero, kMB});
+    if (t.Pending()) v.push_back({kEnd, 48});
+    v.push_back({kSnap, kMB});
+    if (!prefab) v.push_back({kPar, kMB});
+    v.push_back({kUndo, kMB}), v.push_back({kRedo, kMB});
+    if (!prefab) v.push_back({kDoze, kMB});
+    if (st.dotAvail) v.push_back({kDot, kMB});
+    if (tablet) v.push_back({kExpand, kMB});
+    return v;
+}
+inline float MiniWidth(const std::vector<MiniSlot>& v) {
+    float w = 2 * kMPad - kMGap;
+    for (const MiniSlot& m : v) w += m.w + kMGap;
+    return w;
+}
+
+// bottom: points from the screen's bottom edge to the panels' bottoms (the host's dock, safe area included; the safe
+// area's bottom is kept regardless). tablet: false = a phone (collapsed, no palette).
 inline Layout Place(const Context& g, const city::RoadTool& t, const State& st, float bottom, bool tablet) {
     const Input& in = g.In();
     const float s = g.Scale(), W = in.viewW / s, H = in.viewH / s;
+    const SafeInsets& sa = st.safe;
+    const float left = 12 + sa.L(), right = W - 12 - sa.R(), top = 8 + sa.T();
+    bottom = std::max(bottom, sa.B() + 8);
     Layout L;
+    if (st.mini) {
+        L.panelW = std::min(MiniWidth(MiniItems(t, st, tablet)), right - left);
+        L.panelH = kMH;
+        L.panelX = left, L.panelY = H - bottom - kMH;
+        L.palette = true;
+        L.palH = kMH;
+        L.palX = L.panelX + L.panelW + 8, L.palW = right - L.palX, L.palY = L.panelY;
+        if (L.palW < 260) { // narrow: the palette strip rides above the tools
+            L.palX = left, L.palW = std::min(right - left, 700.0f), L.palY = L.panelY - 8 - kMH;
+            if (L.palY < top) L.palette = false;
+        }
+        L.top = L.palette ? std::min(L.panelY, L.palY) : L.panelY;
+        L.rightTop = L.palette ? L.palY : L.panelY;
+        return L;
+    }
     L.panelW = kPanelW;
     L.panelH = PanelHeight(t, st.collapsed || !tablet);
-    L.panelX = 12, L.panelY = H - bottom - L.panelH;
-    if (!tablet) L.panelY = std::max(8.0f, L.panelY);
+    L.panelX = left, L.panelY = H - bottom - L.panelH;
+    if (!tablet) L.panelY = std::max(top, L.panelY);
     L.palette = tablet && !st.collapsed;
     L.palH = kPad + kB + kRowGap + kTileH + kPad;
-    L.palX = L.panelX + L.panelW + 10, L.palW = W - 12 - L.palX, L.palY = H - bottom - L.palH;
+    L.palX = L.panelX + L.panelW + 10, L.palW = right - L.palX, L.palY = H - bottom - L.palH;
     if (L.palW < 300) { // a narrow screen: the palette goes above the panel
-        L.palX = L.panelX, L.palW = std::min(W - 24, 700.0f), L.palY = L.panelY - 10 - L.palH;
-        if (L.palY < 8) L.palette = false;
+        L.palX = L.panelX, L.palW = std::min(right - left, 700.0f), L.palY = L.panelY - 10 - L.palH;
+        if (L.palY < top) L.palette = false;
     }
+    L.top = L.palette ? std::min(L.panelY, L.palY) : L.panelY;
+    L.rightTop = L.palette && L.palX > L.panelX ? L.palY : L.top;
     return L;
 }
 
@@ -179,16 +285,241 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
         if (right) P.Text(right, x + kPanelW - 2 * kPad, y + kLabelH * 0.5f, 11, rightCol, true, 1.0f);
     };
 
-    // ================================================================ the options panel
+    // the redo glyph: the undo glyph mirrored (gui.h has no redo icon)
+    auto redoGlyph = [&](float x, float y, float b, bool dim) {
+        const float cx = (x + b * 0.5f) * s, cy = (y + b * 0.5f) * s, h = std::round(b * 0.25f * s), w = std::max(1.0f, 1.9f * s);
+        const Color c = dim ? Fade(kInk, 0.4f) : kInk;
+        float lx = -0.8f, ly = 0.6f;
+        for (int i = 1; i <= 8; ++i) { // the quadratic (-.8,.6) (-.8,-.5) (.4,-.5)
+            const float q = i / 8.0f, u = 1 - q, nx = u * u * -0.8f + 2 * u * q * -0.8f + q * q * 0.4f, ny = u * u * 0.6f + 2 * u * q * -0.5f + q * q * -0.5f;
+            dl.Line(cx + lx * h, cy + ly * h, cx + nx * h, cy + ny * h, w, c);
+            lx = nx, ly = ny;
+        }
+        dl.Line(cx + 0.4f * h, cy - 0.5f * h, cx + 0.1f * h, cy - 0.85f * h, w, c);
+        dl.Line(cx + 0.4f * h, cy - 0.5f * h, cx + 0.1f * h, cy - 0.15f * h, w, c);
+    };
     const bool prefab = t.Current().kind != city::AssetKind::Road;
     const bool rail = t.IsRail();
+    // ================================================================ mini: two slim strips
+    if (st.mini) {
+        const float W = in.viewW / s;
+        const SafeInsets& sa = st.safe;
+        auto elevSay = [&] {
+            char v[48];
+            std::snprintf(v, sizeof(v), "Elevation %g m%s", t.elevation, t.InTunnel() ? ": tunnel" : t.OnBridge() ? ": bridge" : t.elevation < 0 ? ": cut" : "");
+            say(v);
+        };
+        // ---- the tools strip
+        const std::vector<MiniSlot> items = MiniItems(t, st, tablet);
+        const float sy = L.panelY + kMPad;
+        P.Glass(L.panelX, L.panelY, L.panelW, L.panelH, 16, kPanel, 22, 1.6f, true);
+        float bx = L.panelX + kMPad;
+        float modeX = bx, snapX = bx;
+        for (const MiniSlot& it : items) {
+            if (bx + it.w > L.panelX + L.panelW - kMPad + 0.5f) break; // a very narrow screen: what does not fit is in the full panel
+            switch (it.id) {
+            case kClose:
+                if (button(bx, sy, kMB, kMB, Icon::Close, false)) out.close = true, sfx(0.65f), out.changed = true;
+                break;
+            case kMode: {
+                static const Icon kModeIcons[] = {Icon::Straight, Icon::CurveSimple, Icon::CurveComplex, Icon::Continuous, Icon::Grid, Icon::Replace, Icon::Swap, Icon::Bulldoze};
+                modeX = bx;
+                if (button(bx, sy, kMB, kMB, kModeIcons[std::clamp((int)t.mode, 0, 7)], st.pop == 1)) st.pop = st.pop == 1 ? 0 : 1, st.popX = bx, sfx(1.0f), out.changed = true;
+                break;
+            }
+            case kRotL:
+                if (button(bx, sy, kMB, kMB, Icon::RotateLeft, false)) t.Rotate(15.0f), sfx(0.9f), out.changed = true;
+                break;
+            case kRotV: {
+                char v[16];
+                std::snprintf(v, sizeof(v), "%.0f deg", t.rotationDeg);
+                P.Box(bx, sy, it.w, kMB, 10, Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
+                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f, 11, kInk, true, 0.5f);
+                break;
+            }
+            case kRotR:
+                if (button(bx, sy, kMB, kMB, Icon::RotateRight, false)) t.Rotate(-15.0f), sfx(1.1f), out.changed = true;
+                break;
+            case kDown: {
+                const int n = repeatButton(1, bx, sy, kMB, kMB, Icon::ChevronDown, t.elevation <= city::RoadTool::kMinElevation);
+                for (int i = 0; i < n; ++i) t.Raise(-1);
+                if (n) sfx(0.9f), out.changed = true, elevSay();
+                break;
+            }
+            case kValue: { // the readout; a tap cycles the step
+                bool held = false;
+                const bool hit = tap(bx, sy, it.w, kMB, &held);
+                const float e = t.elevation;
+                const Color col = t.InTunnel() ? Rgba(140, 190, 255) : t.OnBridge() ? Rgba(255, 214, 120) : e < 0 ? Rgba(170, 215, 255) : kInk;
+                P.Box(bx, sy, it.w, kMB, 10, held ? Rgba(255, 255, 255, 50) : Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
+                char v[24];
+                std::snprintf(v, sizeof(v), "%g m", e);
+                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f - 6, 14, col, true, 0.5f, it.w - 4);
+                std::snprintf(v, sizeof(v), "step %g", t.Step());
+                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f + 10, 9, kMuted, false, 0.5f, it.w - 4);
+                if (hit) {
+                    t.CycleStep(), sfx(1.15f), out.changed = true;
+                    std::snprintf(v, sizeof(v), "Elevation step %g m", t.Step());
+                    say(v);
+                }
+                break;
+            }
+            case kUp: {
+                const int n = repeatButton(2, bx, sy, kMB, kMB, Icon::ChevronUp, t.elevation >= city::RoadTool::kMaxElevation);
+                for (int i = 0; i < n; ++i) t.Raise(1);
+                if (n) sfx(1.1f), out.changed = true, elevSay();
+                break;
+            }
+            case kZero:
+                if (textButton(bx, sy, kMB, kMB, "0 m", false)) t.GroundLevel(), sfx(0.8f), out.changed = true, say("Ground level");
+                break;
+            case kEnd:
+                if (textButton(bx, sy, it.w, kMB, "End", false)) t.Cancel(), sfx(0.65f), out.changed = true, say(rail ? "Track ended" : "Road ended");
+                break;
+            case kSnap:
+                snapX = bx;
+                if (button(bx, sy, kMB, kMB, Icon::SnapAll, t.snapAll || st.pop == 2)) st.pop = st.pop == 2 ? 0 : 2, st.popX = bx, sfx(1.0f), out.changed = true;
+                break;
+            case kPar:
+                if (button(bx, sy, kMB, kMB, Icon::Parallel, t.parallel)) {
+                    t.parallel = !t.parallel, sfx(1.2f), out.changed = true;
+                    say(t.parallel ? "Parallel: a second road to the right" : "Parallel off");
+                }
+                break;
+            case kUndo:
+                if (button(bx, sy, kMB, kMB, Icon::Undo, false, !t.CanUndo()) && t.Undo()) sfx(0.65f), out.changed = true, say("Undo");
+                break;
+            case kRedo: {
+                bool held = false;
+                const bool hit = tap(bx, sy, kMB, kMB, &held);
+                const bool dim = !t.CanRedo();
+                box(bx, sy, kMB, kMB, false, held, dim);
+                redoGlyph(bx, sy, kMB, dim);
+                if (hit && !dim && t.Redo()) sfx(0.8f), out.changed = true, say("Redo");
+                break;
+            }
+            case kDoze: {
+                const bool dozing = t.mode == city::ToolMode::Bulldoze;
+                if (button(bx, sy, kMB, kMB, Icon::Bulldoze, dozing)) {
+                    t.SetMode(dozing ? city::ToolMode::Straight : city::ToolMode::Bulldoze), sfx(1.1f), out.changed = true;
+                    say(dozing ? "Bulldoze off" : rail ? "Bulldoze: aim at a track" : "Bulldoze: aim at a road");
+                }
+                break;
+            }
+            case kDot: {
+                bool held = false;
+                const bool hit = tap(bx, sy, kMB, kMB, &held);
+                box(bx, sy, kMB, kMB, st.dotOn, held, false);
+                DrawDotGlyph(dl, (bx + kMB * 0.5f) * s, (sy + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 1.9f * s), kInk);
+                if (hit) {
+                    st.dotOn = !st.dotOn, sfx(st.dotOn ? 1.25f : 0.85f), out.changed = true;
+                    say(st.dotOn ? "Aim dot: drag the map under the dot, tick to place" : "Aim dot off: tap the map to place");
+                }
+                break;
+            }
+            case kExpand:
+                if (button(bx, sy, kMB, kMB, Icon::ChevronUp, false)) st.mini = false, st.collapsed = false, st.pop = 0, sfx(0.9f), out.changed = true, say("Full toolkit");
+                break;
+            }
+            bx += it.w + kMGap;
+        }
+        // ---- the palette strip: the tab, then one row of tiles
+        st.tiles = {};
+        float tabX = L.palX + kMPad;
+        if (L.palette) {
+            P.Glass(L.palX, L.palY, L.palW, L.palH, 16, kPanel, 22, 1.6f, true);
+            const float py = L.palY + kMPad;
+            {
+                bool held = false;
+                if (tap(tabX, py, kMB, kMB, &held)) st.pop = st.pop == 3 ? 0 : 3, st.popX = tabX, sfx(1.0f), out.changed = true;
+                box(tabX, py, kMB, kMB, st.pop == 3, held, false);
+                P.Icon(TabAtlasIcon(t.tab), tabX + kMB * 0.5f, py + kMB * 0.5f, 24, kInk, true);
+            }
+            const float tx0 = tabX + kMB + kMGap + 2, areaW = L.palX + L.palW - kMPad - tx0;
+            if (st.lastTab != (int)t.tab) st.lastTab = (int)t.tab, st.scroll = 0;
+            const auto& assets = city::Assets();
+            std::vector<int> list;
+            for (size_t i = 0; i < assets.size(); ++i)
+                if (assets[i].tab == t.tab) list.push_back((int)i);
+            const float contentW = list.size() * (kMTileW + kMGap) - kMGap;
+            st.scrollMax = std::max(0.0f, contentW - areaW);
+            st.scroll = std::clamp(st.scroll, 0.0f, st.scrollMax);
+            st.tiles = R(tx0, py, std::max(0.0f, areaW), kMB);
+            dl.SetClip(st.tiles.x, st.tiles.y, st.tiles.x + st.tiles.w, st.tiles.y + st.tiles.h);
+            for (size_t k = 0; k < list.size(); ++k) {
+                const int i = list[k];
+                const city::Asset& a = assets[i];
+                const float x = tx0 + k * (kMTileW + kMGap) - st.scroll;
+                if (x + kMTileW < tx0 || x > tx0 + areaW) continue;
+                bool held = false;
+                const bool sel = i == t.asset;
+                if (tap(x, py, kMTileW, kMB, &held) && st.tiles.Contains(in.mouseX, in.mouseY)) t.Select(i), sfx(1.45f), out.changed = true, say(a.name);
+                P.Box(x, py, kMTileW, kMB, 10, sel ? Rgba(10, 132, 255, 80) : held ? Rgba(255, 255, 255, 40) : Rgba(255, 255, 255, 16), sel ? 2.0f : 1.0f, sel ? kAccent : Rgba(255, 255, 255, 31));
+                const Rect pic = R(x + 3, py + 3, kMTileW - 6, kMB - 6);
+                if (a.kind == city::AssetKind::Road) road_ui::DrawProfileTile(dl, pic, city::Profiles()[a.profile], s);
+                else DrawIcon(dl, a.kind == city::AssetKind::Roundabout ? Icon::Roundabout : Icon::Intersection, pic.x + pic.w * 0.5f, pic.y + pic.h * 0.5f, std::round(22 * s), std::max(1.0f, 2.0f * s), kInk);
+            }
+            dl.ClearClip();
+        }
+        // ---- the popover: one row above the strips, under the finger that opened it
+        float capTop = L.top;
+        if (st.pop) {
+            const int n = st.pop == 1 ? 7 : st.pop == 2 ? kSnapCount : (int)city::Tab::Count;
+            const float pw = n * (kMB + kMGap) - kMGap + 2 * kMPad, ph = kMH;
+            const float anchor = st.pop == 1 ? modeX : st.pop == 2 ? snapX : tabX;
+            const float px = std::clamp(anchor - kMPad, 12 + sa.L(), std::max(12 + sa.L(), W - 12 - sa.R() - pw)), py = L.top - 8 - ph;
+            P.Glass(px, py, pw, ph, 16, kPanel, 22, 1.6f, true);
+            capTop = py;
+            for (int i = 0; i < n; ++i) {
+                const float x = px + kMPad + i * (kMB + kMGap), y = py + kMPad;
+                if (st.pop == 1) {
+                    static const Icon kModeIcons[] = {Icon::Straight, Icon::CurveSimple, Icon::CurveComplex, Icon::Continuous, Icon::Grid, Icon::Replace, Icon::Swap};
+                    static const char* const kTips[] = {"Straight", "Simple curve", "Complex curve", "Continuous", "Grid", "Replace: upgrade / flip", "Swap: drag the way"};
+                    if (button(x, y, kMB, kMB, kModeIcons[i], (int)t.mode == i)) t.SetMode((city::ToolMode)i), st.pop = 0, sfx(1.2f), out.changed = true, say(kTips[i]);
+                } else if (st.pop == 2) {
+                    const SnapDef& d = Snaps()[i];
+                    const bool lit = i == 0 ? t.snapAll : t.snapAll && (t.snaps & d.bit) != 0, dim = i > 0 && !t.snapAll;
+                    const bool hit = button(x, y, kMB, kMB, d.icon, lit, dim);
+                    if (d.icon == Icon::None) DrawConnectGlyph(dl, (x + kMB * 0.5f) * s, (y + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 1.9f * s), dim ? Fade(kInk, 0.4f) : kInk);
+                    if (hit) {
+                        if (i == 0) t.snapAll = !t.snapAll;
+                        else t.ToggleSnap(d.bit);
+                        const bool now = i == 0 ? t.snapAll : (t.snaps & d.bit) != 0;
+                        sfx(now ? 1.25f : 0.85f), out.changed = true;
+                        say(std::string(d.name) + (now ? ": on" : ": off"));
+                    }
+                } else {
+                    bool held = false;
+                    const bool on = (int)t.tab == i;
+                    if (tap(x, y, kMB, kMB, &held)) t.SelectTab((city::Tab)i), st.pop = 0, sfx(1.2f), out.changed = true, say(city::TabName((city::Tab)i));
+                    box(x, y, kMB, kMB, on, held, false);
+                    P.Icon(TabAtlasIcon((city::Tab)i), x + kMB * 0.5f, y + kMB * 0.5f, 24, kInk, !on);
+                }
+            }
+        }
+        // ---- the caption pill: the last tap for 3 s, else the error
+        {
+            std::string c;
+            Color col = kInk;
+            if (st.captionT < 3.0f && !st.caption.empty()) c = st.caption, col = Fade(kInk, std::min(1.0f, (3.0f - st.captionT) * 2.0f));
+            else if (!t.error.empty()) c = t.error, col = Rgba(255, 160, 140);
+            if (!c.empty()) {
+                const float maxW = W - 24 - sa.L() - sa.R() - 20;
+                const float cw = std::min(P.TextW(c, 11) + 20, maxW + 20), ch = 24, cx = L.panelX, cy = capTop - 6 - ch;
+                P.Box(cx, cy, cw, ch, 12, Rgba(20, 22, 28, 200));
+                P.Text(c, cx + 10, cy + ch * 0.5f, 11, col, false, 0, maxW);
+            }
+        }
+        if (!in.down) st.holdId = -1, st.armed = false;
+        return L;
+    }
+    // ================================================================ the options panel
     const bool compact = st.collapsed || !tablet;
     const float px = L.panelX, py = L.panelY, inner = kPanelW - 2 * kPad;
     P.Glass(px, py, L.panelW, L.panelH, 18, kPanel, 22, 1.6f, true);
     float x0 = px + kPad, y = py + kPad;
     // ---- header
     {
-        P.Text(rail ? "Rail Tools" : "Road Tools", x0, y + kB * 0.5f, 14, kInk, true);
         float rx = x0 + inner;
         rx -= kB;
         if (tablet && button(rx, y, kB, kB, st.collapsed ? Icon::ChevronUp : Icon::ChevronDown, false)) {
@@ -202,21 +533,12 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
             say(dozing ? "Bulldoze off" : "Bulldoze: tap a road or track to remove it");
         }
         rx -= kGap + kB;
-        { // redo: the undo glyph mirrored (gui.h has no redo icon)
+        { // redo
             bool held = false;
             const bool hit = tap(rx, y, kB, kB, &held);
             const bool dim = !t.CanRedo();
             box(rx, y, kB, kB, false, held, dim);
-            const float cx = (rx + kB * 0.5f) * s, cy = (y + kB * 0.5f) * s, h = std::round(kB * 0.25f * s), w = std::max(1.0f, 1.9f * s);
-            const Color c = dim ? Fade(kInk, 0.4f) : kInk;
-            float lx = -0.8f, ly = 0.6f;
-            for (int i = 1; i <= 8; ++i) { // the quadratic (-.8,.6) (-.8,-.5) (.4,-.5)
-                const float q = i / 8.0f, u = 1 - q, nx = u * u * -0.8f + 2 * u * q * -0.8f + q * q * 0.4f, ny = u * u * 0.6f + 2 * u * q * -0.5f + q * q * -0.5f;
-                dl.Line(cx + lx * h, cy + ly * h, cx + nx * h, cy + ny * h, w, c);
-                lx = nx, ly = ny;
-            }
-            dl.Line(cx + 0.4f * h, cy - 0.5f * h, cx + 0.1f * h, cy - 0.85f * h, w, c);
-            dl.Line(cx + 0.4f * h, cy - 0.5f * h, cx + 0.1f * h, cy - 0.15f * h, w, c);
+            redoGlyph(rx, y, kB, dim);
             if (hit && !dim && t.Redo()) sfx(0.8f), out.changed = true, say("Redo");
         }
         rx -= kGap + kB;
@@ -225,6 +547,11 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
             rx -= kGap + 56;
             if (textButton(rx, y, 56, kB, "End", false)) t.Cancel(), sfx(0.65f), out.changed = true, say("Road ended: the next tap starts a new one");
         }
+        if (tablet) { // [road ux] down to the slim strips
+            rx -= kGap + 52;
+            if (textButton(rx, y, 52, kB, "Mini", false)) st.mini = true, st.pop = 0, sfx(0.75f), out.changed = true, say("Mini toolkit: the expand button brings the panel back");
+        }
+        P.Text(rail ? "Rail Tools" : "Road Tools", x0, y + kB * 0.5f, 14, kInk, true, 0, rx - x0 - 6);
         y += kB + kRowGap;
     }
     // ---- Tool Mode
@@ -302,31 +629,21 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
             if (button(bx, y, kB, kB, Icon::ChevronUp, false, !t.parallel)) t.NudgeParallel(1), sfx(1.1f), out.changed = true;
             y += kB + kRowGap;
         }
-        // ---- Snapping: all + seven
+        // ---- Snapping: all + eight (the last: connection snaps)
         {
-            struct S {
-                Icon icon;
-                uint32_t bit;
-                const char* name;
-            };
-            static const S k[] = {{Icon::SnapAll, 0, "All snapping"},
-                                  {Icon::SnapGeometry, city::SnapGeometry, "Existing geometry"},
-                                  {Icon::SnapLength, city::SnapLength, "Cell length (8 m)"},
-                                  {Icon::SnapStraight, city::SnapStraight, "Straight directions (15 / 90 deg)"},
-                                  {Icon::SnapNetSide, city::SnapNetSide, "Building sides (zone-cell distances)"},
-                                  {Icon::SnapGuide, city::SnapGuide, "Guidelines"},
-                                  {Icon::SnapZone, city::SnapZone, "Zone grid"},
-                                  {Icon::SnapContour, city::SnapContour, "Contour lines"}};
+            const SnapDef* k = Snaps();
             int on = 0;
-            for (int i = 1; i < 8; ++i) on += t.On(k[i].bit) ? 1 : 0;
+            for (int i = 1; i < kSnapCount; ++i) on += t.On(k[i].bit) ? 1 : 0;
             char right[24];
-            std::snprintf(right, sizeof(right), t.snapAll ? "%d of 7 on" : "off", on);
+            std::snprintf(right, sizeof(right), t.snapAll ? "%d of %d on" : "off", on, kSnapCount - 1);
             label(x0, y, "Snapping", right);
             y += kLabelH;
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < kSnapCount; ++i) {
                 const float bx = x0 + i * (kB + kGap);
                 const bool lit = i == 0 ? t.snapAll : t.snapAll && (t.snaps & k[i].bit) != 0;
-                if (button(bx, y, kB, kB, k[i].icon, lit, i > 0 && !t.snapAll)) {
+                const bool hit = button(bx, y, kB, kB, k[i].icon, lit, i > 0 && !t.snapAll);
+                if (k[i].icon == Icon::None) DrawConnectGlyph(dl, (bx + kB * 0.5f) * s, (y + kB * 0.5f) * s, std::round(kB * 0.5f * s), std::max(1.0f, 1.9f * s), i > 0 && !t.snapAll ? Fade(kInk, 0.4f) : kInk);
+                if (hit) {
                     if (i == 0) t.snapAll = !t.snapAll;
                     else t.ToggleSnap(k[i].bit);
                     const bool now = i == 0 ? t.snapAll : (t.snaps & k[i].bit) != 0;

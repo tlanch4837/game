@@ -93,7 +93,7 @@ void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
     Tapper T{g, g_state};
     const Input& in = g.In();
     auto R = [&](float rx, float ry, float rw, float rh) { return Rect{rx * s, ry * s, rw * s, rh * s}; };
-    const float W = in.viewW / s, H = in.viewH / s;
+    const float W = in.viewW / s - g_model.safe.R(), H = in.viewH / s, top = 16.0f + g_model.safe.T(); // [safe area]
     const bool onAir = h.onAir && h.radioMode > 0;
     auto toggle = [&](bool open) {
         g_newsPill.expanded = open, g_newsPref = open ? 1 : 0;
@@ -107,7 +107,7 @@ void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
         else if (g_newsPill.unread > 0) std::snprintf(count, sizeof(count), "%d", g_newsPill.unread);
         const float cw = count[0] ? std::max(18.0f, P.TextW(count, 10.5f, true) + 10.0f) : 0.0f;
         const float pw = 12.0f + icon + 7.0f + P.TextW("News", label, true) + (cw > 0 ? 7.0f + cw : 0.0f) + (onAir ? 13.0f : 0.0f) + 12.0f;
-        const float x = W - 16.0f - pw, y = 16.0f, cy = y + ph * 0.5f;
+        const float x = W - 16.0f - pw, y = top, cy = y + ph * 0.5f;
         bool held = false;
         if (T.Tap(R(x, y, pw, ph), &held)) {
             if (palette) // the news over the palette: the palette goes, the card opens
@@ -130,7 +130,7 @@ void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
         return;
     }
     // the open card: up to 3 headlines, 6 with More, never taller than the top half of the screen
-    const float w = std::min(300.0f, W - 32.0f), pad = 14.0f, x = W - 16.0f - w, y = 16.0f;
+    const float w = std::min(300.0f, W - 32.0f), pad = 14.0f, x = W - 16.0f - w, y = top;
     const float textSize = 13.0f, metaSize = 10.5f, lineH = 17.0f, innerW = w - 2 * pad, chipH = 28.0f;
     auto wrap = [&](const std::string& text) {
         std::vector<std::string> out;

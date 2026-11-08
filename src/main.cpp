@@ -51,6 +51,8 @@
 #include "gui/terrain_toolbar.h" // its first user: the terrain sandbox toolbar
 #include "gui/glass_dock.h"    // Glass Dock+: the mobile / tablet GUI (game/glass_dock_host.inl)
 #include "gui/road_toolkit.h"  // [road toolkit] the road / rail touch panel + palette (game/glass_dock_host.inl RoadKit)
+#include "gui/road_reticle.h"  // [road ux] the aim dot (game/glass_dock_host.inl RoadKit)
+#include "gui/terrain_kit.h"   // [road ux] the compact terrain tools (game/glass_dock_host.inl TerrainKit)
 #include "gui/city_hud.h"      // the CS2-style bottom toolbar, status bar and side icons
 #include "gui/city_overlays.h"     // the info overlays' toggles and legend
 #include "gui/zone_toolbar.h"     // zoning (src/city/zoning.h): zone painting, growth, the game clock
