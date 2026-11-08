@@ -108,7 +108,8 @@ struct Model {
     std::string tool, toolCost, toolIcon, modeName, modeIcon;
     std::vector<std::pair<std::string, std::string>> toolOpts; // (name, icon) shown on the placement bar
     // the settings
-    bool sound = true;
+    bool sound = true; // the UI ticks (follows the Effects volume)
+    int volume[5] = {100, 70, 80, 100, 100}; // the Sound page, percent: Master, Music, Ambience, Effects, Radio
     tbd::gfx::Settings gfx; // the preset and the individual graphics options (src/gfx_settings.h)
     int textSize = 0; // 0 normal, 1 large
     bool edgePan = true;
@@ -153,6 +154,7 @@ struct State {
     bool open = false;     // Phone UI: the menus are out
     float openT = 1;
     bool menu = false, settings = false, gfx = false; // gfx: the Graphics page inside Settings
+    bool snd = false;      // the Sound page inside Settings (the volumes)
     float menuT = 1;
     float scroll = 0, scrollMax = 0; // the tile area: PC UI pad vertical, phone horizontal; Phone UI vertical
     bool drag = false;
@@ -828,6 +830,9 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         static const char* const kDist[] = {"Near", "Med", "Far"};
         static const char* const kLight[] = {"Full", "Fast", "Unlit"};
         static const char* const kText[] = {"Normal", "Large"};
+        static const char* const kVol[] = {"Off", "25%", "50%", "75%", "100%"};
+        static const char* const kVolName[] = {"Master", "Music", "Ambience", "Effects", "Radio"};
+        static const char* const kVolIcon[] = {"star", "play", "layers", "gear", "info"};
         // A settings row is the icon, its label and a segmented choice on the right: the card is as wide as the widest row
         // needs (the touch layout's 1.3x and Large text's 1.15x text made the Graphics rows' choices run over their labels).
         auto rowNeed = [&](const char* label, const char* const* opts, int n) {
@@ -835,14 +840,16 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             for (int i = 0; i < n; ++i) w += P.TextW(opts[i], 11, true) + 16;
             return w;
         };
-        float cardW = padSizes ? 340 : (st.gfx ? 330 : 260);
+        float cardW = padSizes ? 340 : (st.gfx || st.snd ? 330 : 260);
         if (st.settings) {
             float need = 0;
-            if (st.gfx) {
+            if (st.snd) {
+                need = rowNeed("Ambience", kVol, 5);
+            } else if (st.gfx) {
                 need = std::max({rowNeed("Preset", kPresetC, 5), rowNeed("Resolution", kRes, 5), rowNeed("Effects", kTier, 5), rowNeed("Buildings", kTier, 5),
                                  rowNeed("Draw distance", kDist, 3), rowNeed("Sun shadows", kOnOff, 2), rowNeed("Lighting mode", kLight, 3)});
             } else {
-                need = std::max({rowNeed("Sound effects", kOnOff, 2), rowNeed("Graphics", kPreset, 4), rowNeed("Text size", kText, 2), rowNeed("Edge pan", kOnOff, 2)});
+                need = std::max({rowNeed("Graphics", kPreset, 4), rowNeed("Text size", kText, 2), rowNeed("Edge pan", kOnOff, 2)});
             }
             cardW = std::min(std::max(cardW, need), W - 24);
         }
@@ -895,11 +902,12 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             const float cardH = 66;
             const float rowH = st.gfx ? std::min(bh, (H - 80.0f) / 9.0f - gap) : bh; // the Graphics page has eight rows
             const float total = st.gfx ? 13 * 1.4f + 6 + 8 * (rowH + gap)
+                              : st.snd ? 13 * 1.4f + 6 + 6 * (rowH + gap)
                                        : 13 * 1.4f + 6 + 13 * 1.4f + cardH + gap + 5 * (rowH + gap) + rowH;
             float y = (H - total) * 0.5f;
-            title(st.gfx ? "Graphics" : "Settings", y + 9, 13, kMuted, true, false);
+            title(st.gfx ? "Graphics" : st.snd ? "Sound" : "Settings", y + 9, 13, kMuted, true, false);
             y += 13 * 1.4f + 6;
-            if (!st.gfx) { title("Interface", y + 6, 13, kMuted, false, false); y += 13 * 1.4f; }
+            if (!st.gfx && !st.snd) { title("Interface", y + 6, 13, kMuted, false, false); y += 13 * 1.4f; }
             const float hw = (cardW - 8) * 0.5f;
             auto card = [&](float x, bool on, const std::string& icon, const std::string& name, const std::string& sub) {
                 const Rect r = btnRect(x, y, hw, cardH);
@@ -911,7 +919,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 P.Text(sub, X0 + 10 * popScale, Y0 + (10 + 22 + 2 + 16 + 7) * popScale, 10 * popScale, Fade(kInk, 0.65f));
                 return tap;
             };
-            if (!st.gfx) {
+            if (!st.gfx && !st.snd) {
                 if (card(x0, !st.pcUi, "up", "Phone UI", "Hidden dock, thumb reach") && st.pcUi) st.pcUi = false, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
                 if (card(x0 + hw + 8, st.pcUi, "gear", "PC UI", "Full CS2-style bar") && !st.pcUi) st.pcUi = true, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
                 y += cardH + gap;
@@ -939,7 +947,18 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 return picked;
             };
             int v;
-            if (st.gfx) {
+            if (st.snd) {
+                // Sound: a volume per bus in quarter steps (the host saves percent and applies them, glass_dock_host.inl)
+                for (int i = 0; i < 5; ++i) {
+                    const int cur = std::clamp((m.volume[i] + 12) / 25, 0, 4);
+                    if ((v = row(kVolIcon[i], kVolName[i], kVol, 5, cur)) >= 0 && v != cur) {
+                        m.volume[i] = v * 25, out.settingsChanged = true;
+                        if (i == 3) m.sound = v > 0; // the UI ticks follow Effects
+                        sfx(0.9f + 0.1f * v);
+                    }
+                }
+                if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.snd = false, sfx(0.65f);
+            } else if (st.gfx) {
                 // Graphics: a preset, or every option on its own. Touching any option makes the preset Custom.
                 tbd::gfx::Settings& G = m.gfx;
                 auto custom = [&](int& field, int val) { field = val, G.preset = tbd::gfx::kCustom, out.settingsChanged = true, sfx(1.3f); };
@@ -956,7 +975,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 if ((v = row("gear", "Lighting mode", kLight, 3, G.lighting)) >= 0) custom(G.lighting, v);
                 if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.gfx = false, sfx(0.65f);
             } else {
-                if ((v = row("star", "Sound effects", kOnOff, 2, m.sound ? 1 : 0)) >= 0) m.sound = v == 1, out.settingsChanged = true, sfx(1.3f);
+                if (drawBtn(x0, y, cardW, rowH, "star", m.volume[0] == 0 ? "Sound (muted)" : "Sound and music", 0, false)) st.snd = true, sfx(1.1f);
+                y += rowH + gap;
                 if ((v = row("layers", "Graphics", kPreset, 4, m.gfx.preset)) >= 0) tbd::gfx::ApplyPreset(m.gfx, v), out.settingsChanged = true, sfx(1.3f);
                 if (drawBtn(x0, y, cardW, rowH, "gear", m.gfx.preset == tbd::gfx::kCustom ? "Graphics options (Custom)" : "Graphics options", 0, false)) st.gfx = true, sfx(1.1f);
                 y += rowH + gap;

@@ -361,6 +361,28 @@ void ToolButton(const tbd::gui::dock::Out& o) {
 // The player's settings file (saves\settings.ini beside the game saves): the Graphics page's options, sound, text size, edge pan.
 // Until the file exists or the player touches a setting, the TBD_* environment switches rule the graphics as before.
 static bool g_settingsTouched = false;
+// The Sound page's volumes (percent) as settings.ini keys vol_master, vol_music, vol_ambience, vol_effects, vol_radio, and
+// onto the audio buses (tbd::audio::SetUserVolume: on top of the game's own bus levels).
+const char* const kVolumeKeys[5] = {"vol_master", "vol_music", "vol_ambience", "vol_effects", "vol_radio"};
+void LoadVolumes(const std::string& text) {
+    int v = 0;
+    for (int i = 0; i < 5; ++i)
+        if (tbd::gfx::Find(text, kVolumeKeys[i], v)) g_model.volume[i] = std::clamp(v, 0, 100);
+    g_model.sound = g_model.volume[3] > 0;
+}
+std::string SaveVolumes() {
+    std::string s;
+    for (int i = 0; i < 5; ++i) s += std::string(kVolumeKeys[i]) + "=" + std::to_string(g_model.volume[i]) + "\n";
+    return s;
+}
+void ApplyVolumes() {
+    using tbd::audio::Bus;
+    const Bus bus[5] = {Bus::Master, Bus::Music, Bus::Ambience, Bus::Sfx, Bus::Radio};
+    for (int i = 0; i < 5; ++i) {
+        const float k = (float)g_model.volume[i] / 100.0f;
+        tbd::audio::SetUserVolume(bus[i], k * k); // a loudness-like curve: 50% is about -12 dB
+    }
+}
 static std::string g_gfxPrev; // the Graphics page's options as last applied: a change here is what hands the graphics over to the player
 std::wstring SettingsFilePath() {
     const std::wstring dir = tbd::Join(g_engine.projectFolder.empty() ? tbd::ExeDirectory() : g_engine.projectFolder, L"saves");
@@ -380,7 +402,8 @@ void LoadSettingsFile() {
     fclose(f);
     int v = 0;
     if (tbd::gfx::Find(text, "preset", v)) tbd::gfx::Parse(text, g_model.gfx), g_settingsTouched = true;
-    if (tbd::gfx::Find(text, "sound", v)) g_model.sound = v != 0;
+    if (tbd::gfx::Find(text, "sound", v)) g_model.sound = v != 0, g_model.volume[3] = v != 0 ? g_model.volume[3] : 0; // older files: on / off
+    LoadVolumes(text);
     if (tbd::gfx::Find(text, "text", v)) g_model.textSize = std::clamp(v, 0, 1);
     if (tbd::gfx::Find(text, "edgepan", v)) g_model.edgePan = v != 0;
 }
@@ -388,7 +411,7 @@ void SaveSettingsFile() {
     FILE* f = tbd::platform::WOpen(SettingsFilePath().c_str(), L"wb");
     if (!f) return;
     const std::string text = tbd::gfx::Serialize(g_model.gfx) + "sound=" + (g_model.sound ? "1" : "0") + "\ntext=" + std::to_string(g_model.textSize) +
-                             "\nedgepan=" + (g_model.edgePan ? "1" : "0") + "\n";
+                             "\nedgepan=" + (g_model.edgePan ? "1" : "0") + "\n" + SaveVolumes();
     fwrite(text.data(), 1, text.size(), f);
     fclose(f);
 }
@@ -406,6 +429,7 @@ void ApplySettings(tbd::Renderer& r) {
         SetMaxGraphics(s.preset == tbd::gfx::kUltra && s.lighting == 0); // Ultra keeps the MAX look
     }
     tbd::audio::SetBusVolume(tbd::audio::Bus::Sfx, g_model.sound ? 1.0f : 0.0f);
+    ApplyVolumes();
 }
 
 // The device the layout is for, and its points-to-pixels scale.
@@ -538,6 +562,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
                 else if (tok == "open") g_state.open = true;
                 else if (tok == "pause") g_state.menu = true;
                 else if (tok == "settings") g_state.menu = g_state.settings = true;
+                else if (tok == "sound") g_state.menu = g_state.settings = g_state.snd = true;
                 else if (tok.rfind("cat=", 0) == 0) {
                     for (size_t c = 0; c < g_model.cats.size(); ++c)
                         if (g_model.cats[c].id == tok.substr(4)) g_state.cat = (int)c, g_state.catT = 0, g_state.open = true;
