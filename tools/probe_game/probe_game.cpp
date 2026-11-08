@@ -57,6 +57,7 @@
 #include "city/sim_budget.h"
 #include "city/sim_milestones.h"
 #include "city/news_feed.h"
+#include "city/news_adjacency.h"   // a new building's neighbours in its radio story (city_radio.inl)
 #include "city/sim_flow.h"
 #include "city/sim_agents.h"
 #include "city/sim_people.h"

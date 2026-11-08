@@ -147,16 +147,18 @@ void Headline(const std::string& trigger, bool aired) {
 }
 
 // Plays a trigger now if the cooldowns allow. Every trigger makes a headline and counts toward the week either way.
-void Post(const std::string& trigger, bool force = false) {
+// headline: the trigger whose written line goes into the feed instead (an opening's unvoiced neighbour roast).
+void Post(const std::string& trigger, bool force = false, const std::string& headline = std::string()) {
+    const std::string& written = headline.empty() ? trigger : headline;
     NoteWeek(trigger);
-    if (g.mode == 0) { Headline(trigger, false); return; }
+    if (g.mode == 0) { Headline(written, false); return; }
     const double now = g_clock.minutes;
     auto it = g.lastByTrigger.find(trigger);
     const bool sameOk = it == g.lastByTrigger.end() || now - it->second >= kSameTriggerDays * kDay;
     const bool gapOk = now - g.lastClipMinute >= kMinGapDays * kDay && g.realSinceClip >= kMinGapReal && !tbd::audio::RadioBusy();
     if (!force && !(sameOk && gapOk)) {
         if (g.log) tbd::Log("Radio: %s held back (cooldown)", trigger.c_str());
-        Headline(trigger, false);
+        Headline(written, false);
         return;
     }
     const std::string stem = FileStem(trigger);
@@ -167,7 +169,7 @@ void Post(const std::string& trigger, bool force = false) {
         else if (r < 0.55f && WithConvo().count(trigger)) seq.push_back("radio/convo_" + stem);
     }
     tbd::audio::PlayRadio(seq, 0.9f);
-    Headline(trigger, true);
+    Headline(written, true);
     g.lastByTrigger[trigger] = now;
     g.lastClipMinute = now;
     g.realSinceClip = 0.0;
@@ -214,6 +216,50 @@ std::string TransportTrigger(const tbd::city::BuildingDef& d) {
     }
 }
 
+// Neighbour pairs with recorded clips (assets/audio/radio/adj_*); the other pairs are written lines only.
+const std::set<std::string>& VoicedPairs() {
+    static const std::set<std::string> s = {"adj:residential+industry", "adj:residential+landfill", "adj:school+industry"};
+    return s;
+}
+constexpr float kNear = 160.0f; // metres: "next to" for the neighbour pairs
+
+// The kinds of what stands near p (each once): zoned homes, shops and offices, industry, and the other placed buildings.
+std::vector<std::string> Neighbours(tbd::city::V2 p, uint64_t self) {
+    using namespace tbd::city;
+    std::vector<std::string> out;
+    auto add = [&out](const char* k) {
+        if (k && k[0] && std::find(out.begin(), out.end(), k) == out.end()) out.push_back(k);
+    };
+    const float r2 = kNear * kNear;
+    const auto& types = ZoneTypes();
+    for (const Lot& l : g_zones.lots) {
+        if (!l.alive || !l.Built() || l.type < 0 || l.type >= (int)types.size()) continue;
+        const float dx = l.c.x - p.x, dz = l.c.z - p.z;
+        if (dx * dx + dz * dz > r2) continue;
+        const ZoneCat c = types[(size_t)l.type].cat;
+        add(c == ZoneCat::Residential ? "residential" : c == ZoneCat::Industrial ? "industry" : "commercial");
+    }
+    for (const auto& b : g_transport.items) {
+        if (!b.alive || b.id == self || b.state != BState::Done) continue;
+        const float dx = b.c.x - p.x, dz = b.c.z - p.z;
+        if (dx * dx + dz * dz <= r2) add(::city::BuildingKind(Defs()[b.def].name));
+    }
+    for (const auto& u : g_util.items) {
+        if (!u.alive || u.id == self) continue;
+        const float dx = u.c.x - p.x, dz = u.c.z - p.z;
+        if (dx * dx + dz * dz <= r2) add(::city::BuildingKind(UtilDefs()[u.def].name));
+    }
+    return out;
+}
+
+// A building opened: one story (news_adjacency.h), a clip and a headline at most.
+void Opened(const char* name, tbd::city::V2 at, uint64_t id, const std::string& own) {
+    const ::city::OpeningStory s = ::city::PickOpeningStory(::city::BuildingKind(name), own, Neighbours(at, id), g.news, VoicedPairs());
+    if (g.log && s.headline != own) tbd::Log("Radio: %s opened beside %s", name, s.headline.c_str());
+    if (!s.clip.empty()) Post(s.clip, false, s.headline);
+    else if (!s.headline.empty()) Headline(s.headline, false); // written only: no clip, not in the week
+}
+
 // Takes the city as it stands as "already announced" (a load or a new map must not read out every building).
 void Baseline() {
     g.transportState.clear();
@@ -244,18 +290,14 @@ void Watch() {
         auto it = g.transportState.find(b.id);
         const uint8_t was = it == g.transportState.end() ? 0xff : it->second;
         g.transportState[b.id] = (uint8_t)b.state;
-        if (b.state == BState::Done && was != (uint8_t)BState::Done) {
-            const std::string t = TransportTrigger(Defs()[b.def]);
-            if (!t.empty()) Post(t);
-        }
+        if (b.state == BState::Done && was != (uint8_t)BState::Done) Opened(Defs()[b.def].name, b.c, b.id, TransportTrigger(Defs()[b.def]));
     }
     // power and water buildings (not the backup ones)
     for (const auto& u : g_util.items) {
         if (!u.alive || !g.utilSeen.insert(u.id).second) continue;
         const UtilDef& D = UtilDefs()[u.def];
         if (D.backup) continue;
-        if (D.kind == Util::Electricity) Post("power_plant_built");
-        else if (D.kind == Util::Water) Post("water_tower_built");
+        Opened(D.name, u.c, u.id, D.kind == Util::Electricity ? "power_plant_built" : D.kind == Util::Water ? "water_tower_built" : "");
     }
     // transit: a new line, the first bus stops
     for (const auto& r : g_transit.routes)

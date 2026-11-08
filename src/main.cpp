@@ -67,6 +67,7 @@
 #include "city/sim_budget.h"       // the city sim's ledger: itemised expenses, loans, bankruptcy
 #include "city/sim_milestones.h"   // population milestones and the tools they unlock
 #include "city/news_feed.h"        // news headlines for sim events (the radio reads its queue)
+#include "city/news_adjacency.h"   // a new building's neighbours in its radio story (city_radio.inl)
 #include "city/sim_flow.h"         // the city sim's flow traffic: vehicles per hour per road segment
 #include "city/sim_agents.h"       // cosmetic cars driven by the flow (not simulated)
 #include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters

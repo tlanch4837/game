@@ -53,6 +53,20 @@ public:
 
     size_t Count() const { return lines_.size(); }
 
+    // True when the file has at least one line for the trigger.
+    bool Has(const std::string& trigger) const {
+        for (const NewsLine& l : lines_)
+            if (l.trigger == trigger) return true;
+        return false;
+    }
+    // > 0 mostly good lines, < 0 mostly bad, 0 mixed or none.
+    int Tone(const std::string& trigger) const {
+        int t = 0;
+        for (const NewsLine& l : lines_)
+            if (l.trigger == trigger) t += l.tone == "good" ? 1 : l.tone == "bad" ? -1 : 0;
+        return t > 0 ? 1 : t < 0 ? -1 : 0;
+    }
+
 private:
     std::vector<NewsLine> lines_;
     std::unordered_map<std::string, std::vector<int>> played_;
