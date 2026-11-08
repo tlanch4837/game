@@ -211,6 +211,7 @@ public:
         return true;
     }
     bool CanUndo() const { return !undo_.empty(); }
+    bool CanRedo() const { return !redo_.empty(); }
 
     // ---- scripted building (demo towns, tests): no snapping, crossings still make intersections
     static int AssetIndex(const char* name) {
