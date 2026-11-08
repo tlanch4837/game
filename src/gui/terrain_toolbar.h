@@ -14,7 +14,7 @@
 namespace tbd {
 namespace gui {
 
-enum class TerrainBrushMode { Raise = 0, Dig = 1, Flatten = 2 }; // what a plain left drag does
+enum class TerrainBrushMode { Raise = 0, Dig = 1, Flatten = 2, Smooth = 3 }; // what a plain left drag does (Smooth: the touch kit, gui/terrain_kit.h)
 
 struct TerrainToolbarState {
     bool* editOn = nullptr;    // g_terrainEdit.on
