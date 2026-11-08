@@ -2071,7 +2071,6 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
     if (!gdock::Legacy()) { // Glass Dock+: its bar, panels and placement bar replace the HUD and the tools' panels
         gdock::Frame(r, hud);
-        tbd::gui::CityNewsPanel(g_gui, hud); // top right: the headlines the radio is talking about
         RadioHudRead(hud);
         SimHudRead(hud);
         g_gui.EndFrame();

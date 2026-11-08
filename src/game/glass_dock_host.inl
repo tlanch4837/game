@@ -422,6 +422,87 @@ void DeviceAndScale(float& scale) {
 }
 
 // One frame of the dock: replaces the CS2 HUD and the tools' own panels. Returns true when it ran.
+// The City News card (city_radio.inl fills hud.news): a glass card at the top right, the newest headline first.
+// Collapsed it shows only the latest; its two chips toggle that and cycle the radio (on / host only / off).
+void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
+    using namespace tbd::gui;
+    using namespace tbd::gui::dock;
+    if (menuOpen || h.options) return;
+    Context& g = g_gui;
+    const float s = g.Scale();
+    Painter P(g, g_atlas, s);
+    Tapper T{g, g_state};
+    const Input& in = g.In();
+    auto R = [&](float rx, float ry, float rw, float rh) { return Rect{rx * s, ry * s, rw * s, rh * s}; };
+    const float W = in.viewW / s;
+    const float w = std::min(320.0f, W - 32.0f), pad = 14.0f, x = W - 16.0f - w, y = 16.0f;
+    const float textSize = 13.0f, metaSize = 10.5f, lineH = 17.0f, innerW = w - 2 * pad;
+    auto wrap = [&](const std::string& text) {
+        std::vector<std::string> out;
+        std::string line, word;
+        auto flush = [&] {
+            if (word.empty()) return;
+            const std::string t = line.empty() ? word : line + " " + word;
+            if (!line.empty() && P.TextW(t, textSize) > innerW) out.push_back(line), line = word;
+            else line = t;
+            word.clear();
+        };
+        for (char c : text) { if (c == ' ') flush(); else word += c; }
+        flush();
+        if (!line.empty()) out.push_back(line);
+        return out;
+    };
+    const size_t shown = h.newsOpen ? std::min<size_t>(h.news.size(), 5) : std::min<size_t>(h.news.size(), 1);
+    std::vector<std::vector<std::string>> lines;
+    float hgt = pad + 18.0f + 8.0f; // title row
+    if (h.news.empty()) lines.push_back(wrap("Quiet day. Build something and the city will talk about it.")), hgt += lineH * lines[0].size() + 4;
+    for (size_t i = 0; i < shown; ++i) {
+        lines.push_back(wrap(h.news[i].text));
+        hgt += 15.0f + lineH * lines.back().size() + (i + 1 < shown ? 10.0f : 4.0f);
+    }
+    const float chipH = 28.0f;
+    hgt += 8.0f + chipH + pad;
+    P.Glass(x, y, w, hgt, 18, kPanel, 22, 1.6f, true);
+    float cy = y + pad + 9.0f;
+    P.Text("CITY NEWS", x + pad, cy, 12.0f, kInk, true);
+    if (h.onAir && h.radioMode > 0) {
+        const float tw = P.TextW("ON AIR", 10.5f, true);
+        P.dl.Circle((x + w - pad - tw - 9) * s, cy * s, 3.5f * s, P.F(Rgba(255, 69, 58)));
+        P.Text("ON AIR", x + w - pad, cy, 10.5f, Rgba(255, 105, 97), true, 1.0f);
+    }
+    cy += 9.0f + 8.0f;
+    P.Box(x + pad, cy - 4.0f, innerW, 1.0f, 0, kBorder);
+    if (h.news.empty()) {
+        for (const std::string& l : lines[0]) P.Text(l, x + pad, cy + lineH * 0.5f, textSize, kMuted), cy += lineH;
+        cy += 4;
+    }
+    for (size_t i = 0; i < shown; ++i) {
+        const CityHud::NewsItem& it = h.news[i];
+        const Color dot = it.tone > 0 ? Rgba(48, 209, 88) : it.tone < 0 ? Rgba(255, 159, 10) : Rgba(255, 255, 255, 120);
+        P.dl.Circle((x + pad + 3) * s, (cy + 7.5f) * s, 3.0f * s, P.F(dot));
+        P.Text(it.when + (it.aired ? "   ON THE RADIO" : ""), x + pad + 12, cy + 7.5f, metaSize, kMuted, it.aired);
+        cy += 15.0f;
+        for (const std::string& l : lines[h.news.empty() ? i + 1 : i]) P.Text(l, x + pad, cy + lineH * 0.5f, textSize, i == 0 ? kInk : kBarInk), cy += lineH;
+        cy += i + 1 < shown ? 10.0f : 4.0f;
+    }
+    cy += 4.0f;
+    // the chips
+    auto chip = [&](float cx, const char* label, bool on) {
+        const float cw = P.TextW(label, 11.5f, true) + 24.0f;
+        bool held = false;
+        const bool tap = T.Tap(R(cx, cy, cw, chipH), &held);
+        P.Box(cx, cy, cw, chipH, chipH * 0.5f, on ? Fade(kAccent, 0.85f) : held ? Rgba(255, 255, 255, 60) : kChip);
+        P.Text(label, cx + cw * 0.5f, cy + chipH * 0.5f, 11.5f, kInk, true, 0.5f);
+        return std::pair<bool, float>{tap, cw};
+    };
+    auto [moreTap, mw] = chip(x + pad, h.newsOpen ? "Less" : "More", false);
+    if (moreTap) h.newsOpen = !h.newsOpen, tbd::audio::PlayUi("sfx/ui_category_select", 0.5f, 0.8f);
+    static const char* const kMode[] = {"Radio off", "Host only", "Radio on"};
+    auto [modeTap, rw] = chip(x + pad + mw + 8.0f, kMode[std::clamp(h.radioMode, 0, 2)], h.radioMode == 2);
+    if (modeTap) h.radioMode = (h.radioMode + 2) % 3, tbd::audio::PlayUi("sfx/ui_category_select", 0.5f, 1.0f);
+    (void)rw;
+}
+
 bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     static bool built = false;
     if (!built) { // the atlas came in with the font (outside a frame: InitGameGui)
@@ -494,6 +575,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     // the pause menu pauses the sim under it
     if (o.menuOpen && !g_menuPaused && !g_clock.paused) g_menuPaused = true, g_clock.paused = true;
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;
+    NewsCard(hud, o.menuOpen);
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
     return true;
 }
