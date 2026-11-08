@@ -2,8 +2,18 @@
 // The display link runs the frames while the scene is active; touches become the game's pointer input.
 //
 // Touch scheme (CS2 / Maps style; the city camera's limits are in src/city_camera.h):
-//   one finger on the GUI or with a build tool out   the left button (press, draw, place) - unchanged;
-//   one finger on the city otherwise                 a drag pans (the ground follows the finger), a tap selects (a click);
+//   one finger on the GUI, or with a tool that draws  the left button (press, drag, release): roads / rails, zoning, utility
+//                                                    lines, transit lines, terrain, bulldoze's Zone area box, the rotate dial;
+//   one finger on the city otherwise                 a drag pans (the ground follows the finger); only a TAP acts: it lifts
+//                                                    within 0.45 s and never travels 10 pt (src/game/touch_gesture.h; a
+//                                                    slow press that does not move does nothing). That covers no tool (a tap
+//                                                    opens the info card of what is under it), bulldoze's Tap mode (the first
+//                                                    tap marks the target red, a second tap on it or the check demolishes) and
+//                                                    a BUILDING being placed (utilities, services, transport, industry, waste;
+//                                                    roads and rails have the road tool's aiming): the ghost waits in the middle
+//                                                    of the view, a tap puts it where the finger landed, a tap on the ghost or
+//                                                    the placement bar's check builds it. A pan never builds anything.
+//   (game_host.cpp TouchBuilds asks city_interact.inl TouchFingerDraws which of the two a tool is.)
 //   two fingers, after 12 pt of movement, lock into ONE of two gestures until a finger lifts:
 //     TILT   both fingers move the same way vertically (each mostly vertical, their spacing and angle nearly unchanged):
 //            fingers up = tilt toward the horizon / street level, fingers down = toward straight down (top-down);
@@ -12,9 +22,10 @@
 // Why a lock and not "centre vertical = tilt" at all times: a two-finger pan always has some vertical centre movement, so
 // tilt and pan would fight on every drag. Locking on the first 12 pt decides once and is never ambiguous afterwards; a pure
 // vertical two-finger drag is tilt (as in Apple / Google Maps), pans use one finger, or two fingers off the vertical.
-// Turning a building while it is placed is NOT a gesture: a twist always turns the camera (above), so a twist that turned
-// the ghost instead would change meaning with the tool. The placement bar's two rotate buttons do it, 90 degrees a tap
-// (Rotate / Rotate back; src/game/glass_dock_host.inl, city_industry.inl BuildingRotate). On the PC: R / Shift+R.
+// Turning a building while it is placed is NOT a twist: a twist always turns the camera (above). The placement bar's Rotate
+// toggle does it: the ghost locks, a ring shows its old facing (green) and its new one (blue) with the degrees, and ONE finger
+// dragging anywhere turns it by the change of its bearing around the ghost; the Snap switch (shown every time) picks 15 degree
+// steps (90 on a road) or free; the check keeps it, the cross goes back (src/city_interact.inl). On the PC also R / Shift+R.
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
@@ -26,6 +37,7 @@
 #include <utility>
 
 #include "../../game/game_host.h"
+#include "../../game/touch_gesture.h"
 #include "../../platform/platform.h"
 #include "../../render/renderer.h"
 
@@ -52,6 +64,8 @@
     BOOL _toolDrag;       // the left button is down on the city with a build tool (not on the GUI): edge pan applies to it too
     CGPoint _fingerNow;   // the one dragging finger, device pixels, for the edge pan each frame
     CGPoint _start;       // where it landed, device pixels
+    NSTimeInterval _startTime; // when it landed (a tap lifts within tbd::touch::kTapMaxSeconds)
+    CGFloat _travel;      // the farthest it got from _start, device pixels
     CGFloat _twistAngle;  // the two fingers' angle last move
     BOOL _twoFinger;      // two fingers on the camera
     int _twoMode;         // 0 undecided (under the slop), 1 TILT, 2 MOVE (pan + pinch + twist; the middle button is down)
@@ -291,6 +305,8 @@ static CGFloat WrapAngle(CGFloat a) {
         _camera = YES;
         _panning = NO;
         _start = p;
+        _startTime = t.timestamp;
+        _travel = 0;
         return;
     }
     tbd::host::PointerDown(tbd::host::Button::Left, (float)p.x, (float)p.y);
@@ -308,8 +324,9 @@ static CGFloat WrapAngle(CGFloat a) {
     }
     if (_camera && [touches containsObject:_first]) {
         const CGPoint p = [self pixels:[_first locationInView:self.view]];
-        const CGFloat slop = 10.0 * self.view.contentScaleFactor; // 10 pt before a tap becomes a pan
-        if (!_panning && std::hypot(p.x - _start.x, p.y - _start.y) > slop) {
+        _travel = std::max(_travel, (CGFloat)std::hypot(p.x - _start.x, p.y - _start.y));
+        const float travelPt = tbd::touch::TravelPt((float)_travel, 0.0f, (float)[self pixelScale]);
+        if (!_panning && tbd::touch::Classify(travelPt, 0.0, false) == tbd::touch::Gesture::Drag) { // 10 pt: a pan, never a tap
             _panning = YES;
             _panCentre = _start;
             tbd::host::PointerDown(tbd::host::Button::Middle, (float)_start.x, (float)_start.y);
@@ -333,9 +350,14 @@ static CGFloat WrapAngle(CGFloat a) {
     if (_camera && [touches containsObject:_first]) {
         const CGPoint p = [self pixels:[_first locationInView:self.view]];
         if (_panning) tbd::host::PointerUp(tbd::host::Button::Middle, (float)p.x, (float)p.y);
-        else { // a tap: a click where it landed (selects a building, a road, a citizen)
-            tbd::host::PointerDown(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
-            tbd::host::PointerUp(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
+        else {
+            _travel = std::max(_travel, (CGFloat)std::hypot(p.x - _start.x, p.y - _start.y));
+            const float travelPt = tbd::touch::TravelPt((float)_travel, 0.0f, (float)[self pixelScale]);
+            if (tbd::touch::Classify(travelPt, _first.timestamp - _startTime, true) == tbd::touch::Gesture::Tap) {
+                // a tap: a click where it landed (info, bulldoze's mark, the placement ghost: src/city_interact.inl)
+                tbd::host::PointerDown(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
+                tbd::host::PointerUp(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
+            } // else a hold: nothing
         }
         _camera = _panning = NO;
         _first = nil;
