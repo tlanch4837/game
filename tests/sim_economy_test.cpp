@@ -156,6 +156,59 @@ int main() {
         CHECK(RoadUpkeepPerDay(2500.0, 40.0) == 10000); // 2.5 km at 40 a km
     }
 
+    // Construction charges, lane-metres, the population history and the save fields (sim_budget.h).
+    {
+        CitySim s;
+        SimTuning t;
+        SimEconomy e;
+        e.Reset(t);
+        e.treasury = 50000;
+        SimBudget b;
+        b.Charge(e, 20000);
+        CHECK(e.treasury == 30000 && b.constructionToday == 20000 && !b.bankrupt);
+        b.Charge(e, 0);
+        b.Charge(e, -5);
+        CHECK(e.treasury == 30000);
+        b.Charge(e, 40000); // into the red at once: the warning, the build goes on
+        CHECK(e.treasury == -10000 && b.bankrupt && b.events.size() == 1 && b.events[0] == "bankrupt");
+        b.events.clear();
+        b.Day(e, s, t, DayUpkeep{}, 1234);
+        CHECK(b.lastConstruction == 60000 && b.constructionToday == 0);
+        CHECK(b.LastExpenses() == 0);       // construction is not a running expense
+        CHECK(e.treasury == -10000);        // and it is not charged twice by the day
+        b.Day(e, s, t, DayUpkeep{}, 1300);
+        CHECK(b.lastConstruction == 0);
+        int64_t pop[SimBudget::kHistory];
+        CHECK(b.PopHistory(pop, SimBudget::kHistory) == 2 && pop[0] == 1234 && pop[1] == 1300);
+        // lane-metres: a 2-lane km builds for 20,000 and costs 40 a day, as the old per-km rate did
+        CHECK(RoadLaneMetres(1000.0, 2) == 2000.0);
+        CHECK(RoadLaneMetres(100.0, 0) == 100.0); // a path counts as one lane
+        CHECK(RoadCost(RoadLaneMetres(1000.0, 2)) == 20000LL * 100);
+        CHECK(RoadUpkeepPerDay(RoadLaneMetres(1000.0, 2), kRoadUpkeepPerLaneKmDay) == 4000);
+        // save fields: loans, the warning and the history come back
+        e.treasury = 0;
+        CHECK(b.TakeLoan(2, e));
+        b.Day(e, s, t, DayUpkeep{}, 1400);
+        const std::string saved = b.SaveFields();
+        SimBudget c;
+        CHECK(c.LoadFields(saved));
+        CHECK(c.loans.size() == 1 && c.loans[0].tier == 2 && c.loans[0].owed == b.loans[0].owed && c.loans[0].daysLeft == b.loans[0].daysLeft);
+        CHECK(c.loans[0].instalment == b.loans[0].instalment && c.bankrupt == b.bankrupt);
+        CHECK(c.historyCount == b.historyCount);
+        int64_t h1[SimBudget::kHistory], h2[SimBudget::kHistory], p2[SimBudget::kHistory];
+        b.History(h1, SimBudget::kHistory), c.History(h2, SimBudget::kHistory), c.PopHistory(p2, SimBudget::kHistory);
+        bool same = true;
+        for (int i = 0; i < b.historyCount; ++i) same &= h1[i] == h2[i];
+        CHECK(same && p2[c.historyCount - 1] == 1400);
+        CHECK(saved.find('|') == std::string::npos && saved.find('\n') == std::string::npos);
+        CHECK(!c.LoadFields("garbage") && !c.LoadFields(""));
+        SimBudget d;
+        CHECK(d.LoadFields("B1;0;;")); // no loans, no history
+        CHECK(d.loans.empty() && d.historyCount == 0);
+        CHECK(d.LoadFields("B1;1;9 100 1 5,0 -4 1 5;x")); // a bad tier and a negative balance are dropped
+        CHECK(d.loans.empty() && d.bankrupt);
+    }
+
     // Efficiency: a cell without power pays half the tax.
     {
         std::vector<Lot> lots = {MakeLot(1, 10, 3, 6, 6)};

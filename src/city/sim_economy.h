@@ -7,7 +7,7 @@
 //   Expenses the upkeep the host hands in (utility buildings, service and transport buildings: catalog upkeep is per game
 //            month, charged a 30th a day), services scaled by their funding (50 .. 150 %).
 //   Demand   a rate above 10 % lowers that category's demand (taxDemandPerPoint per point), below raises it.
-// Construction costs are not charged yet (placing a building is free); see the S4 report.
+// Construction costs are charged at placement by SimBudget::Charge (sim_budget.h; the host calls it, city_sim.inl).
 #pragma once
 
 #include <algorithm>

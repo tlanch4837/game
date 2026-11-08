@@ -118,7 +118,32 @@ city::NewsFeed g_simNews;          // news_lines.json; sim events post triggers,
 std::string g_simBanner, g_simBannerSub; // the last milestone, for the HUD banner
 uint64_t g_simBannerAt = 0;
 double g_simMilestoneQuietUntil = 0; // game minutes: a load re-reaches its milestones silently, without rewards
-constexpr double kRoadUpkeepPerKmDay = 40.0; // whole currency per km of road per day
+std::vector<std::string> g_simNotes; // the Notifications panel's log, newest last (capped)
+
+// One line in the Notifications log, stamped with the HUD's calendar date.
+void SimNote(const std::string& text) {
+    static const char* const kMonth[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const int day0 = std::max(0, g_clock.Day() - 1);
+    char stamp[32];
+    std::snprintf(stamp, sizeof(stamp), "%s %d  ", kMonth[(day0 / 30) % 12], day0 % 30 + 1);
+    g_simNotes.push_back(stamp + text);
+    if (g_simNotes.size() > 40) g_simNotes.erase(g_simNotes.begin());
+}
+
+// Lane-metres of every live road and track (rail counts as two lanes, a path as one), recounted when the network changes.
+double SimRoadLaneMetres() {
+    static uint64_t lenFor = ~0ull;
+    static double sum = 0;
+    if (lenFor == g_roads.net.version) return sum;
+    lenFor = g_roads.net.version, sum = 0;
+    for (size_t i = 0; i < g_roads.net.segs.size(); ++i) {
+        if (!g_roads.net.segs[i].alive) continue;
+        const tbd::city::Profile& p = g_roads.net.Prof((int)i);
+        const int lanes = p.cat == tbd::city::Cat::Rail ? 2 : p.fwd + p.back;
+        sum += tbd::city::RoadLaneMetres(g_roads.net.Curve((int)i).Length(8), lanes);
+    }
+    return sum;
+}
 
 // A sim event for the radio anchor: event driven only, one headline per event, nothing on a timer.
 void RadioSimEvent(const char* trigger); // city_radio.inl
@@ -140,23 +165,59 @@ tbd::city::DayUpkeep SimDayUpkeep() {
         const int kind = SimServiceKind(d);
         up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale : 1.0);
     }
-    static uint64_t lenFor = ~0ull;
-    static double metres = 0;
-    if (lenFor != g_roads.net.version) {
-        lenFor = g_roads.net.version, metres = 0;
-        for (size_t i = 0; i < g_roads.net.segs.size(); ++i)
-            if (g_roads.net.segs[i].alive) metres += g_roads.net.Curve((int)i).Length(8);
-    }
-    up.roads = RoadUpkeepPerDay(metres, kRoadUpkeepPerKmDay);
+    up.roads = RoadUpkeepPerDay(SimRoadLaneMetres(), kRoadUpkeepPerLaneKmDay);
     return up;
+}
+
+// ---- construction charges: what was placed since the last frame is paid for once, at its catalog cost (roads by the
+// lane-metres added). A new map or a load is taken as it stands (free), like the radio's baseline, for 2 real seconds.
+void SimBudgetEvents(); // below
+namespace sim_build {
+std::unordered_set<uint64_t> transport, util;
+double laneMetres = -1.0;
+uint64_t roadVersion = ~0ull, generation = ~0ull;
+double settle = 0.0; // real seconds left of the baseline window
+int64_t chargedTotal = 0; // cents, since the session started (dev log)
+} // namespace sim_build
+void SimConstructionSync(float realDt) {
+    using namespace tbd::city;
+    namespace sb = sim_build;
+    if (sb::generation != g_cityGeneration) sb::generation = g_cityGeneration, sb::settle = 2.0, sb::laneMetres = -1.0;
+    const bool settling = sb::settle > 0.0;
+    if (settling) sb::settle -= realDt;
+    if (settling) sb::transport.clear(), sb::util.clear();
+    int64_t cost = 0;
+    for (const Placed& b : g_transport.items)
+        if (b.alive && sb::transport.insert(b.id).second) cost += (int64_t)Defs()[b.def].cost * 100;
+    for (const UtilBuilding& b : g_util.items)
+        if (b.alive && sb::util.insert(b.id).second) cost += (int64_t)UtilDefs()[b.def].cost * 100;
+    if (sb::roadVersion != g_roads.net.version || sb::laneMetres < 0.0) {
+        const double was = sb::laneMetres, now = SimRoadLaneMetres();
+        sb::roadVersion = g_roads.net.version, sb::laneMetres = now;
+        if (was >= 0.0 && now > was + 0.5) cost += RoadCost(now - was); // shortened or bulldozed roads: no refund
+    }
+    // demolished ones drop out of the sets once in a while (they stay the size of the city)
+    if (sb::transport.size() > g_transport.items.size() + 256) {
+        sb::transport.clear();
+        for (const Placed& b : g_transport.items) if (b.alive) sb::transport.insert(b.id);
+    }
+    if (sb::util.size() > g_util.items.size() + 256) {
+        sb::util.clear();
+        for (const UtilBuilding& b : g_util.items) if (b.alive) sb::util.insert(b.id);
+    }
+    if (settling || cost <= 0) return;
+    g_simBudget.Charge(g_simEcon, cost);
+    sb::chargedTotal += cost;
+    SimBudgetEvents(); // the bankruptcy warning, if this build emptied the treasury
 }
 
 // The budget's and the milestones' events into toasts and the news.
 void SimBudgetEvents() {
     for (const std::string& e : g_simBudget.events) {
-        if (e == "bankrupt") Toast("THE CITY IS BANKRUPT: RAISE TAXES, CUT COSTS OR TAKE A LOAN"), SimNews("bankrupt");
-        else if (e == "solvent") Toast("THE TREASURY IS BACK IN THE BLACK");
-        else if (e == "loan_taken") SimNews("loan_taken");
+        if (e == "bankrupt") Toast("THE CITY IS BANKRUPT: RAISE TAXES, CUT COSTS OR TAKE A LOAN"), SimNews("bankrupt"), SimNote("Bankrupt: the treasury is below zero");
+        else if (e == "solvent") Toast("THE TREASURY IS BACK IN THE BLACK"), SimNote("The treasury is back above zero");
+        else if (e == "loan_taken") SimNews("loan_taken"), SimNote("Loan taken");
+        else if (e == "loan_repaid") SimNote("Loan repaid early");
     }
     g_simBudget.events.clear();
 }
@@ -177,6 +238,7 @@ void SimMilestonesSync() {
     g_simBannerSub = std::to_string(last.population) + " residents.  +" + std::to_string((long long)(last.reward / 100)) + " grant.  New tools unlocked.";
     g_simBannerAt = tbd::platform::TickCountMs();
     tbd::Log("Sim: milestone %d %s reached at population %llu", g_simMilestones.reached, last.name, (unsigned long long)g_simTotals.population);
+    SimNote(std::string("Milestone: ") + last.name + " (" + std::to_string(last.population) + " residents)");
     SimNews("milestone_reached");
 }
 
@@ -507,6 +569,7 @@ struct SimPendingLoad {
     int64_t minute = 0;
     double demand[4] = {};
     uint64_t ups = 0, downs = 0, abandoned = 0;
+    std::string budget; // SimBudget::SaveFields, "" in older saves
     std::vector<std::vector<std::string>> people;
     bool lotsBack = false; // the grown lots are on their cells again: the people can follow
 } g_simPending;
@@ -518,7 +581,8 @@ void SimSaveLines(std::ostringstream& o) {
     for (int k = 0; k < tbd::city::kServices; ++k) o << (k ? " " : "") << g_simFunding[k];
     o << '|' << g_sim.Minute() << '|';
     for (int c = 0; c < 4; ++c) o << (c ? " " : "") << g_simGrowth.demand[c];
-    o << '|' << g_simGrowth.levelUps << ' ' << g_simGrowth.levelDowns << ' ' << g_simGrowth.abandoned << '\n';
+    o << '|' << g_simGrowth.levelUps << ' ' << g_simGrowth.levelDowns << ' ' << g_simGrowth.abandoned;
+    o << '|' << g_simBudget.SaveFields() << '\n'; // field 8: loans, the warning, the history (older builds ignore it)
     for (const tbd::city::Person& p : g_simPeople.people) {
         tbd::city::CellKey jk{0, 0};
         if (p.jobCell >= 0 && p.jobCell < (int)g_citySim.cells.cells.size()) jk = g_citySim.cells.cells[(size_t)p.jobCell].key;
@@ -542,6 +606,7 @@ void SimLoadLine(const std::vector<std::string>& f) {
         s.minute = strtoll(f[5].c_str(), nullptr, 10);
         sscanf(f[6].c_str(), "%lf %lf %lf %lf", &s.demand[0], &s.demand[1], &s.demand[2], &s.demand[3]);
         sscanf(f[7].c_str(), "%llu %llu %llu", (unsigned long long*)&s.ups, (unsigned long long*)&s.downs, (unsigned long long*)&s.abandoned);
+        s.budget = f.size() >= 9 ? f[8] : std::string();
     } else if (f[0] == "Q" && f.size() >= 14) {
         g_simPending.people.push_back(f);
     }
@@ -560,6 +625,9 @@ void SimApplyPending() {
         for (int k = 0; k < tbd::city::kServices; ++k) g_simFunding[k] = std::clamp(s.funding[k], 0.5f, 1.5f);
         g_sim.Reset(s.minute);
         g_simGrowth.levelUps = s.ups, g_simGrowth.levelDowns = s.downs, g_simGrowth.abandoned = s.abandoned;
+        if (!s.budget.empty() && !g_simBudget.LoadFields(s.budget)) tbd::Log("Sim: the save's budget field is unreadable: no loans restored");
+        s.budget.clear();
+        g_simBudget.events.clear();
         g_simHudPush = true;
     }
     if (!s.lotsBack) return;
@@ -599,6 +667,7 @@ void SimOnCityReset() {
     g_simEcon.Reset(g_simTune);
     g_simBudget.Reset();
     g_simMilestones.Reset();
+    g_simNotes.clear();
     g_simMilestoneQuietUntil = g_clock.minutes + 30.0; // a loaded city's population arrives over the next ticks
     g_simFlags.clear();
     g_simTotals = {};
@@ -665,7 +734,7 @@ void SimInit() {
     // S4: the ledger, once a game day.
     g_simEcon.Reset(g_simTune);
     g_sim.Register("economy", 1440, 1, [](const tbd::city::SimTick&) {
-        g_simBudget.Day(g_simEcon, g_citySim, g_simTune, SimDayUpkeep()); // SimEconomy::Day inside, with every expense
+        g_simBudget.Day(g_simEcon, g_citySim, g_simTune, SimDayUpkeep(), (int64_t)g_simTotals.population); // SimEconomy::Day inside
         SimBudgetEvents();
     });
     // S3: utilities into the cells (from the cached solve) and service coverage, every 10 game minutes, only on change.
@@ -687,6 +756,7 @@ void SimSync(float realDt) {
     }
     SimApplyPending(); // a loaded game's sim records, once the reset above is done
     SimMilestonesSync();
+    SimConstructionSync(realDt); // what was placed since the last frame is paid for
     for (int c = 0; c < tbd::city::SimEconomy::kCats; ++c) g_simGrowth.offset[c] = g_simEcon.DemandOffset(c, g_simTune);
     SimAgentsSync(realDt);
     SimPeopleSelect();
@@ -747,6 +817,8 @@ void SimHudFill(tbd::gui::CityHud& hud) {
         tbd::gui::BudgetView& v = hud.bv;
         for (int e = 0; e < kExpenses; ++e) v.expense[e] = (long long)(g_simBudget.lastExpense[e] / 100);
         v.repayment = (long long)(g_simBudget.lastRepayment / 100);
+        v.construction = (long long)(g_simBudget.lastConstruction / 100);
+        v.constructionToday = (long long)(g_simBudget.constructionToday / 100);
         int64_t h[SimBudget::kHistory];
         v.historyCount = g_simBudget.History(h, SimBudget::kHistory);
         for (int i = 0; i < v.historyCount; ++i) v.history[i] = (long long)(h[i] / 100);
@@ -797,7 +869,7 @@ void SimHudRead(const tbd::gui::CityHud& hud) {
                 Toast(g_simBudget.RepayLoan((int)i, g_simEcon) ? "LOAN REPAID" : "NOT ENOUGH MONEY TO REPAY THE LOAN");
                 break;
             }
-        g_simBudget.events.clear();
+        SimBudgetEvents(); // the log line (loan_repaid)
     }
 }
 

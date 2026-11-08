@@ -1,7 +1,8 @@
 // The city HUD's Budget panel (sim gameplay pass, phase B), opened by the Economy button or the money cell. Platform free.
 //   Taxes      one slider per zone category, 0 .. 30 % (higher rates lower that category's demand)
 //   Funding    one slider per service, 50 .. 150 % (coverage radius and upkeep)
-//   Ledger     income per tax, expenses per item (services, utility plants, roads, loan interest), loan repayments, net
+//   Ledger     income per tax, expenses per item (services, utility plants, roads per lane-km, loan interest), loan
+//              repayments, net; construction (paid when placed) on its own line
 //   Trend      the treasury over the last 60 game days as a sparkline (red below zero)
 //   Loans      three tiers: take one (one of each at most), or repay what is left early
 // The host (city_sim.inl SimHudFill / SimHudRead) fills BudgetView and acts on its requests after the frame.
@@ -19,6 +20,8 @@ struct BudgetView {
     // in
     long long expense[4] = {};   // whole currency per day: services, utility plants, roads, loan interest
     long long repayment = 0;     // loan principal per day
+    long long construction = 0;  // what the last day paid for building (charged at placement, not a running cost)
+    long long constructionToday = 0; // charged since
     long long history[60] = {};  // treasury, oldest first
     int historyCount = 0;
     bool bankrupt = false;
@@ -82,6 +85,7 @@ inline void DrawBudgetPanel(Context& g, Hud& h) {
     g.Text(TextStyle::Muted, "Taxes: residential %lld, commercial %lld, office %lld, industrial %lld", h.incomeDay[0], h.incomeDay[1], h.incomeDay[2], h.incomeDay[3]);
     g.Text(TextStyle::Muted, "Services %lld, utility plants %lld, roads %lld, interest %lld, repayment %lld", v.expense[0], v.expense[1], v.expense[2],
            v.expense[3], v.repayment);
+    g.Text(TextStyle::Muted, "Construction (paid when placed): %lld yesterday, %lld today", v.construction, v.constructionToday);
     g.Text(TextStyle::Muted, "Balance, last %d days", v.historyCount);
     BudgetSparkline(g.Draw(), g.Reserve(std::round(40.0f * g.Scale()), 0.0f), v, th);
     g.Spacing(4.0f);
