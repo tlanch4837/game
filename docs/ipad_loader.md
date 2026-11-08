@@ -39,7 +39,15 @@ It writes `..\CityEngine_iPad\` with:
 - `assets\news\news_lines.json` from `src\city\`;
 - `shaders\` empty (with `-Shaders`: `src\shaders\msl\*.metal`, to test a shader change without a build).
 
-It warns when `assets\audio\radio`, `assets\sim\tuning.json` or `assets\buildings` is missing from the source.
+It warns when `assets\audio\radio`, `assets\sim\tuning.json` or `assets\buildings` is missing from the source, and prints
+how many files `assets\audio\sfx` and `assets\audio\radio` hold.
+
+The app itself carries the GUI atlas, the GUI's SDF font (`assets_src\gui\ui_font_sdf.png`) and the UI tick, and copies them
+into Documents on first run when missing, so the GUI and its tick work before anything is loaded.
+
+Sound needs `Documents/assets/audio/`: `sfx\` (the UI tick and the game sounds, about 0.4 MB) and `radio\` (the radio clips,
+521 files, about 96 MB). A pack made before the radio clips existed has no `audio\radio`: re-run pack_assets.ps1 and copy
+`assets\audio\radio` (or the whole `assets\audio`) into `Documents/assets/audio/`.
 
 ## What to copy after a code-only change
 

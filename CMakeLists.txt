@@ -103,9 +103,13 @@ set_source_files_properties(${TBD_MSL} PROPERTIES MACOSX_PACKAGE_LOCATION Resour
 # The Glass Dock GUI's sprite atlas and its one UI tick (assets_src/gui), into the bundle's assets folder (host::Init).
 set(TBD_GUI_RES ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/glass_atlas.png ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/glass_atlas.txt)
 set(TBD_GUI_SFX ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/ui_category_select.mp3)
+# The GUI's SDF font (tools/bake_ui_font.py): without it the GUI falls back to the classic pixel font, stretched and blurry.
+set(TBD_GUI_FONT ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/ui_font_sdf.png ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/gui/LICENSE_DejaVu.txt)
 set_source_files_properties(${TBD_GUI_RES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/gui XCODE_EXPLICIT_FILE_TYPE file)
 set_source_files_properties(${TBD_GUI_SFX} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/audio/sfx XCODE_EXPLICIT_FILE_TYPE file)
-add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} ${TBD_THIRD_PARTY_SOURCES} "${TBD_METALLIB}" ${TBD_MSL} ${TBD_GUI_RES} ${TBD_GUI_SFX})
+set_source_files_properties(${TBD_GUI_FONT} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/ui XCODE_EXPLICIT_FILE_TYPE file)
+add_executable(cityengine MACOSX_BUNDLE ${TBD_SOURCES} ${TBD_GAME_SOURCES} ${TBD_THIRD_PARTY_SOURCES} "${TBD_METALLIB}" ${TBD_MSL} ${TBD_GUI_RES} ${TBD_GUI_SFX}
+    ${TBD_GUI_FONT})
 target_include_directories(cityengine PRIVATE src third_party/metal-cpp ${TBD_JOLT}
     ${TBD_RECAST}/Recast/Include ${TBD_RECAST}/Detour/Include ${TBD_RECAST}/DetourCrowd/Include
     ${TBD_LUAU}/VM/include ${TBD_LUAU}/Compiler/include ${TBD_LUAU}/Ast/include ${TBD_LUAU}/Common/include

@@ -77,7 +77,19 @@
     _link = nil;
 }
 
-- (CGFloat)pixelScale { return self.view.contentScaleFactor; }
+// The screen's native pixels per point (2 on iPad, 3 on recent iPhones). A UIView whose layer is a CAMetalLayer and that has
+// no drawRect: keeps contentScaleFactor 1.0 unless told otherwise, so the drawable was sized in points and iOS stretched the
+// whole frame, GUI text included, 2x: that was the blurry GUI. The view's scale is set from the screen here, every time.
+- (CGFloat)pixelScale {
+    CGFloat s = 0.0;
+    if (UIWindowScene* scene = self.view.window.windowScene) s = scene.screen.nativeScale;
+    if (s <= 0.0) s = self.traitCollection.displayScale;
+    if (s <= 0.0) s = 1.0;
+    if (self.view.contentScaleFactor != s) self.view.contentScaleFactor = s;
+    CAMetalLayer* layer = (CAMetalLayer*)self.view.layer;
+    if (layer.contentsScale != s) layer.contentsScale = s;
+    return s;
+}
 
 - (CGPoint)pixels:(CGPoint)p {
     const CGFloat s = [self pixelScale];
