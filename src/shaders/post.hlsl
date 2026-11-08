@@ -1015,6 +1015,12 @@ float4 ProbeBlendPS(FsOut i) : SV_Target {
     return float4(result, fresh ? 1.0 : weight);
 }
 
+// A NaN or infinity anywhere in the lit scene (a surface a few cm from the camera can divide by nothing) would be carried by TAA's
+// history and the exposure's blend into every later frame: a glow of odd colours, then a white screen. Found by the exponent bits
+// rather than x != x, which fast-math compilers (Metal's default) are free to fold away. Non-finite becomes black; the rest is capped.
+float FiniteF(float x) { return (asuint(x) & 0x7F800000u) == 0x7F800000u ? 0.0 : clamp(x, -65000.0, 65000.0); }
+float3 Finite(float3 c) { return float3(FiniteF(c.x), FiniteF(c.y), FiniteF(c.z)); }
+
 // ------------------------------------------------------------------ camera measurements
 // The scene's average brightness for auto exposure: log average of a sparse grid of taps, kept over time by blending.
 float4 ExposurePS(FsOut i) : SV_Target {
@@ -1022,7 +1028,7 @@ float4 ExposurePS(FsOut i) : SV_Target {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 12; ++x) {
             float2 uv = (float2(x, y) + 0.5) / float2(12.0, 8.0);
-            float3 c = gResolved.SampleLevel(gClamp, uv, 0).rgb;
+            float3 c = Finite(gResolved.SampleLevel(gClamp, uv, 0).rgb);
             float w = 1.0 + 2.0 * exp(-dot(uv - 0.5, uv - 0.5) * 6.0); // the middle of the frame counts more
             sum += w * log(max(dot(c, float3(0.2126, 0.7152, 0.0722)), 1e-3));
             weightSum += w;
@@ -1037,7 +1043,7 @@ float ExposureValue() {
     if (motion.z > 0.0) return motion.z * (motion.y > 0.0 ? motion.y * motion.y : 1.0); // the scene's locked exposure (Scene::exposure)
     const float key = 0.19; // a bright desert frame is metered a little under mid grey, as a photographer would
     const float kFree = 1.0, kMet = 0.6; // the first stop down is met in full, then this much of the rest (in log terms)
-    float metered = gExposure.Load(int3(0, 0, 0)).r;
+    float metered = FiniteF(gExposure.Load(int3(0, 0, 0)).r); // a poisoned history reads as 0 (mid), not as a locked white screen
     float open = log(1.1 * max(dot(skySh[0].rgb, float3(0.2126, 0.7152, 0.0722)), 1e-4)); // what the street meters at this hour
     float below = open - kFree * 0.6931 - metered;
     float adapted = below > 0.0 ? metered + below * (1.0 - kMet) : metered;
@@ -1052,7 +1058,7 @@ float4 BloomPS(FsOut i) : SV_Target {
     for (int k = 0; k < 20; ++k) {
         float t = (k + 0.5) / 20.0, a = k * 2.399963, r = sqrt(t) * 0.035;
         float2 uv = i.uv + float2(cos(a) * r * res.y * res.z, sin(a) * r);
-        float3 c = min(gResolved.SampleLevel(gClamp, uv, 0).rgb * ex, 16.0);
+        float3 c = min(Finite(gResolved.SampleLevel(gClamp, uv, 0).rgb) * ex, 16.0);
         float l = dot(c, float3(0.2126, 0.7152, 0.0722));
         float w = 1.0 - t * 0.7;
         sum += c * smoothstep(1.2, 3.0, l) * w;
@@ -1063,7 +1069,7 @@ float4 BloomPS(FsOut i) : SV_Target {
 
 // ------------------------------------------------------------------ temporal anti-aliasing
 float4 TaaPS(FsOut i) : SV_Target {
-    float3 cur = gComposed.SampleLevel(gClamp, i.uv, 0).rgb;
+    float3 cur = Finite(gComposed.SampleLevel(gClamp, i.uv, 0).rgb);
     if (misc.w < 0.5) return float4(cur, 1);
     float depth = gDepth.SampleLevel(gClamp, i.uv, 0);
     float4 prev = mul(prevViewProj, float4(WorldAt(i.uv, max(depth, 1e-5)), 1.0));
@@ -1091,12 +1097,12 @@ float4 TaaPS(FsOut i) : SV_Target {
     float3 lo = 1e9, hi = -1e9;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) {
-            float3 s = gComposed.SampleLevel(gClamp, i.uv + float2(x, y) * res.zw, 0).rgb;
-            s = s / (1.0 + s);
+            float3 s = Finite(gComposed.SampleLevel(gClamp, i.uv + float2(x, y) * res.zw, 0).rgb);
+            s = s / (1.0 + max(s, 0.0));
             lo = min(lo, s);
             hi = max(hi, s);
         }
-    float3 h = gHistory.SampleLevel(gClamp, puv, 0).rgb;
+    float3 h = max(Finite(gHistory.SampleLevel(gClamp, puv, 0).rgb), 0.0);
     h = clamp(h / (1.0 + h), lo, hi);
     h = h / max(1.0 - h, 1e-3);
     return float4(lerp(cur, h, keep), 1);
@@ -1142,7 +1148,7 @@ float3 CityGrade(float3 c) {
 }
 
 float4 TonemapPS(FsOut i) : SV_Target {
-    float3 c = eye.w > 0.5 ? SampleCatmullRom(i.uv) : gResolved.SampleLevel(gClamp, i.uv, 0).rgb;
+    float3 c = Finite(eye.w > 0.5 ? SampleCatmullRom(i.uv) : gResolved.SampleLevel(gClamp, i.uv, 0).rgb);
     // Win back what temporal accumulation softens. Limited to a local fraction so edges don't ring.
     float3 blur = (gResolved.SampleLevel(gClamp, i.uv + float2(res.z, 0), 0).rgb + gResolved.SampleLevel(gClamp, i.uv - float2(res.z, 0), 0).rgb +
                    gResolved.SampleLevel(gClamp, i.uv + float2(0, res.w), 0).rgb + gResolved.SampleLevel(gClamp, i.uv - float2(0, res.w), 0).rgb) * 0.25;

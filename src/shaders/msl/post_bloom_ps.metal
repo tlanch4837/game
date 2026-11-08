@@ -42,65 +42,105 @@ struct post_bloom_ps_in
 fragment post_bloom_ps_out post_bloom_ps(post_bloom_ps_in in [[stage_in]], constant type_PostParams& PostParams [[buffer(0)]], texture2d<float> gResolved [[texture(8)]], texture2d<float> gExposure [[texture(14)]], sampler gClamp [[sampler(9)]])
 {
     post_bloom_ps_out out = {};
-    float _119;
+    float _130;
     do
     {
         if (PostParams.motion.z > 0.0)
         {
-            float _86;
+            float _89;
             if (PostParams.motion.y > 0.0)
             {
-                _86 = PostParams.motion.y * PostParams.motion.y;
+                _89 = PostParams.motion.y * PostParams.motion.y;
             }
             else
             {
-                _86 = 1.0;
+                _89 = 1.0;
             }
-            _119 = PostParams.motion.z * _86;
+            _130 = PostParams.motion.z * _89;
             break;
         }
-        float4 _89 = gExposure.read(uint2(int2(0)), 0);
-        float _90 = _89.x;
-        float _99 = (log(1.10000002384185791015625 * precise::max(dot(PostParams.skySh[0].xyz, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)) - 0.6930999755859375) - _90;
-        float _106;
-        if (_99 > 0.0)
+        float4 _92 = gExposure.read(uint2(int2(0)), 0);
+        float _93 = _92.x;
+        float _101;
+        if ((as_type<uint>(_93) & 2139095040u) == 2139095040u)
         {
-            _106 = _90 + (_99 * 0.39999997615814208984375);
+            _101 = 0.0;
         }
         else
         {
-            _106 = _90;
+            _101 = fast::clamp(_93, -65000.0, 65000.0);
         }
+        float _110 = (log(1.10000002384185791015625 * precise::max(dot(PostParams.skySh[0].xyz, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)), 9.9999997473787516355514526367188e-05)) - 0.6930999755859375) - _101;
         float _117;
+        if (_110 > 0.0)
+        {
+            _117 = _101 + (_110 * 0.39999997615814208984375);
+        }
+        else
+        {
+            _117 = _101;
+        }
+        float _128;
         if (PostParams.motion.y > 0.0)
         {
-            _117 = PostParams.motion.y * PostParams.motion.y;
+            _128 = PostParams.motion.y * PostParams.motion.y;
         }
         else
         {
-            _117 = 1.0;
+            _128 = 1.0;
         }
-        _119 = fast::clamp(0.189999997615814208984375 / exp(_106), 0.300000011920928955078125, 6.0) * _117;
+        _130 = fast::clamp(0.189999997615814208984375 / exp(_117), 0.300000011920928955078125, 6.0) * _128;
         break;
     } while(false);
-    float _121;
-    float3 _124;
-    _121 = 0.0;
-    _124 = float3(0.0);
-    for (int _126 = 0; _126 < 20; )
+    float _132;
+    float3 _135;
+    _132 = 0.0;
+    _135 = float3(0.0);
+    float _133;
+    float3 _136;
+    for (int _137 = 0; _137 < 20; _132 = _133, _135 = _136, _137++)
     {
-        float _130 = float(_126);
-        float _131 = _130 + 0.5;
-        float _133 = _130 * 2.399962902069091796875;
-        float _135 = sqrt(_131 * 0.0500000007450580596923828125) * 0.0350000001490116119384765625;
-        float3 _154 = precise::min(gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + float2(((cos(_133) * _135) * PostParams.res.y) * PostParams.res.z, sin(_133) * _135)), level(0.0)).xyz * _119, float3(16.0));
-        float _157 = 1.0 - (_131 * 0.0350000001490116119384765625);
-        _121 += _157;
-        _124 += ((_154 * smoothstep(1.2000000476837158203125, 3.0, dot(_154, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)))) * _157);
-        _126++;
-        continue;
+        float _142 = float(_137);
+        float _143 = _142 + 0.5;
+        float _145 = _142 * 2.399962902069091796875;
+        float _147 = sqrt(_143 * 0.0500000007450580596923828125) * 0.0350000001490116119384765625;
+        float4 _163 = gResolved.sample(gClamp, (in.in_var_TEXCOORD0 + float2(((cos(_145) * _147) * PostParams.res.y) * PostParams.res.z, sin(_145) * _147)), level(0.0));
+        float _164 = _163.x;
+        float _172;
+        if ((as_type<uint>(_164) & 2139095040u) == 2139095040u)
+        {
+            _172 = 0.0;
+        }
+        else
+        {
+            _172 = fast::clamp(_164, -65000.0, 65000.0);
+        }
+        float _173 = _163.y;
+        float _181;
+        if ((as_type<uint>(_173) & 2139095040u) == 2139095040u)
+        {
+            _181 = 0.0;
+        }
+        else
+        {
+            _181 = fast::clamp(_173, -65000.0, 65000.0);
+        }
+        float _182 = _163.z;
+        float _190;
+        if ((as_type<uint>(_182) & 2139095040u) == 2139095040u)
+        {
+            _190 = 0.0;
+        }
+        else
+        {
+            _190 = fast::clamp(_182, -65000.0, 65000.0);
+        }
+        float3 _193 = precise::min(float3(_172, _181, _190) * _130, float3(16.0));
+        float _196 = 1.0 - (_143 * 0.0350000001490116119384765625);
+        _136 = _135 + ((_193 * smoothstep(1.2000000476837158203125, 3.0, dot(_193, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875)))) * _196);
+        _133 = _132 + _196;
     }
-    out.out_var_SV_Target = float4(_124 / float3(_121), 1.0);
+    out.out_var_SV_Target = float4(_135 / float3(_132), 1.0);
     return out;
 }
 

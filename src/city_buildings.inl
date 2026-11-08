@@ -49,7 +49,9 @@ inline int ForcedMode() {
 struct Budget { int draws, tris; };
 inline Budget PresetBudget() {
     char v[16] = {};
-    const std::string p = tbd::platform::GetEnvA("TBD_CHUNK_PRESET", v, sizeof(v)) > 0 ? v : "pc";
+    static const char* const kTier[tbd::gfx::kTiers] = {"low", "lowmed", "medium", "high", "ultra"};
+    const std::string p = tbd::gfx::userSet ? kTier[std::clamp(tbd::gfx::g.detail, 0, tbd::gfx::kTiers - 1)] // the Graphics page
+                        : tbd::platform::GetEnvA("TBD_CHUNK_PRESET", v, sizeof(v)) > 0 ? v : "pc";
     // PC: a 400-lot town drawn as real meshes out to 400 m is ~1,500 draws, 1.9-3.0 ms of CPU on a desktop (D3D12); phones far less.
     Budget b = p == "low" ? Budget{80, 120000} : p == "lowmed" ? Budget{100, 200000} : p == "medium" ? Budget{150, 300000}
              : p == "high" ? Budget{250, 600000} : p == "ultra" ? Budget{500, 1000000} : Budget{1500, 2000000};
@@ -634,8 +636,8 @@ void CityBuildingsSync(tbd::Renderer& r, const tbd::Mat4& viewProj, const tbd::V
     }
     // ---- the governor (R7): Near cells, biggest on screen first (the ones already Near a little ahead, so the choice holds), get
     // their real meshes while the zoned draws and triangles stay within budget; the cell the camera stands in always does
-    static const Budget budget = PresetBudget();
-    static const int drawBudget = budget.draws, triBudget = budget.tris;
+    const Budget budget = PresetBudget(); // read each frame: the Graphics page can change it
+    const int drawBudget = budget.draws, triBudget = budget.tris;
     static const int qCap = QualityCap();
     static const float lowPx = (float)EnvI("TBD_CHUNK_LOW_PX", 45);
     {

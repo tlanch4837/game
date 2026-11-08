@@ -197,6 +197,13 @@ void tbd::host::PointerCancel() {
 
 bool tbd::host::TouchBuilds(float x, float y) { return g_gui.WantsMouseAt(x, y) || gdock::ToolActive(); }
 
+bool tbd::host::TouchOnGui(float x, float y) { return g_gui.WantsMouseAt(x, y); }
+
+void tbd::host::EdgePan(float dxPx, float dyPx) {
+    if (!gdock::EdgePanOn()) return;
+    g_engine.camera.Pan(dxPx, dyPx, (float)g_engine.vpH); // the middle drag's own call (game_core.inl, Drag::Pan)
+}
+
 void tbd::host::Twist(float radians) { g_engine.camera.yaw -= radians; }
 
 void tbd::host::Zoom(float notches, float x, float y) {

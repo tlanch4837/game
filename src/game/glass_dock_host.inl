@@ -278,6 +278,9 @@ void FillTool() {
     }
 }
 
+// Settings > Edge pan: a finger held at the screen's edge keeps a drag going (game_host.h EdgePan).
+bool EdgePanOn() { return g_model.edgePan; }
+
 // A build tool is out: one finger draws / places instead of moving the camera (iOS touch, game_host.h TouchBuilds).
 bool ToolActive() {
     return g_roads.active || g_zoneTool.active || (g_utilTool.active && (g_utilTool.def >= 0 || g_utilTool.line >= 0)) ||
@@ -346,11 +349,49 @@ void ToolButton(const tbd::gui::dock::Out& o) {
     }
 }
 
+// The player's settings file (saves\settings.ini beside the game saves): the Graphics page's options, sound, text size, edge pan.
+// Until the file exists or the player touches a setting, the TBD_* environment switches rule the graphics as before.
+static bool g_settingsTouched = false;
+static std::string g_gfxPrev; // the Graphics page's options as last applied: a change here is what hands the graphics over to the player
+std::wstring SettingsFilePath() {
+    const std::wstring dir = tbd::Join(g_engine.projectFolder.empty() ? tbd::ExeDirectory() : g_engine.projectFolder, L"saves");
+    { std::error_code ec; std::filesystem::create_directory(tbd::platform::FsPath(dir), ec); }
+    return tbd::Join(dir, L"settings.ini");
+}
+void LoadSettingsFile() {
+    FILE* f = tbd::platform::WOpen(SettingsFilePath().c_str(), L"rb");
+    if (!f) return;
+    std::string text;
+    char buf[512];
+    for (size_t n; (n = fread(buf, 1, sizeof(buf), f)) > 0;) text.append(buf, n);
+    fclose(f);
+    int v = 0;
+    if (tbd::gfx::Find(text, "preset", v)) tbd::gfx::Parse(text, g_model.gfx), g_settingsTouched = true;
+    if (tbd::gfx::Find(text, "sound", v)) g_model.sound = v != 0;
+    if (tbd::gfx::Find(text, "text", v)) g_model.textSize = std::clamp(v, 0, 1);
+    if (tbd::gfx::Find(text, "edgepan", v)) g_model.edgePan = v != 0;
+}
+void SaveSettingsFile() {
+    FILE* f = tbd::platform::WOpen(SettingsFilePath().c_str(), L"wb");
+    if (!f) return;
+    const std::string text = tbd::gfx::Serialize(g_model.gfx) + "sound=" + (g_model.sound ? "1" : "0") + "\ntext=" + std::to_string(g_model.textSize) +
+                             "\nedgepan=" + (g_model.edgePan ? "1" : "0") + "\n";
+    fwrite(text.data(), 1, text.size(), f);
+    fclose(f);
+}
+
 void ApplySettings(tbd::Renderer& r) {
-    (void)r; // (the render scale is not touched here: SetRenderScale remakes the back buffers, never mid-frame)
-    static const int quality[4] = {2, 1, 0, 0}; // Low: unlit, Med: fast, High / Ultra: full (Ultra adds the MAX look)
-    g_gfxQuality = quality[std::clamp(g_model.quality, 0, 3)];
-    SetMaxGraphics(g_model.quality == 3);
+    (void)r; // (the render scale is applied in UpdateDynamicResolution, outside the frame: SetRenderScale remakes the back buffers)
+    if (g_settingsTouched) { // the Graphics page rules from here on; LookTier, RenderScale and PresetBudget read tbd::gfx::g
+        tbd::gfx::Settings& s = g_model.gfx;
+        tbd::gfx::Clamp(s);
+        tbd::gfx::g = s;
+        tbd::gfx::userSet = true;
+        g_gfxQuality = s.lighting; // 0 full, 1 fast, 2 unlit
+        g_engine.sun.shadows = s.shadows != 0;
+        g_engine.terrain.params.radius = tbd::gfx::kRadius[s.distance];
+        SetMaxGraphics(s.preset == tbd::gfx::kUltra && s.lighting == 0); // Ultra keeps the MAX look
+    }
     tbd::audio::SetBusVolume(tbd::audio::Bus::Sfx, g_model.sound ? 1.0f : 0.0f);
 }
 
@@ -386,6 +427,8 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     if (!built) { // the atlas came in with the font (outside a frame: InitGameGui)
         built = true;
         BuildCatalogue();
+        LoadSettingsFile();
+        g_gfxPrev = tbd::gfx::Serialize(g_model.gfx);
         ApplySettings(r);
     }
     static bool scripted = false; // TBD_GUI_STATE="pc|touch,open,cat=<id>,pick=<item name>,pause,settings": captures (shots/gui_1to1)
@@ -442,7 +485,12 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     if (o.save) g_gameAction = 1;
     if (o.load) g_gameAction = 2;
     if (o.mainMenu) g_gameAction = 3; // no title screen yet: a fresh random map
-    if (o.settingsChanged) ApplySettings(r);
+    if (o.settingsChanged) { // sound, text size and the interface switch must not hand the graphics over from the TBD_* switches
+        const std::string now = tbd::gfx::Serialize(g_model.gfx);
+        if (now != g_gfxPrev) g_gfxPrev = now, g_settingsTouched = true;
+        ApplySettings(r);
+        SaveSettingsFile();
+    }
     // the pause menu pauses the sim under it
     if (o.menuOpen && !g_menuPaused && !g_clock.paused) g_menuPaused = true, g_clock.paused = true;
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "gui.h"
+#include "../gfx_settings.h" // the player's graphics options (the Graphics page edits Model::gfx)
 
 namespace tbd {
 namespace gui {
@@ -108,7 +109,7 @@ struct Model {
     std::vector<std::pair<std::string, std::string>> toolOpts; // (name, icon) shown on the placement bar
     // the settings
     bool sound = true;
-    int quality = 2;  // 0 Low .. 3 Ultra
+    tbd::gfx::Settings gfx; // the preset and the individual graphics options (src/gfx_settings.h)
     int textSize = 0; // 0 normal, 1 large
     bool edgePan = true;
     void Resolve(const Atlas& a) { // preview cells by slug, as the mockup's pvImg(): name, name_road, name_highway
@@ -151,7 +152,7 @@ struct State {
     bool closing = false;
     bool open = false;     // Phone UI: the menus are out
     float openT = 1;
-    bool menu = false, settings = false;
+    bool menu = false, settings = false, gfx = false; // gfx: the Graphics page inside Settings
     float menuT = 1;
     float scroll = 0, scrollMax = 0; // the tile area: PC UI pad vertical, phone horizontal; Phone UI vertical
     bool drag = false;
@@ -819,7 +820,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         P.alpha = a;
         P.dl.Glass(0, 0, in.viewW, in.viewH, 0, Rgba(0, 0, 0, 102), 14 * s, 0.8f, 0, 0);
         g.Block({0, 0, in.viewW, in.viewH});
-        const float cardW = padSizes ? 340 : 260, gap = padSizes ? 8 : 6, bh = (padSizes ? 14 : 11) * 2 + 14 * P.text * 1.25f;
+        const float cardW = padSizes ? 340 : (st.gfx ? 330 : 260), gap = padSizes ? 8 : 6, bh = (padSizes ? 14 : 11) * 2 + 14 * P.text * 1.25f;
         const float popScale = 0.6f + 0.4f * a; // pop: scale(.6) -> 1
         auto btnRect = [&](float x, float y, float w, float h) { return R(W * 0.5f + (x - W * 0.5f) * popScale, H * 0.5f + (y - H * 0.5f) * popScale, w * popScale, h * popScale); };
         auto drawBtn = [&](float x, float y, float w, float h, const std::string& icon, const std::string& label, int style, bool centre) {
@@ -865,13 +866,14 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             if (drawBtn(x0, y, cardW, bh, "exit", "Main menu", 2, true)) out.mainMenu = true, sfx(1.1f);
         } else {
             // Settings: the interface switch (two cards), then the options rows, then Back
-            const float cardH = 66, rowH = bh;
-            const float total = 13 * 1.4f + 6 + 13 * 1.4f + cardH + gap + 4 * (rowH + gap) + rowH;
+            const float cardH = 66;
+            const float rowH = st.gfx ? std::min(bh, (H - 80.0f) / 9.0f - gap) : bh; // the Graphics page has eight rows
+            const float total = st.gfx ? 13 * 1.4f + 6 + 8 * (rowH + gap)
+                                       : 13 * 1.4f + 6 + 13 * 1.4f + cardH + gap + 5 * (rowH + gap) + rowH;
             float y = (H - total) * 0.5f;
-            title("Settings", y + 9, 13, kMuted, true, false);
+            title(st.gfx ? "Graphics" : "Settings", y + 9, 13, kMuted, true, false);
             y += 13 * 1.4f + 6;
-            title("Interface", y + 6, 13, kMuted, false, false);
-            y += 13 * 1.4f;
+            if (!st.gfx) { title("Interface", y + 6, 13, kMuted, false, false); y += 13 * 1.4f; }
             const float hw = (cardW - 8) * 0.5f;
             auto card = [&](float x, bool on, const std::string& icon, const std::string& name, const std::string& sub) {
                 const Rect r = btnRect(x, y, hw, cardH);
@@ -883,9 +885,11 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 P.Text(sub, X0 + 10 * popScale, Y0 + (10 + 22 + 2 + 16 + 7) * popScale, 10 * popScale, Fade(kInk, 0.65f));
                 return tap;
             };
-            if (card(x0, !st.pcUi, "up", "Phone UI", "Hidden dock, thumb reach") && st.pcUi) st.pcUi = false, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
-            if (card(x0 + hw + 8, st.pcUi, "gear", "PC UI", "Full CS2-style bar") && !st.pcUi) st.pcUi = true, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
-            y += cardH + gap;
+            if (!st.gfx) {
+                if (card(x0, !st.pcUi, "up", "Phone UI", "Hidden dock, thumb reach") && st.pcUi) st.pcUi = false, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
+                if (card(x0 + hw + 8, st.pcUi, "gear", "PC UI", "Full CS2-style bar") && !st.pcUi) st.pcUi = true, st.cat = -1, st.open = false, out.settingsChanged = true, sfx(1.3f);
+                y += cardH + gap;
+            }
             // options: a label and a segmented choice per row
             auto row = [&](const std::string& icon, const std::string& label, const char* const* opts, int n, int cur) {
                 const Rect r = btnRect(x0, y, cardW, rowH);
@@ -909,14 +913,39 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 return picked;
             };
             static const char* const kOnOff[] = {"Off", "On"};
-            static const char* const kQuality[] = {"Low", "Med", "High", "Ultra"};
+            static const char* const kPreset[] = {"Low", "Med", "High", "Ultra"};
+            static const char* const kPresetC[] = {"Low", "Med", "High", "Ultra", "Custom"};
+            static const char* const kRes[] = {"50%", "67%", "75%", "85%", "100%"};
+            static const char* const kTier[] = {"Low", "L/M", "Med", "High", "Ultra"};
+            static const char* const kDist[] = {"Near", "Med", "Far"};
+            static const char* const kLight[] = {"Full", "Fast", "Unlit"};
             static const char* const kText[] = {"Normal", "Large"};
             int v;
-            if ((v = row("star", "Sound effects", kOnOff, 2, m.sound ? 1 : 0)) >= 0) m.sound = v == 1, out.settingsChanged = true, sfx(1.3f);
-            if ((v = row("layers", "Graphics", kQuality, 4, m.quality)) >= 0) m.quality = v, out.settingsChanged = true, sfx(1.3f);
-            if ((v = row("info", "Text size", kText, 2, m.textSize)) >= 0) m.textSize = v, out.settingsChanged = true, sfx(1.3f);
-            if ((v = row("srch", "Edge pan", kOnOff, 2, m.edgePan ? 1 : 0)) >= 0) m.edgePan = v == 1, out.settingsChanged = true, sfx(1.3f);
-            if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.settings = false, sfx(0.65f);
+            if (st.gfx) {
+                // Graphics: a preset, or every option on its own. Touching any option makes the preset Custom.
+                tbd::gfx::Settings& G = m.gfx;
+                auto custom = [&](int& field, int val) { field = val, G.preset = tbd::gfx::kCustom, out.settingsChanged = true, sfx(1.3f); };
+                if ((v = row("layers", "Preset", kPresetC, 5, G.preset)) >= 0) {
+                    if (v < 4) tbd::gfx::ApplyPreset(G, v);
+                    else G.preset = tbd::gfx::kCustom;
+                    out.settingsChanged = true, sfx(1.3f);
+                }
+                if ((v = row("cam", "Resolution", kRes, 5, G.scale)) >= 0) custom(G.scale, v);
+                if ((v = row("star", "Effects", kTier, 5, G.look)) >= 0) custom(G.look, v);
+                if ((v = row("info", "Buildings", kTier, 5, G.detail)) >= 0) custom(G.detail, v);
+                if ((v = row("srch", "Draw distance", kDist, 3, G.distance)) >= 0) custom(G.distance, v);
+                if ((v = row("play", "Sun shadows", kOnOff, 2, G.shadows)) >= 0) custom(G.shadows, v);
+                if ((v = row("gear", "Lighting mode", kLight, 3, G.lighting)) >= 0) custom(G.lighting, v);
+                if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.gfx = false, sfx(0.65f);
+            } else {
+                if ((v = row("star", "Sound effects", kOnOff, 2, m.sound ? 1 : 0)) >= 0) m.sound = v == 1, out.settingsChanged = true, sfx(1.3f);
+                if ((v = row("layers", "Graphics", kPreset, 4, m.gfx.preset)) >= 0) tbd::gfx::ApplyPreset(m.gfx, v), out.settingsChanged = true, sfx(1.3f);
+                if (drawBtn(x0, y, cardW, rowH, "gear", m.gfx.preset == tbd::gfx::kCustom ? "Graphics options (Custom)" : "Graphics options", 0, false)) st.gfx = true, sfx(1.1f);
+                y += rowH + gap;
+                if ((v = row("info", "Text size", kText, 2, m.textSize)) >= 0) m.textSize = v, out.settingsChanged = true, sfx(1.3f);
+                if ((v = row("srch", "Edge pan", kOnOff, 2, m.edgePan ? 1 : 0)) >= 0) m.edgePan = v == 1, out.settingsChanged = true, sfx(1.3f);
+                if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.settings = false, sfx(0.65f);
+            }
         }
         P.alpha = 1;
     }

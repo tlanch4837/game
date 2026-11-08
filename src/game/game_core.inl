@@ -1301,12 +1301,20 @@ float RenderScale() {
         const float s = strtof(v, &end);
         return end == v ? 1.0f : tbd::ClampRenderScale(s);
     }();
-    return g_dynamicScale > 0.0f ? g_dynamicScale : scale;
+    if (g_dynamicScale > 0.0f) return g_dynamicScale;
+    return tbd::gfx::userSet ? tbd::ClampRenderScale(tbd::gfx::ScaleFraction()) : scale;
 }
 
 // TBD_DYNRES=<fps>: holds that frame rate by stepping the render scale, 0.7..1.0, after a second of evidence. Off by default:
 // a step remakes the post targets, so TAA history and the probes restart, which shows for about half a second.
 void UpdateDynamicResolution(tbd::Renderer& r, float dt) {
+    { // the Graphics page's resolution: remade here, outside the frame, and only when it changed
+        static float applied = -1.0f;
+        if (tbd::gfx::userSet && g_dynamicScale <= 0.0f && RenderScale() != applied) {
+            applied = RenderScale();
+            r.SetRenderScale(applied);
+        }
+    }
     static const float target = [] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_DYNRES", v, sizeof(v)) > 0 ? (float)atof(v) : 0.0f; }();
     if (target <= 0.0f || dt <= 0.0f) return;
     static float sum = 0.0f;
@@ -1618,6 +1626,7 @@ int g_gfxQuality = [] { char v[8] = {}; return tbd::platform::GetEnvA("TBD_QUALI
 // no grade, every post pass at every preset), for before/after comparisons.
 bool LookOn() { static const bool on = [] { char v[8] = {}; return !(tbd::platform::GetEnvA("TBD_LOOK", v, sizeof(v)) > 0 && v[0] == '0'); }(); return on; }
 int LookTier() {
+    if (tbd::gfx::userSet) return LookOn() ? tbd::gfx::g.look : 4; // the player's Graphics page (src/gfx_settings.h) rules once used
     static const int tier = [] {
         char v[16] = {};
         const std::string p = tbd::platform::GetEnvA("TBD_CHUNK_PRESET", v, sizeof(v)) > 0 ? v : "pc";
@@ -1662,6 +1671,21 @@ inline void FrameMark(const char* what) { g_frameSections.Mark(what); }
 
 // ------------------------------------------------------------------- city roads: glue
 float RoadsGround(float x, float z) { return g_engine.terrain.params.enabled ? g_engine.terrain.HeightAt(x, z) : 0.0f; }
+
+// The city camera never goes under the ground or right up against it: the eye keeps kCamClearance above the terrain at its own
+// spot (and a little more at the target), by tilting up first and lifting the target only when tilting is not enough. Buildings
+// are not tested here; that needs a spatial query over the city cells.
+void CityCamGroundFloor() {
+    if (g_play.active || g_engine.drag == Drag::Fly) return;
+    constexpr float kCamClearance = 1.5f; // metres of the city's units
+    tbd::OrbitCamera& cam = g_engine.camera;
+    const tbd::Vec3 eye = cam.Eye();
+    const float floorY = RoadsGround(eye.x, eye.z) + kCamClearance;
+    if (eye.y >= floorY) return;
+    const float need = (floorY - cam.target.y) / std::max(cam.distance, 1e-3f);
+    if (need < 0.98f) cam.pitch = std::max(cam.pitch, std::asin(std::max(need, -1.0f)));
+    else cam.target.y += floorY - eye.y; // the camera is too close to tilt clear: lift the target instead
+}
 
 std::string RoadsUpper(const std::string& s) { // the toast font has capitals only
     std::string out = s;
@@ -2253,6 +2277,7 @@ void RenderFrame() {
                             g_play.active && g_play.walking, tbd::kPlayEyeHeight); // no-op unless audio.h's Start succeeded
     UpdateFly(dt);
     UpdateCityCam(dt);
+    CityCamGroundFloor();
     tbd::shell::EditorTick(dt); // editor panels: face tab, Character Creator, the scene's undo checkpoint
     if (g_engine.sun.animate) g_engine.sun.Advance(dt);
     // The sun's shadow map follows the camera's focus; it covers more ground the farther the camera is.

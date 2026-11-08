@@ -35,6 +35,11 @@ void Zoom(float notches, float x, float y);
 // Touch, SimCity style: does a finger landing at (x, y) belong to the GUI or a build tool (true: it is the left button)
 // or to the camera (false: one-finger drag pans, a tap selects)?
 bool TouchBuilds(float x, float y);
+// A finger held in the screen's edge band while it drags keeps the camera moving: the platform calls this each frame with the
+// extra drag, in device pixels, the finger would have made (same sign as a finger moving that way). Honours the Edge pan setting.
+void EdgePan(float dxPx, float dyPx);
+// Does a finger landing at (x, y) hit the GUI (as opposed to a build tool or the city)? Edge pan never runs for a GUI drag.
+bool TouchOnGui(float x, float y);
 // Turns the camera about its target by `radians` (a two-finger twist).
 void Twist(float radians);
 // Keys from a hardware keyboard: tbd::platform::Key values; ch is the character typed (0 if none).

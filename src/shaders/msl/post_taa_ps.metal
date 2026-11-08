@@ -70,7 +70,7 @@ struct type_PostParams
     float4 rooms[18];
 };
 
-constant spvUnsafeArray<float2, 4> _77 = spvUnsafeArray<float2, 4>({ float2(-1.0, 0.0), float2(1.0, 0.0), float2(0.0, -1.0), float2(0.0, 1.0) });
+constant spvUnsafeArray<float2, 4> _81 = spvUnsafeArray<float2, 4>({ float2(-1.0, 0.0), float2(1.0, 0.0), float2(0.0, -1.0), float2(0.0, 1.0) });
 
 struct post_taa_ps_out
 {
@@ -85,108 +85,198 @@ struct post_taa_ps_in
 fragment post_taa_ps_out post_taa_ps(post_taa_ps_in in [[stage_in]], constant type_PostParams& PostParams [[buffer(0)]], texture2d<float> gDepth [[texture(2)]], texture2d<float> gComposed [[texture(6)]], texture2d<float> gHistory [[texture(7)]], texture2d<float> gVelocity [[texture(17)]], sampler gClamp [[sampler(9)]])
 {
     post_taa_ps_out out = {};
-    float4 _254;
+    float4 _336;
     do
     {
-        float4 _87 = gComposed.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
+        float4 _91 = gComposed.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
+        float _92 = _91.x;
+        float _100;
+        if ((as_type<uint>(_92) & 2139095040u) == 2139095040u)
+        {
+            _100 = 0.0;
+        }
+        else
+        {
+            _100 = fast::clamp(_92, -65000.0, 65000.0);
+        }
+        float _101 = _91.y;
+        float _109;
+        if ((as_type<uint>(_101) & 2139095040u) == 2139095040u)
+        {
+            _109 = 0.0;
+        }
+        else
+        {
+            _109 = fast::clamp(_101, -65000.0, 65000.0);
+        }
+        float _110 = _91.z;
+        float _118;
+        if ((as_type<uint>(_110) & 2139095040u) == 2139095040u)
+        {
+            _118 = 0.0;
+        }
+        else
+        {
+            _118 = fast::clamp(_110, -65000.0, 65000.0);
+        }
         if (PostParams.misc.w < 0.5)
         {
-            _254 = float4(_87.xyz, 1.0);
+            _336 = float4(_100, _109, _118, 1.0);
             break;
         }
-        float4 _101 = gDepth.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
-        float _102 = _101.x;
-        float4 _115 = PostParams.invViewProj * float4((in.in_var_TEXCOORD0.x * 2.0) - 1.0, 1.0 - (in.in_var_TEXCOORD0.y * 2.0), precise::max(_102, 9.9999997473787516355514526367188e-06), 1.0);
-        float4 _124 = PostParams.prevViewProj * float4(_115.xyz / float3(_115.w), 1.0);
-        float _126 = _124.w;
-        float2 _134 = float2(((_124.x / _126) * 0.5) + 0.5, 0.5 - ((_124.y / _126) * 0.5));
-        float4 _138 = gComposed.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
-        float _139 = _138.w;
-        float _141 = (_139 < 0.75) ? 0.5499999523162841796875 : 0.89999997615814208984375;
-        float _187;
-        float2 _188;
+        float4 _129 = gDepth.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
+        float _130 = _129.x;
+        float4 _143 = PostParams.invViewProj * float4((in.in_var_TEXCOORD0.x * 2.0) - 1.0, 1.0 - (in.in_var_TEXCOORD0.y * 2.0), precise::max(_130, 9.9999997473787516355514526367188e-06), 1.0);
+        float4 _152 = PostParams.prevViewProj * float4(_143.xyz / float3(_143.w), 1.0);
+        float _154 = _152.w;
+        float2 _162 = float2(((_152.x / _154) * 0.5) + 0.5, 0.5 - ((_152.y / _154) * 0.5));
+        float4 _166 = gComposed.sample(gClamp, in.in_var_TEXCOORD0, level(0.0));
+        float _167 = _166.w;
+        float _169 = (_167 < 0.75) ? 0.5499999523162841796875 : 0.89999997615814208984375;
+        float _215;
+        float2 _216;
         if (PostParams.motion.x > 0.5)
         {
-            float2 _151;
-            _151 = in.in_var_TEXCOORD0;
-            float _148 = _102;
-            int _153 = 0;
-            for (; _153 < 4; )
+            float2 _179;
+            _179 = in.in_var_TEXCOORD0;
+            float _176 = _130;
+            int _181 = 0;
+            for (; _181 < 4; )
             {
-                float2 _163 = in.in_var_TEXCOORD0 + (_77[_153] * PostParams.res.zw);
-                float4 _167 = gDepth.sample(gClamp, _163, level(0.0));
-                float _168 = _167.x;
-                bool _169 = _168 > _148;
-                _148 = _169 ? _168 : _148;
-                _151 = select(_151, _163, bool2(_169));
-                _153++;
+                float2 _191 = in.in_var_TEXCOORD0 + (_81[_181] * PostParams.res.zw);
+                float4 _195 = gDepth.sample(gClamp, _191, level(0.0));
+                float _196 = _195.x;
+                bool _197 = _196 > _176;
+                _176 = _197 ? _196 : _176;
+                _179 = select(_179, _191, bool2(_197));
+                _181++;
                 continue;
             }
-            float2 _175 = gVelocity.sample(gClamp, _151, level(0.0)).xy;
-            float _185;
-            float2 _186;
-            if (dot(_175, _175) > 0.0)
+            float2 _203 = gVelocity.sample(gClamp, _179, level(0.0)).xy;
+            float _213;
+            float2 _214;
+            if (dot(_203, _203) > 0.0)
             {
-                bool _181 = false;
-                bool _182 = true;
-                _185 = (isunordered(_139, 0.75) || _139 >= 0.75) ? 0.85000002384185791015625 : _141;
-                _186 = in.in_var_TEXCOORD0 - _175;
+                bool _209 = false;
+                bool _210 = true;
+                _213 = (isunordered(_167, 0.75) || _167 >= 0.75) ? 0.85000002384185791015625 : _169;
+                _214 = in.in_var_TEXCOORD0 - _203;
             }
             else
             {
-                _185 = _141;
-                _186 = _134;
+                _213 = _169;
+                _214 = _162;
             }
-            _187 = _185;
-            _188 = _186;
+            _215 = _213;
+            _216 = _214;
         }
         else
         {
-            _187 = _141;
-            _188 = _134;
+            _215 = _169;
+            _216 = _162;
         }
-        bool _196;
-        if (!any(_188 < float2(0.0)))
+        bool _224;
+        if (!any(_216 < float2(0.0)))
         {
-            _196 = any(_188 > float2(1.0));
+            _224 = any(_216 > float2(1.0));
         }
         else
         {
-            _196 = true;
+            _224 = true;
         }
-        if (_196)
+        if (_224)
         {
-            _254 = float4(_87.xyz, 1.0);
+            _336 = float4(_100, _109, _118, 1.0);
             break;
         }
-        float3 _204;
-        float3 _207;
-        int _209;
-        _204 = float3(-1000000000.0);
-        _207 = float3(1000000000.0);
-        _209 = -1;
-        float3 _205;
-        float3 _208;
-        for (; _209 <= 1; _204 = _205, _207 = _208, _209++)
+        float3 _229;
+        float3 _232;
+        _229 = float3(-1000000000.0);
+        _232 = float3(1000000000.0);
+        float3 _230;
+        float3 _233;
+        for (int _234 = -1; _234 <= 1; _229 = _230, _232 = _233, _234++)
         {
-            _205 = _204;
-            _208 = _207;
-            for (int _218 = -1; _218 <= 1; )
+            _230 = _229;
+            _233 = _232;
+            float3 _240;
+            float3 _242;
+            for (int _243 = -1; _243 <= 1; _230 = _240, _233 = _242, _243++)
             {
-                float3 _234 = gComposed.sample(gClamp, (in.in_var_TEXCOORD0 + (float2(float(_218), float(_209)) * PostParams.res.zw)), level(0.0)).xyz;
-                float3 _236 = _234 / (float3(1.0) + _234);
-                _205 = precise::max(_205, _236);
-                _208 = precise::min(_208, _236);
-                _218++;
-                continue;
+                float4 _259 = gComposed.sample(gClamp, (in.in_var_TEXCOORD0 + (float2(float(_243), float(_234)) * PostParams.res.zw)), level(0.0));
+                float _260 = _259.x;
+                float _268;
+                if ((as_type<uint>(_260) & 2139095040u) == 2139095040u)
+                {
+                    _268 = 0.0;
+                }
+                else
+                {
+                    _268 = fast::clamp(_260, -65000.0, 65000.0);
+                }
+                float _269 = _259.y;
+                float _277;
+                if ((as_type<uint>(_269) & 2139095040u) == 2139095040u)
+                {
+                    _277 = 0.0;
+                }
+                else
+                {
+                    _277 = fast::clamp(_269, -65000.0, 65000.0);
+                }
+                float _278 = _259.z;
+                float _286;
+                if ((as_type<uint>(_278) & 2139095040u) == 2139095040u)
+                {
+                    _286 = 0.0;
+                }
+                else
+                {
+                    _286 = fast::clamp(_278, -65000.0, 65000.0);
+                }
+                float3 _287 = float3(_268, _277, _286);
+                float3 _290 = _287 / (float3(1.0) + precise::max(_287, float3(0.0)));
+                _242 = precise::min(_233, _290);
+                _240 = precise::max(_230, _290);
             }
         }
-        float3 _241 = gHistory.sample(gClamp, _188, level(0.0)).xyz;
-        float3 _244 = fast::clamp(_241 / (float3(1.0) + _241), _207, _204);
-        _254 = float4(mix(_87.xyz, _244 / precise::max(float3(1.0) - _244, float3(0.001000000047497451305389404296875)), float3(_187)), 1.0);
+        float4 _294 = gHistory.sample(gClamp, _216, level(0.0));
+        float _295 = _294.x;
+        float _303;
+        if ((as_type<uint>(_295) & 2139095040u) == 2139095040u)
+        {
+            _303 = 0.0;
+        }
+        else
+        {
+            _303 = fast::clamp(_295, -65000.0, 65000.0);
+        }
+        float _304 = _294.y;
+        float _312;
+        if ((as_type<uint>(_304) & 2139095040u) == 2139095040u)
+        {
+            _312 = 0.0;
+        }
+        else
+        {
+            _312 = fast::clamp(_304, -65000.0, 65000.0);
+        }
+        float _313 = _294.z;
+        float _321;
+        if ((as_type<uint>(_313) & 2139095040u) == 2139095040u)
+        {
+            _321 = 0.0;
+        }
+        else
+        {
+            _321 = fast::clamp(_313, -65000.0, 65000.0);
+        }
+        float3 _323 = precise::max(float3(_303, _312, _321), float3(0.0));
+        float3 _326 = fast::clamp(_323 / (float3(1.0) + _323), _232, _229);
+        _336 = float4(mix(float3(_100, _109, _118), _326 / precise::max(float3(1.0) - _326, float3(0.001000000047497451305389404296875)), float3(_215)), 1.0);
         break;
     } while(false);
-    out.out_var_SV_Target = _254;
+    out.out_var_SV_Target = _336;
     return out;
 }
 

@@ -35,6 +35,8 @@
     BOOL _leftDown;
     BOOL _camera;         // the first finger landed on the city with no tool: it pans once it moves, else it was a tap
     BOOL _panning;        // ... and it has moved: the middle button is down
+    BOOL _toolDrag;       // the left button is down on the city with a build tool (not on the GUI): edge pan applies to it too
+    CGPoint _fingerNow;   // the one dragging finger, device pixels, for the edge pan each frame
     CGPoint _start;       // where it landed, device pixels
     CGFloat _twistAngle;  // the two fingers' angle last move
     BOOL _twoFinger;      // two fingers: camera pan (middle button) and pinch
@@ -123,6 +125,24 @@
         if (![self startGame]) return;
         _started = YES;
     }
+    // Edge pan: a finger left in the screen's edge band while it drags keeps the camera going, faster the nearer the edge, as
+    // if it kept dragging that way (no touch events arrive once a finger stops). Only for the camera's one-finger pan and a
+    // build tool's drag; never for the GUI or two fingers.
+    if ((_panning || _toolDrag) && _first && !_twoFinger) {
+        const CGFloat s = [self pixelScale], W = self.view.bounds.size.width * s, H = self.view.bounds.size.height * s;
+        const CGFloat band = 44.0 * s;
+        auto push = [&](CGFloat v, CGFloat extent) -> CGFloat { // -1 .. 1: how far into the near or far edge band (0 in the middle)
+            if (v < band) return -(1.0 - std::max<CGFloat>(v, 0.0) / band);
+            if (v > extent - band) return 1.0 - (extent - std::min<CGFloat>(v, extent)) / band;
+            return 0.0;
+        };
+        const CGFloat px = push(_fingerNow.x, W), py = push(_fingerNow.y, H);
+        if (px != 0.0 || py != 0.0) {
+            const CGFloat dt = std::min<CGFloat>(link.targetTimestamp - link.timestamp, 0.05), speed = 900.0 * s; // device px/s at the very edge
+            tbd::host::EdgePan((float)(px * speed * dt), (float)(py * speed * dt));
+            if (_toolDrag) tbd::host::PointerMove((float)_fingerNow.x, (float)_fingerNow.y); // the tool's ground point follows the moving view
+        }
+    }
     tbd::host::Frame();
 }
 
@@ -137,7 +157,7 @@
 - (void)beginTwoFinger:(NSArray<UITouch*>*)touches {
     if (_leftDown) { // the first finger was a left press: give it up rather than click where the pan starts
         tbd::host::PointerCancel();
-        _leftDown = NO;
+        _leftDown = _toolDrag = NO;
     }
     if (_panning) { // the one-finger pan hands over to the two-finger one
         tbd::host::PointerUp(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
@@ -178,6 +198,8 @@
     }
     tbd::host::PointerDown(tbd::host::Button::Left, (float)p.x, (float)p.y);
     _leftDown = YES;
+    _toolDrag = !tbd::host::TouchOnGui((float)p.x, (float)p.y); // a tool on the city: edge pan may carry its drag
+    _fingerNow = p;
 }
 
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
@@ -211,11 +233,12 @@
             _panCentre = _start;
             tbd::host::PointerDown(tbd::host::Button::Middle, (float)_start.x, (float)_start.y);
         }
-        if (_panning) _panCentre = p, tbd::host::PointerMove((float)p.x, (float)p.y);
+        if (_panning) _panCentre = p, _fingerNow = p, tbd::host::PointerMove((float)p.x, (float)p.y);
         return;
     }
     if (_leftDown && [touches containsObject:_first]) {
         const CGPoint p = [self pixels:[_first locationInView:self.view]];
+        _fingerNow = p;
         tbd::host::PointerMove((float)p.x, (float)p.y);
     }
 }
@@ -240,7 +263,7 @@
     if (_leftDown && [touches containsObject:_first]) {
         const CGPoint p = [self pixels:[_first locationInView:self.view]];
         tbd::host::PointerUp(tbd::host::Button::Left, (float)p.x, (float)p.y);
-        _leftDown = NO;
+        _leftDown = _toolDrag = NO;
         _first = nil;
     }
 }
@@ -248,7 +271,7 @@
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if (!_started) return;
     tbd::host::PointerCancel();
-    _leftDown = NO;
+    _leftDown = _toolDrag = NO;
     _twoFinger = NO;
     _camera = _panning = NO;
     _first = nil;
