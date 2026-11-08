@@ -4,9 +4,12 @@
 // clip from assets\audio\radio (tbd::audio::PlayRadio): "radio/<trigger>" picks one of <trigger>_1.._5, and sometimes a
 // call-in (callin_<trigger>[_2]) or two residents talking (convo_<trigger>) follows it. Missing clips are silent.
 //
-// Rules (the user's): nothing plays as filler, only in answer to the player; a clip at most every kMinGapDays game days
-// and kMinGapReal real seconds; the same trigger at most every kSameTriggerDays. Once a game week, if anything happened,
-// The Weekly Rundown plays: theme + intro, the week's top stories with stings between, a call-in, sign-off over music.
+// Rules (the user's): nothing plays as filler, only in answer to the player, and the news is rare: every clip and every
+// headline asks the gate first (src/city/news_gate.h: its tunables, the tiers, the cooldowns). Routine placements
+// (roads, bus stops, repeat small buildings) never make the news; the first of each kind of building, milestones,
+// bankruptcy / recovery and clearly bad neighbours do, at most one story every 2 game days and 4 real minutes. Once a
+// game week, if anything happened, The Weekly Rundown plays: theme + intro, the week's top stories with stings between,
+// a call-in, sign-off over music.
 //
 // Environment (dev):
 //   TBD_RADIO=0|1|2      0 off, 1 host only (Elton, no callers / residents), 2 everything (default)
@@ -18,10 +21,7 @@
 namespace city_radio {
 
 constexpr double kDay = 1440.0;            // game minutes
-constexpr double kMinGapDays = 1.0;        // between two radio clips
-constexpr double kSameTriggerDays = 10.0;  // before one trigger may play again
-constexpr double kMinGapReal = 75.0;       // real seconds between two clips, whatever the clock speed
-constexpr double kWeekDays = 7.0;
+constexpr double kWeekDays = 7.0;          // The Weekly Rundown (the other cooldowns: news_gate.h news_tuning)
 
 int EnvInt(const char* name, int fallback) {
     char v[16] = {};
@@ -89,9 +89,9 @@ struct State {
     std::string test;
     double testAt = -1.0;           // real seconds since load when the test trigger fires
     uint64_t generation = ~0ull;
-    double realSinceLoad = 0.0, realSinceClip = 1e9;
-    double lastClipMinute = -1e18;
-    std::map<std::string, double> lastByTrigger; // game minute it last played
+    double realSinceLoad = 0.0, realTotal = 0.0;
+    ::city::NewsGate gate;          // news_gate.h: whether a story may run at all
+    std::string heldClip, heldHeadline; // the story the gate holds (a Major one that hit the gap)
     uint32_t rng = 0x51f15e5du;
     // the week, for The Weekly Rundown
     double weekStart = -1.0;
@@ -146,34 +146,41 @@ void Headline(const std::string& trigger, bool aired) {
     if (g.feed.size() > 30) g.feed.pop_back();
 }
 
-// Plays a trigger now if the cooldowns allow. Every trigger makes a headline and counts toward the week either way.
-// headline: the trigger whose written line goes into the feed instead (an opening's unvoiced neighbour roast).
-void Post(const std::string& trigger, bool force = false, const std::string& headline = std::string()) {
-    const std::string& written = headline.empty() ? trigger : headline;
-    NoteWeek(trigger);
-    if (g.mode == 0) { Headline(written, false); return; }
-    const double now = g_clock.minutes;
-    auto it = g.lastByTrigger.find(trigger);
-    const bool sameOk = it == g.lastByTrigger.end() || now - it->second >= kSameTriggerDays * kDay;
-    const bool gapOk = now - g.lastClipMinute >= kMinGapDays * kDay && g.realSinceClip >= kMinGapReal && !tbd::audio::RadioBusy();
-    if (!force && !(sameOk && gapOk)) {
-        if (g.log) tbd::Log("Radio: %s held back (cooldown)", trigger.c_str());
-        Headline(written, false);
-        return;
-    }
-    const std::string stem = FileStem(trigger);
+// Runs a story the gate let through: its headline, and its clip ("" for none) when the radio is on and free.
+void Air(const std::string& clip, const std::string& written) {
+    if (!clip.empty()) NoteWeek(clip);
+    if (g.mode == 0 || clip.empty() || tbd::audio::RadioBusy()) { Headline(written, false); return; }
+    const std::string stem = FileStem(clip);
     std::vector<std::string> seq = {"radio/" + stem};
     if (g.mode >= 2) {
         const float r = Rand01();
-        if (r < 0.35f && WithCallin().count(trigger)) seq.push_back("radio/callin_" + stem);
-        else if (r < 0.55f && WithConvo().count(trigger)) seq.push_back("radio/convo_" + stem);
+        if (r < 0.35f && WithCallin().count(clip)) seq.push_back("radio/callin_" + stem);
+        else if (r < 0.55f && WithConvo().count(clip)) seq.push_back("radio/convo_" + stem);
     }
     tbd::audio::PlayRadio(seq, 0.9f);
     Headline(written, true);
-    g.lastByTrigger[trigger] = now;
-    g.lastClipMinute = now;
-    g.realSinceClip = 0.0;
-    if (g.log) tbd::Log("Radio: %s (%zu clips)", trigger.c_str(), seq.size());
+    if (g.log) tbd::Log("Radio: %s (%zu clips)", clip.c_str(), seq.size());
+}
+
+// Offers a story to the gate (news_gate.h). Through: one headline and at most one clip. Held (a Major story that hit
+// the global gap): it runs later from RadioSync. Otherwise nothing at all, no headline; a non-routine story still
+// counts toward The Weekly Rundown. clip: the trigger to play ("" for a written line only); headline: the trigger
+// whose written line goes into the feed ("" = the story's trigger). force: TBD_RADIO_TEST, past every cooldown.
+void Post(const ::city::NewsStory& s, const std::string& clip, const std::string& headline = std::string(), bool force = false) {
+    const std::string& written = headline.empty() ? s.trigger : headline;
+    const double now = g_clock.minutes;
+    if (force) { g.gate.NoteAired(now, g.realTotal); Air(clip, written); return; }
+    const ::city::NewsTier tier = g.gate.Tier(s); // before Offer: an opening marks its kind seen
+    bool held = false;
+    if (g.gate.Offer(s, now, g.realTotal, &held)) { Air(clip, written); return; }
+    if (held) g.heldClip = clip, g.heldHeadline = written;
+    if (tier != ::city::NewsTier::Skip && !clip.empty()) NoteWeek(clip);
+    if (g.log) tbd::Log("Radio: %s %s", s.trigger.c_str(), held ? "held for the gap" : tier == ::city::NewsTier::Skip ? "skipped (routine)" : "dropped (cooldown)");
+}
+void Post(const std::string& trigger, bool force = false) {
+    ::city::NewsStory s;
+    s.trigger = trigger;
+    Post(s, trigger, std::string(), force);
 }
 
 // The Weekly Rundown: up to three of the week's stories (the latest ones), one call-in, and the two halves of a matched
@@ -193,8 +200,7 @@ void PlayWeekly() {
     seq.push_back(std::string("radio/pod_signoff_") + pair);
     tbd::audio::StopRadio(0.8f);
     tbd::audio::PlayRadio(seq, 0.5f);
-    g.lastClipMinute = g_clock.minutes;
-    g.realSinceClip = 0.0;
+    g.gate.NoteAired(g_clock.minutes, g.realTotal);
     if (g.log) tbd::Log("Radio: The Weekly Rundown, %zu stories, pair %s", stories.size(), pair);
 }
 
@@ -252,25 +258,52 @@ std::vector<std::string> Neighbours(tbd::city::V2 p, uint64_t self) {
     return out;
 }
 
-// A building opened: one story (news_adjacency.h), a clip and a headline at most.
-void Opened(const char* name, tbd::city::V2 at, uint64_t id, const std::string& own) {
+// The first-of-kind key of a catalog building: its news kind ("school"), else its own name.
+std::string KindKey(const char* name) {
+    const char* k = ::city::BuildingKind(name);
+    return k[0] ? std::string(k) : std::string(name ? name : "");
+}
+
+// A building opened: one story (news_adjacency.h), a clip and a headline at most, and only if the gate (news_gate.h)
+// calls it news: a clearly bad neighbour pair (rate limited), or the first of its kind / a big one, else nothing.
+// cells: the lot's size in 8 m cells.
+void Opened(const char* name, tbd::city::V2 at, uint64_t id, const std::string& own, int cells) {
+    const std::string kind = KindKey(name);
     const ::city::OpeningStory s = ::city::PickOpeningStory(::city::BuildingKind(name), own, Neighbours(at, id), g.news, VoicedPairs());
-    if (g.log && s.headline != own) tbd::Log("Radio: %s opened beside %s", name, s.headline.c_str());
-    if (!s.clip.empty()) Post(s.clip, false, s.headline);
-    else if (!s.headline.empty()) Headline(s.headline, false); // written only: no clip, not in the week
+    ::city::NewsStory st;
+    st.kind = kind;
+    st.big = cells >= ::city::news_tuning::kBigLotCells;
+    const bool roast = s.headline.rfind("adj:", 0) == 0 && g.news.Tone(s.headline) < 0;
+    if (roast) {
+        g.gate.MarkKindSeen(kind);
+        st.trigger = s.headline, st.roast = true;
+        if (g.log) tbd::Log("Radio: %s opened beside %s", name, s.headline.c_str());
+        Post(st, s.clip, s.headline);
+        return;
+    }
+    // the plain opening (a good neighbour pair alone is no story); no opening trigger: just remember the kind
+    if (own.empty()) { g.gate.MarkKindSeen(kind); return; }
+    st.trigger = own, st.opening = true;
+    Post(st, own);
 }
 
 // Takes the city as it stands as "already announced" (a load or a new map must not read out every building).
 void Baseline() {
+    using namespace tbd::city;
+    g.gate.Reset(); // what stands is not "the first" of its kind; the clock may have gone backwards
+    g.heldClip.clear(), g.heldHeadline.clear();
     g.transportState.clear();
     for (const auto& b : g_transport.items)
-        if (b.alive) g.transportState[b.id] = (uint8_t)b.state;
+        if (b.alive) {
+            g.transportState[b.id] = (uint8_t)b.state;
+            if (b.state == BState::Done) g.gate.MarkKindSeen(KindKey(Defs()[b.def].name));
+        }
     g.utilSeen.clear();
     for (const auto& u : g_util.items)
-        if (u.alive) g.utilSeen.insert(u.id);
+        if (u.alive) g.utilSeen.insert(u.id), g.gate.MarkKindSeen(KindKey(UtilDefs()[u.def].name));
     g.routeSeen.clear();
     for (const auto& r : g_transit.routes)
-        if (r.alive) g.routeSeen.insert(r.id);
+        if (r.alive) g.routeSeen.insert(r.id), g.gate.MarkKindSeen("transit_line");
     g.stopSeen.clear();
     for (const auto& s : g_transit.stops)
         if (s.alive) g.stopSeen.insert(s.id);
@@ -291,21 +324,25 @@ void Watch() {
         auto it = g.transportState.find(b.id);
         const uint8_t was = it == g.transportState.end() ? 0xff : it->second;
         g.transportState[b.id] = (uint8_t)b.state;
-        if (b.state == BState::Done && was != (uint8_t)BState::Done) Opened(Defs()[b.def].name, b.c, b.id, TransportTrigger(Defs()[b.def]));
+        if (b.state == BState::Done && was != (uint8_t)BState::Done) Opened(Defs()[b.def].name, b.c, b.id, TransportTrigger(Defs()[b.def]), Defs()[b.def].w * Defs()[b.def].d);
     }
     // power and water buildings (not the backup ones)
     for (const auto& u : g_util.items) {
         if (!u.alive || !g.utilSeen.insert(u.id).second) continue;
         const UtilDef& D = UtilDefs()[u.def];
         if (D.backup) continue;
-        Opened(D.name, u.c, u.id, D.kind == Util::Electricity ? "power_plant_built" : D.kind == Util::Water ? "water_tower_built" : "");
+        Opened(D.name, u.c, u.id, D.kind == Util::Electricity ? "power_plant_built" : D.kind == Util::Water ? "water_tower_built" : "", D.w * D.d);
     }
-    // transit: a new line, the first bus stops
+    // transit: the city's first line is news; later lines and bus stops are routine (the gate skips them)
     for (const auto& r : g_transit.routes)
-        if (r.alive && g.routeSeen.insert(r.id).second && r.stops.size() >= 2) Post("transit_opened");
+        if (r.alive && g.routeSeen.insert(r.id).second && r.stops.size() >= 2) {
+            ::city::NewsStory st;
+            st.trigger = "transit_opened", st.kind = "transit_line", st.opening = true;
+            Post(st, st.trigger);
+        }
     for (const auto& s : g_transit.stops)
         if (s.alive && g.stopSeen.insert(s.id).second && g.stopsOpenedPosts < 3) { ++g.stopsOpenedPosts; Post("bus_stop_opened"); }
-    // roads: a bulldozed stretch (three or more segments gone since the last look)
+    // roads: a bulldozed stretch (three or more segments gone since the last look; routine, the gate skips it)
     size_t segs = 0;
     for (const auto& s : g_roads.net.segs) segs += s.alive ? 1 : 0;
     if (segs + 3 <= g.roadSegs) { Post("road_bulldozed"); g.roadSegs = segs; }
@@ -366,7 +403,7 @@ void RadioSync(float realDt) {
         return;
     }
     g.realSinceLoad += realDt;
-    g.realSinceClip += realDt;
+    g.realTotal += realDt;
     if (g.realSinceLoad < 2.0) { Baseline(); return; } // the loaded city is still settling in
     if (g.testAt >= 0.0 && g.realSinceLoad >= g.testAt) {
         g.testAt = -1.0;
@@ -377,6 +414,8 @@ void RadioSync(float realDt) {
         else Post(g.test, true);
     }
     Watch();
+    ::city::NewsStory held;
+    if (g.gate.TakeHeld(g_clock.minutes, g.realTotal, held)) Air(g.heldClip, g.heldHeadline.empty() ? held.trigger : g.heldHeadline);
     if (g_clock.minutes - g.weekStart >= kWeekDays * kDay) {
         if (!g.week.empty()) PlayWeekly();
         g.week.clear();
@@ -409,5 +448,9 @@ void RadioHudRead(const tbd::gui::CityHud& h) {
 void RadioSimEvent(const char* trigger) {
     const std::string t = trigger;
     if (t == "bankrupt") city_radio::Post("budget_deficit");
-    else if (t == "loan_taken") city_radio::Headline("loan_taken", false);
+    else if (t == "loan_taken") { // written only, through the gate like everything else
+        ::city::NewsStory s;
+        s.trigger = t;
+        city_radio::Post(s, std::string());
+    }
 }

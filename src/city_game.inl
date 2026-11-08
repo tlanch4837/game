@@ -9,6 +9,7 @@
 //   M|simVersion|treasury cents|tax r c o i (tenths of a %)|funding x6|sim minute|demand r c o i|ups downs abandoned
 //   Q|id|seed|home lot|band|age|edu|wealth|health|happiness|working|job cell x z|job kind|touched
 //   H|mapKind|seed|minutes|speed|cam x y z|dist|pitch|yaw|residents|commuters|totalPeople|totalCargo|cityName
+//   T|relief (CityMap::Height's hills scale; missing in older saves = 1, the original map)
 //   N|alive|x y z|grounded                       S|alive|a|b|c1x c1z|c2x c2z|profile name
 //   Z|x z|zone                                   B|def|cx cz|fx fz|y|track|platformInner|state|timer|progress|haveShore|sx sz
 //   U|def|cx cz|fx fz|y                          L|kind|ax az|bx bz|elev
@@ -160,12 +161,21 @@ void DefaultInfrastructure() {
     tbd::Log("Default infrastructure: %zu nodes, %zu segments, %d outside connections", net.nodes.size(), net.segs.size(), g_transit.OutsideCount());
 }
 
+// The hills' scale of a new map: CityMap::kDefaultRelief, or TBD_TERRAIN_RELIEF=<0.05..2> (1 = the original hilly map).
+float NewMapRelief() {
+    char v[24] = {};
+    float r = tbd::CityMap::kDefaultRelief;
+    if (tbd::platform::GetEnvA("TBD_TERRAIN_RELIEF", v, sizeof(v)) > 0) r = (float)atof(v);
+    return std::isfinite(r) && r > 0.0f ? std::clamp(r, 0.05f, 2.0f) : tbd::CityMap::kDefaultRelief;
+}
+
 // A fresh random map: north land, south ocean, the default corridor, a clean city.
 void NewCityGame(int seed) {
     g_engine.terrain.params.enabled = true;
     g_engine.terrain.params.flatStart = false;
     g_engine.terrain.params.mapKind = 2;
     g_engine.terrain.params.seed = seed;
+    g_engine.terrain.params.relief = NewMapRelief(); // a new map is the flatter one (city_map.h kDefaultRelief)
     g_engine.terrain.field.Clear();
     g_engine.sun.showSky = false;
     // An afternoon sun, low and leaning south (docs/cs2_look_pass.md): near noon the houses' shadows hid under them and every wall read
@@ -192,6 +202,7 @@ bool SaveCityGame(int slot) {
     o << "H|" << tp.mapKind << '|' << tp.seed << '|' << g_clock.minutes << '|' << g_clock.speed << '|' << g_engine.camera.target.x << ' ' << g_engine.camera.target.y << ' '
       << g_engine.camera.target.z << '|' << g_engine.camera.distance << '|' << g_engine.camera.pitch << '|' << g_engine.camera.yaw << '|' << g_transit.residents << '|'
       << g_transit.commuters << '|' << g_transit.totalPeople << '|' << g_transit.totalCargo << '\n';
+    o << "T|" << tp.relief << '\n'; // the map's relief (a save without it is the original map, relief 1)
     const Network& net = g_roads.net;
     for (const Node& n : net.nodes) o << "N|" << (n.alive ? 1 : 0) << '|' << n.p.x << ' ' << n.p.y << ' ' << n.p.z << '|' << (n.grounded ? 1 : 0) << '\n';
     for (const Segment& s : net.segs)
@@ -289,6 +300,13 @@ bool LoadCityGame(int slot) {
     g_engine.terrain.params.flatStart = false;
     g_engine.terrain.params.mapKind = mapKind;
     g_engine.terrain.params.seed = seed;
+    g_engine.terrain.params.relief = 1.0f; // saves from before the relief scale: the original map
+    for (const std::string& l : lines)
+        if (l.rfind("T|", 0) == 0) {
+            const float r = (float)atof(l.c_str() + 2);
+            if (std::isfinite(r) && r > 0.0f) g_engine.terrain.params.relief = r;
+            break;
+        }
     g_engine.terrain.field.Clear();
     {
         FILE* t = tbd::platform::WOpen(GameSavePath(slot, L".hfd").c_str(), L"rb");
@@ -507,7 +525,7 @@ void GameSync() {
     for (PendingLot& pl : g_pendingLots) {
         pl.lot.cells.clear();
         for (const V2& p : pl.cellCentres) pl.lot.cells.push_back(g_zones.NearestCell(p, 3.0f));
-        lotsBack += g_zones.AddLoadedLot(pl.lot) ? 1 : 0;
+        lotsBack += g_zones.AddLoadedLot(pl.lot) || g_zones.AdoptLoadedLot(pl.lot, g_roads.net) ? 1 : 0; // adopt: its cells moved (zoning precedence)
     }
     if (!g_pendingLots.empty()) tbd::Log("Zone-grown buildings restored: %d of %zu", lotsBack, g_pendingLots.size());
     g_pendingLots.clear();

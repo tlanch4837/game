@@ -106,13 +106,15 @@ inline const std::vector<UtilDef>& UtilDefs() {
         {"Sewage Outlet", "Outlet", "Dumps untreated sewage straight into the water. Cheap but pollutes downstream.", UTab::Water, Util::Sewage,
          "assets/buildings/water/glb/WT_2x2_sewage_outlet.glb", 2, 2, 3.3f, 20000.0f, false, 60000, 600, "Shoreline: back of lot on the water", {0.60f, 0.50f, 0.30f}},
         {"Wastewater Treatment Plant", "Treatment", "Cleans sewage before releasing it. Much less water pollution than an outlet.", UTab::Water, Util::Sewage,
-         "assets/buildings/water/glb/WT_6x6_treatment.glb", 6, 6, 16.0f, 60000.0f, false, 900000, 7000, "Shoreline or with an outfall pipe", {0.45f, 0.65f, 0.40f}},
+         "assets/buildings/water/glb/WT_6x6_treatment.glb", 6, 6, 16.0f, 60000.0f, false, 900000, 7000, "Level ground near a road; no shoreline needed", {0.45f, 0.65f, 0.40f}},
     };
     return v;
 }
 inline bool UtilDefBackup(int def) { return UtilDefs()[def].backup; }
 // Surface-water buildings (pumping stations, the sewage outlet) take or dump water: the back of the lot must touch the sea.
-inline bool UtilDefShore(int def) { const char* r = UtilDefs()[def].rule; return r && std::string(r).rfind("Shoreline", 0) == 0; }
+// Only rules that start with exactly "Shoreline:" opt in; the Wastewater Treatment Plant cleans sewage and pipes it on, so it
+// places anywhere valid (level ground, no road / building in the way) and never needs the shore.
+inline bool UtilDefShore(int def) { const char* r = UtilDefs()[def].rule; return r && std::string(r).rfind("Shoreline:", 0) == 0; }
 
 // What a building takes from each network, per 8 m cell of its lot, by zone type (ZoneTypes() order).
 inline float UtilDemandPerCell(Util u, int zoneType) {

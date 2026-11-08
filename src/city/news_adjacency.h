@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "news_feed.h"
+#include "news_gate.h" // how often any of it may run (city_radio.inl)
 
 namespace city {
 
