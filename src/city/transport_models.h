@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "rail_yard.h" // the yards' trains (the hosts take both from here)
 #include "transport.h"
 
 namespace tbd {
@@ -275,13 +276,11 @@ inline void StsCrane(Mesher& m, float x, float zLand, float zWater) {
 // pilasters, brick plinth, window bands, the five track portals, skylights and parapets are relief texture, not triangles.
 inline void RailDepot(Mesher& m, const BuildingDef& d) {
     const float hw = d.W() * 0.5f, hd = d.D() * 0.5f;
-    const float roads[5] = {-10, -5, 0, 5, 10}, sidings[2] = {-27, -33};
     auto ground = [&](float x0, float x1, float z0, float z1, float y, Vec3 c) { m.Quad(m.P(x0, y, z0), m.P(x1, y, z0), m.P(x1, y, z1), m.P(x0, y, z1), {0, 1, 0}, c); };
     ground(-hw, hw, -hd, hd, 0.1f, kGravel);
     ground(-hw, hw, -20, 20, 0.11f, {0.55f, 0.53f, 0.49f});        // shed apron
     ground(-hw, hw, -37, -23, 0.11f, {0.49f, 0.48f, 0.44f});       // siding bed
-    for (float z : roads) m.Track(-hw, z, hw, z);
-    for (float z : sidings) m.Track(-hw, z, hw, z);
+    for (const YardTrack& t : YardTracks(d)) m.Track(t.x0, t.z, t.x1, t.z); // the five shed roads and two sidings (transport.h: also the rail ports)
     // the shed: walls 10 m from the apron; the end walls' relief has the five portals lined up with the roads (5 m apart)
     m.SlabBlock(-60, 60, -16, 16, 0.12f, 10.0f, kSlabDepotWall, kSlabDepotEnd, kSlabDepotRoof, 12.0f, 32.0f, 19.0f, 34.5f, 1.25f);
     // the office at the front corner, with its fuel tanks
@@ -331,7 +330,7 @@ inline void CargoTerminal(Mesher& m, const BuildingDef& d) {
     m.Box(-93, 63, -45, -19, 10.0f, 10.5f, {0.35f, 0.35f, 0.38f}, false);
     for (int i = 0; i < 6; ++i) m.Box(-84.0f + 24.0f * i, -76.0f + 24.0f * i, -19.8f, -19.4f, 0.15f, 5.0f, kDark, false);
     m.Box(82, 106, -40, -20, 0.15f, 6.0f, {0.8f, 0.78f, 0.72f});
-    for (float z : {-6.0f, 8.0f, 22.0f}) TrackX(m, z, -108.0f, 108.0f);
+    for (const YardTrack& t : YardTracks(d)) TrackX(m, t.z, t.x0, t.x1); // the loading tracks (transport.h: also the rail ports)
     TrainX(m, 8.0f, -90.0f, 5, 11, true);
     TrainX(m, 22.0f, -10.0f, 4, 12, true);
     for (int r = 0; r < 2; ++r)
