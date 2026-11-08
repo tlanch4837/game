@@ -87,6 +87,35 @@ int main() {
         CHECK(row[2] == 1 && row[6] == 0 && row[10] == 0);
         CHECK(row[3] == 1 && row[7] == 2 && row[11] == 3);
     }
+    // a scaled row shrinks the car about its ground point (a fade without alpha)
+    {
+        CarInstance car;
+        car.p = {1, 2, 3};
+        car.dir = {0, 1};
+        car.scale = 0.5f;
+        float row[12];
+        CarRow(car, row);
+        CHECK(row[10] == 0.5f && row[5] == 0.5f && row[0] == 0.5f && row[3] == 1 && row[7] == 2 && row[11] == 3);
+    }
+    // the wrap from a segment's end to its start never pops: a car shrinks away in the last metres and grows in the first
+    {
+        for (SegFlow& f : flow) f.flow = 600, f.speedRatio = 1.0f;
+        int faded = 0, shown = 0;
+        for (int k = 0; k < 400; ++k) {
+            CosmeticCars(net, grid, flow, {200, 0}, 0.25 * k, p, x);
+            for (const CarInstance& car : x) {
+                if (car.p.y > 4.0f || car.p.x > 4000) continue;
+                ++shown;
+                CHECK(car.scale > 0.02f && car.scale <= 1.0f);
+                const float toEnd = std::min(std::fabs(car.p.x - 0.0f), std::min(std::fabs(car.p.x - 400.0f), std::fabs(car.p.x - 800.0f))); // s0, s1 ends
+                if (car.scale < 1.0f) {
+                    ++faded;
+                    CHECK(toEnd < p.endFade + 0.5f); // only near the segment's ends
+                }
+            }
+        }
+        CHECK(shown > 0 && faded > 0);
+    }
     (void)s1;
 
     if (failures) {

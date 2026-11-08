@@ -2,6 +2,8 @@
 // shows as many cars as its solved flow (sim_flow.h) puts on it, scaled down to a visible budget; where a car is is a pure
 // function of (segment, lane, car index, time), evaluated on the CPU (a few hundred instances). Cars never decide
 // anything; they only slow down with the segment's congestion. Header only, headless (tests\sim_agents_test.cpp).
+// This is the fallback (TBD_HERDS=0, or before the herds' link table is built): sim_children.h draws the real cars. A car
+// wraps from its segment's end to its start, so it shrinks away over the last endFade metres and grows over the first.
 //
 // Density on a segment: vehicles per km = flow (veh/h) / speed (km/h), speed = free speed x the segment's speed ratio.
 // Lanes: right-hand traffic, the first `back` lanes (left of a -> b) drive b -> a, the rest a -> b, 3.2 m apart.
@@ -20,9 +22,11 @@ namespace tbd {
 namespace city {
 
 struct CarInstance {
-    Vec3 p;      // ground point under the car's centre
-    V2 dir;      // heading (unit, xz)
-    int model;   // 0 .. models-1
+    Vec3 p;            // ground point under the car's centre
+    V2 dir;            // heading (unit, xz)
+    int model = 0;     // 0 .. models-1
+    float scale = 1;   // 0 .. 1: a car fading in or out (a driveway, the map edge, the edge of the view) is drawn smaller
+    uint32_t id = 0;   // who it is across frames (0: no identity, e.g. parked or cosmetic cars)
 };
 
 struct AgentParams {
@@ -30,6 +34,7 @@ struct AgentParams {
     float radius = 450.0f;    // metres around the focus: nothing past it
     float laneWidth = 3.2f;
     int models = 8;
+    float endFade = 10.0f;    // metres at each segment end over which a car fades (the wrap point)
 };
 
 // Cars for this moment. `focus` is the camera's ground point; timeSec the time they drive on (game seconds, so the speed
@@ -86,16 +91,22 @@ inline void CosmeticCars(const Network& net, const SegGrid& grid, const std::vec
             car.p = {q.x, net.YAt(net.segs[(size_t)c.seg], t), q.z};
             car.dir = forward ? tan : tan * -1.0f;
             car.model = (int)r.Below((uint32_t)std::max(1, p.models));
+            // the car wraps from the segment's end to its start: it shrinks away in the last metres and grows in the first,
+            // so the wrap never shows as a car popping at the junction
+            const float fromEnd = (float)std::min(s, 1.0 - s) * c.len;
+            car.scale = std::clamp(fromEnd / p.endFade, 0.0f, 1.0f);
+            if (car.scale <= 0.02f) continue;
             out.push_back(car);
         }
     }
 }
 
 // A car's instance row (kInstanceFloats = 12: float3x4 row by row, translation last in each row): yaw so the model's +Z
-// points along `dir`.
+// points along `dir`, scaled by c.scale (a fade without alpha: the car shrinks into its ground point).
 inline void CarRow(const CarInstance& c, float* row) {
-    const float s = c.dir.x, k = c.dir.z; // sin, cos of the yaw
-    const float m[12] = {k, 0, s, c.p.x, 0, 1, 0, c.p.y, -s, 0, k, c.p.z};
+    const float g = std::clamp(c.scale, 0.0f, 1.0f);
+    const float s = c.dir.x * g, k = c.dir.z * g; // sin, cos of the yaw
+    const float m[12] = {k, 0, s, c.p.x, 0, g, 0, c.p.y, -s, 0, k, c.p.z};
     for (int i = 0; i < 12; ++i) row[i] = m[i];
 }
 
