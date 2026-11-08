@@ -17,6 +17,8 @@
 //                 one hood (home cell -> job cell), and the outside connections (through traffic, commuters, visitors and
 //                 trucks from the map edge). Released by ReleaseHerds like the hood links, as a stream of small herds
 //                 spread over the window so a road shows a steady trickle rather than one bunch every 15 minutes.
+//   Releases      every herd released (or injected) is counted on its route (routeReleased, routeLast): the visible cars
+//                 (sim_children.h) run a steady stream of trips per route at the herds' release rate, on their own clock.
 // Trips are vehicles: car share is already applied (people on foot, bus or train are not herds yet).
 #pragma once
 
@@ -110,6 +112,27 @@ struct LinkTable {
         }
         dist = best;
         return true;
+    }
+    // The link that runs the other way between the same two nodes (-1: a one-way road). Needs BuildAdjacency.
+    int Reverse(int l) const {
+        const LinkInfo& L = links[(size_t)l];
+        if ((size_t)L.to + 1 >= outOff.size()) return -1;
+        int best = -1;
+        float bd = 1e30f;
+        for (int k = outOff[(size_t)L.to]; k < outOff[(size_t)L.to + 1]; ++k) {
+            const int o = outIdx[(size_t)k];
+            if (o == l || links[(size_t)o].to != L.from) continue;
+            const float d = std::fabs(links[(size_t)o].len - L.len);
+            if (d < bd) bd = d, best = o;
+        }
+        return best;
+    }
+    // Sideways offset (metres, + right) of the inner edge of link l's lanes from its polyline (the road's centre line):
+    // 0 on a symmetric two-way road, -lanes x width / 2 on a one-way road (its lanes straddle the centre line).
+    float LaneBase(int l, float laneWidth) const {
+        const int r = Reverse(l);
+        const int rev = r >= 0 ? (int)links[(size_t)r].lanes : 0;
+        return ((float)rev - (float)links[(size_t)l].lanes) * laneWidth * 0.5f;
     }
     // A straight link from a to b with the given class numbers (tests, and the fallback for links without geometry).
     int AddStraight(int from, int to, V2 a, V2 b, float kmh, float cap, int lanes = 1, bool pipe = false) {
@@ -278,6 +301,23 @@ public:
     std::vector<Herd> herds;      // live and dead (dead slots are reused)
     std::vector<float> loadCur, loadPrev, loadDay; // vehicles that entered each link this window / last window / today
     std::vector<float> arrivedDay; // per hood: vehicles delivered today
+    // Per route id (RouteStore): vehicles ever released on it, and who the latest herd on it was. The visible cars
+    // (sim_children.h) turn the first into a steady stream of trips per route; the second names the trips for the info card.
+    struct RouteLast {
+        uint32_t herd = 0;
+        uint8_t type = kTripCommute;
+        int from = -1, to = -1, home = -1, work = -1;
+    };
+    std::vector<double> routeReleased;
+    std::vector<RouteLast> routeLast;
+    double countStartMinute = -1; // the departure minute of the first herd counted since SetTable (-1: none yet)
+    std::vector<double> routeDecay, routeAt; // per route: releases decayed over rateMinutes, as of minute routeAt
+    double rateMinutes = 60;
+    // Vehicles a game second the herds release on route r, averaged over the last rateMinutes (decaying), at `minute`.
+    double RouteRate(uint32_t r, double minute) const {
+        if (r >= routeDecay.size()) return 0.0;
+        return routeDecay[r] * std::exp(-std::max(0.0, minute - routeAt[r]) / rateMinutes) / (rateMinutes * 60.0);
+    }
     HerdStats stats;
     std::function<void(int hood, float n, const Herd&)> onArrive; // optional
 
@@ -289,6 +329,7 @@ public:
         herds.clear();
         free_.clear();
         routes.Clear();
+        routeReleased.clear(), routeLast.clear(), routeDecay.clear(), routeAt.clear(), countStartMinute = -1;
         const size_t n = t ? t->links.size() : 0;
         loadCur.assign(n, 0.0f), loadPrev.assign(n, 0.0f), loadDay.assign(n, 0.0f);
     }
@@ -409,6 +450,22 @@ public:
 
     // Vehicles of a herd that are on the road right now: not yet dissolved.
     static float OnRoad(const Herd& h) { return h.alive && h.wait <= 0 ? h.size - h.delivered : 0.0f; }
+
+    // A herd from outside the release logic (tests, tools): it gets an id and counts on its route like a released one.
+    uint32_t Inject(Herd h) {
+        h.id = nextId_++;
+        h.alive = true;
+        if (h.route != ~0u && h.route < routes.recs.size()) h.distance = routes.recs[h.route].len;
+        Count(h);
+        if (!free_.empty()) {
+            const uint32_t slot = free_.back();
+            free_.pop_back();
+            herds[slot] = h;
+        } else {
+            herds.push_back(h);
+        }
+        return h.id;
+    }
 
     // Head and tail of a herd, metres along its route (clamped to the route).
     void Span(const Herd& h, float& tail, float& head) const {
@@ -537,6 +594,7 @@ private:
         h.departMinute = minute;
         h.distance = routes.recs[route].len;
         ++stats.herdsReleased;
+        Count(h);
         if (!free_.empty()) {
             const uint32_t slot = free_.back();
             free_.pop_back();
@@ -561,6 +619,20 @@ private:
         Spawn(h.departMinute, h.to, work, h.homeHood, work, kTripChain, h.size * chainShare, ch[big].route, 0, Key(h.homeHood, work, kTripChain) ^ h.id, 0, 0.5f);
     }
     uint32_t nextId_ = 1;
+    void Count(const Herd& h) {
+        if (h.route == ~0u) return;
+        if (countStartMinute < 0) countStartMinute = (double)h.departMinute;
+        if (routeReleased.size() <= h.route)
+            routeReleased.resize((size_t)h.route + 1, 0.0), routeLast.resize((size_t)h.route + 1), routeDecay.resize((size_t)h.route + 1, 0.0), routeAt.resize((size_t)h.route + 1, 0.0);
+        routeReleased[h.route] += h.size;
+        const double t = (double)h.departMinute + std::max(0.0f, h.wait); // when it leaves
+        double& d = routeDecay[h.route];
+        double& at = routeAt[h.route];
+        if (t >= at) d = d * std::exp(-(t - at) / rateMinutes) + h.size, at = t;
+        else d += h.size * std::exp(-(at - t) / rateMinutes);
+        RouteLast& l = routeLast[h.route];
+        l.herd = h.id, l.type = h.type, l.from = h.from, l.to = h.to, l.home = h.homeHood, l.work = h.workHood;
+    }
 };
 
 } // namespace city
