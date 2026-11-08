@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "building_snap.h"
+#include "rail_port.h"
 #include "road_network.h"
 #include "zoning.h"
 
@@ -50,6 +52,7 @@ struct BuildingDef {
     float draft = 0;       // coast only: how deep (m under the sea) that water must be
     float dock = 0.3f;     // coast only: the share of the lot's depth that sits over the water
     const char* glb = nullptr; // the finished building's model (a scene entity), relative to the project root; null = procedural
+    int entrance = 0;      // the lot edge with the door / driveway (building_snap.h EdgeMids order; 0: the front, +Z in model space)
     float W() const { return w * kCell; }
     float D() const { return d * kCell; }
 };
@@ -269,6 +272,47 @@ inline const char* SiteRule(Site s) {
     return k[(int)s];
 }
 
+// ---------------------------------------------------------------------------------------------------- rail yards
+// The Railway Depot and the Cargo Train Terminal are rail yards: their own tracks (drawn by the model) run across the lot
+// along its local x and leave it at both side edges. Each track end is a rail connection point (RailPort). The entrance
+// (the driveway the road vehicles use) is the lot edge that faces the road, the front by default (the depot's office and
+// fuel tanks, the terminal's container stacks); a track end on the entrance side (a yard turned side-on to its road) is
+// not offered. One table, read by the model (transport_models.h) and the connection points, so they always agree.
+struct YardTrack {
+    float z;      // local z of the track's centre line
+    float x0, x1; // where it starts and ends (local x)
+};
+inline bool IsRailYard(const BuildingDef& d) { return d.model == Model::RailDepot || d.model == Model::CargoTerminal; }
+inline std::vector<YardTrack> YardTracks(const BuildingDef& d) {
+    const float hw = d.W() * 0.5f;
+    std::vector<YardTrack> v;
+    if (d.model == Model::RailDepot) { // the five shed roads (5 m apart, through the shed's portals), then the two outer sidings
+        for (float z : {-10.0f, -5.0f, 0.0f, 5.0f, 10.0f}) v.push_back({z, -hw, hw});
+        for (float z : {-27.0f, -33.0f}) v.push_back({z, -hw, hw});
+    } else if (d.model == Model::CargoTerminal) { // the three loading tracks under the gantry
+        for (float z : {-6.0f, 8.0f, 22.0f}) v.push_back({z, -hw, hw});
+    }
+    return v;
+}
+// The track ends of a yard standing at c facing `front`, its entrance edge facing entranceDir (zero: none known). The
+// ends on the entrance side are left out.
+inline std::vector<RailPort> YardPorts(const BuildingDef& d, V2 c, V2 front, float y, V2 entranceDir = {}, uint64_t owner = 0) {
+    std::vector<RailPort> v;
+    const V2 side{front.z, -front.x};
+    const std::vector<YardTrack> tr = YardTracks(d);
+    for (size_t i = 0; i < tr.size(); ++i)
+        for (int e = 0; e < 2; ++e) {
+            RailPort p;
+            const float x = e ? tr[i].x1 : tr[i].x0;
+            p.p = c + side * x + front * tr[i].z;
+            p.dir = e ? side : side * -1.0f;
+            p.y = y, p.owner = owner, p.track = (int)i, p.end = e;
+            if (Len(entranceDir) > 0.5f && Dot2(p.dir, entranceDir) > 0.7f) continue; // the road is there
+            v.push_back(p);
+        }
+    return v;
+}
+
 // ---------------------------------------------------------------------------------------------------- geometry
 // A footprint's local frame: x across the building, z from its back to its front.
 struct Frame {
@@ -307,6 +351,8 @@ struct PlaceContext {
 struct PlanOptions {
     bool snapTrack = true; // stations snap to the nearest railway
     bool snapCoast = true; // harbours and shipyards snap to the nearest shore and face the water
+    bool snapRoad = true;  // flat-site buildings snap beside the nearest road, entrance to it (building_snap.h); the host
+                           // turns it off while the Rotate dial is out (free position and heading)
 };
 struct Placement {
     bool valid = false;
@@ -320,6 +366,10 @@ struct Placement {
     V2 shore{};                  // coast: the shoreline point at the lot's waterside
     float relief = 0;            // highest minus lowest ground under the footprint
     float waterDepth = 0;        // coast: the shallowest depth sampled across the apron
+    bool roadSnapped = false;    // flat site: stood beside a road by the road snap
+    int roadSeg = -1;            // the road its entrance reaches (-1: none)
+    int entranceEdge = -1;       // the edge with road access (EdgeMids order; -1: none)
+    V2 entrance{}, entranceDir{}; // that edge's middle and outward normal (toward the road)
 };
 
 enum class BState : uint8_t { Planned, Building, Done };
@@ -355,9 +405,43 @@ public:
         r.y = cx.Ground(cursor);
         if (D.site == Site::Track && !PlanTrack(cx, D, cursor, opt, r)) return r;
         if (D.site == Site::Coast && opt.snapCoast && !PlanCoast(cx, D, cursor, r)) return r;
+        if (D.site == Site::Flat && opt.snapRoad && cx.net) { // [snap] beside the nearest road, entrance to it
+            const BuildingSnap s = SnapBesideRoad(*cx.net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), D.entrance);
+            if (s.snapped) r.c = s.c, r.front = s.front, r.snapped = r.roadSnapped = true;
+        }
         Validate(cx, D, r);
+        if (D.site == Site::Flat && cx.net) { // road access through an edge (the entrance edge first)
+            int seg = -1;
+            const int e = RoadAtEdge(*cx.net, r.c, r.front, D.W(), D.D(), D.entrance, kRoadReach, seg);
+            if (e >= 0) {
+                V2 mid[4], out[4];
+                EdgeMids(r.c, r.front, D.W(), D.D(), mid, out);
+                r.entranceEdge = e, r.roadSeg = seg, r.entrance = mid[e], r.entranceDir = out[e];
+            } else if (IsRailYard(D)) Fail(r, "Rail yard entrance must touch a road: place it beside a road");
+        }
         r.valid = r.error.empty();
         return r;
+    }
+    static constexpr float kRoadReach = 6.0f; // metres from a lot edge to a road's kerb that still count as road access
+
+    // A placed building's entrance (the edge with road access) and its outward normal; false: no road reaches it.
+    static bool EntranceOf(const Network& net, const Placed& b, V2& at, V2& dir) {
+        const BuildingDef& D = Defs()[b.def];
+        int seg = -1;
+        const int e = RoadAtEdge(net, b.c, b.front, D.W(), D.D(), D.entrance, kRoadReach, seg);
+        if (e < 0) return false;
+        V2 mid[4], out[4];
+        EdgeMids(b.c, b.front, D.W(), D.D(), mid, out);
+        at = mid[e], dir = out[e];
+        return true;
+    }
+    // A placed rail yard's track ends (none on its entrance side; with no road the front counts as the entrance).
+    static std::vector<RailPort> PortsOf(const Network* net, const Placed& b) {
+        const BuildingDef& D = Defs()[b.def];
+        if (!IsRailYard(D)) return {};
+        V2 at, dir = b.front;
+        if (net) EntranceOf(*net, b, at, dir);
+        return YardPorts(D, b.c, b.front, b.y, dir, b.id);
     }
 
     // Commits a valid placement; returns the new building's index (or -1).
@@ -656,6 +740,21 @@ inline void MarkerLines(const BuildingDef& D, const Placement& p, const GroundFn
         for (int i = 1; i < 4; ++i) line(a[i], a[(i + 1) % 4], water);
         if (p.haveShore) { // the shoreline under the lot's waterside
             line(fr.World(-hw, hd - D.D() * D.dock), fr.World(hw, hd - D.D() * D.dock), {1.0f, 0.9f, 0.4f});
+        }
+    }
+    if (D.site == Site::Flat) { // [snap] the entrance: a door mark and the way in from the road (the default front without one)
+        const bool have = p.entranceEdge >= 0;
+        const V2 n = have ? p.entranceDir : p.front, mid = have ? p.entrance : fr.World(0, hd);
+        const float edgeLen = std::fabs(Dot2(n, p.front)) > 0.5f ? D.W() : D.D();
+        EntranceMark(mid, n, edgeLen, ground, out, have ? Vec3{0.35f, 1.0f, 0.55f} : Vec3{1.0f, 0.85f, 0.3f}); // green: on a road
+    }
+    if (IsRailYard(D)) { // the track ends: a short arrow out of each one the rail tool can join
+        const Vec3 tc{1.0f, 0.85f, 0.3f};
+        for (const RailPort& rp : YardPorts(D, p.c, p.front, p.y, p.entranceEdge >= 0 ? p.entranceDir : p.front)) {
+            const V2 tip = rp.p + rp.dir * 6.0f, sd{rp.dir.z, -rp.dir.x};
+            line(rp.p, tip, tc);
+            line(tip, tip - rp.dir * 2.0f + sd * 1.2f, tc);
+            line(tip, tip - rp.dir * 2.0f - sd * 1.2f, tc);
         }
     }
 }

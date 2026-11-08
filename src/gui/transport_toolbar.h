@@ -29,6 +29,7 @@ struct TransportToolState {
     bool snapAll = true;
     bool snapTrack = true;  // stations jump onto the nearest railway
     bool snapCoast = true;  // harbours and shipyards jump onto the nearest shore and face the water
+    bool snapRoad = true;   // [snap] everything else stands beside the nearest road, entrance to it (city/building_snap.h)
     bool bulldoze = false;  // click a placed building to remove it
     // transit lines + outside connections (city/transit.h)
     bool lines = false;                                 // the Lines page instead of the buildings picker
@@ -60,6 +61,7 @@ struct TransportToolState {
         city::PlanOptions o;
         o.snapTrack = snapAll && snapTrack;
         o.snapCoast = snapAll && snapCoast;
+        o.snapRoad = snapAll && snapRoad;
         return o;
     }
     // Esc: drop the chosen asset first, then close
@@ -180,14 +182,17 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
         const Rect minus = {val.x - row.gap - row.size, row.r.y, row.size, row.size};
         const bool locked = t.def >= 0 && city::Defs()[t.def].site != city::Site::Flat && t.snapAll &&
                             (city::Defs()[t.def].site == city::Site::Track ? t.snapTrack : t.snapCoast); // the site decides the facing
-        if (IconBox(g, tip, "##rot left", minus, Icon::RotateLeft, false, "Rotate left ( , )", locked)) t.Rotate(15.0f);
+        const bool roadSnap = t.def >= 0 && city::Defs()[t.def].site == city::Site::Flat && t.snapAll && t.snapRoad; // [snap] quarter turns from the road
+        const float step = roadSnap ? 90.0f : 15.0f;
+        if (IconBox(g, tip, "##rot left", minus, Icon::RotateLeft, false, "Rotate left ( , )", locked)) t.Rotate(step);
         DrawList& dl = g.Draw();
         dl.Rect(val.x, val.y, val.x + val.w, val.y + val.h, th.well, th.well, th.widgetRadius, th.border, th.wellBorder);
         char v[24];
         if (locked) std::snprintf(v, sizeof(v), "Auto");
+        else if (roadSnap) std::snprintf(v, sizeof(v), "Road %+d", city::QuarterTurns(t.rotation) * 90); // [snap]
         else std::snprintf(v, sizeof(v), "%.0f deg", t.rotation);
         g.TextIn(val, v, locked ? th.muted : th.textBright, 0.5f, th.fontSize);
-        if (IconBox(g, tip, "##rot right", plus, Icon::RotateRight, false, "Rotate right ( . )", locked)) t.Rotate(-15.0f);
+        if (IconBox(g, tip, "##rot right", plus, Icon::RotateRight, false, "Rotate right ( . )", locked)) t.Rotate(-step);
     }
     {
         Row row = BeginRow(g, "Page", 430);
@@ -200,9 +205,10 @@ inline bool TransportToolbar(Context& g, TransportToolState& t, float lift) {
     }
     {
         Row row = BeginRow(g, "Snapping", 430);
-        if (IconBox(g, tip, "##tsnap all", row.Slot(0, 3), Icon::SnapAll, t.snapAll, "All snapping")) t.snapAll = !t.snapAll;
-        if (IconBox(g, tip, "##tsnap track", row.Slot(1, 3), Icon::Rail, t.snapAll && t.snapTrack, "Stations snap onto the nearest railway", !t.snapAll)) t.snapTrack = !t.snapTrack;
-        if (IconBox(g, tip, "##tsnap coast", row.Slot(2, 3), Icon::Waves, t.snapAll && t.snapCoast, "Harbours and shipyards snap to the nearest shore", !t.snapAll)) t.snapCoast = !t.snapCoast;
+        if (IconBox(g, tip, "##tsnap all", row.Slot(0, 4), Icon::SnapAll, t.snapAll, "All snapping")) t.snapAll = !t.snapAll;
+        if (IconBox(g, tip, "##tsnap track", row.Slot(1, 4), Icon::Rail, t.snapAll && t.snapTrack, "Stations snap onto the nearest railway", !t.snapAll)) t.snapTrack = !t.snapTrack;
+        if (IconBox(g, tip, "##tsnap coast", row.Slot(2, 4), Icon::Waves, t.snapAll && t.snapCoast, "Harbours and shipyards snap to the nearest shore", !t.snapAll)) t.snapCoast = !t.snapCoast;
+        if (IconBox(g, tip, "##tsnap road", row.Slot(3, 4), Icon::Roads, t.snapAll && t.snapRoad, "Buildings snap beside the nearest road, entrance to it", !t.snapAll)) t.snapRoad = !t.snapRoad;
     }
     {
         Row row = BeginRow(g, "Tools", 430);

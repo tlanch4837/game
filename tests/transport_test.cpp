@@ -221,8 +221,18 @@ int main() {
         RoadTool t;
         t.BuildRoad(Cubic::Line({-300, 1600}, {300, 1600}), 4, 4, ProfileIndex("Two-Lane Road"));
         cx.net = &t.net;
-        CHECK(!w.Plan(cx, depot, {0, 1600}, 0).valid);
-        CHECK(w.Plan(cx, depot, {0, 1800}, 0).valid);
+        PlanOptions noSnap;
+        noSnap.snapRoad = false;
+        CHECK(!w.Plan(cx, depot, {0, 1600}, 0, noSnap).valid); // free placement on the road: in the way
+        {   // [snap] the same cursor snaps beside the road: entrance (the front) to it, clear of it, valid
+            const Placement s = w.Plan(cx, depot, {0, 1600}, 0);
+            CHECK(s.valid && s.roadSnapped && s.entranceEdge == 0 && s.roadSeg >= 0);
+            CHECK(std::fabs(std::fabs(s.c.z - 1600.0f) - (Profiles()[ProfileIndex("Two-Lane Road")].Half() + kBuildingSnapGap + Defs()[depot].D() * 0.5f)) < 0.05f);
+            CHECK(Dot2(s.entranceDir, V2{0, 1600} - s.c) > 0.99f * Len(V2{0, 1600} - s.c)); // the entrance looks at the road
+        }
+        const Placement far = w.Plan(cx, depot, {0, 1800}, 0); // [snap] 200 m from the road: free, and a rail yard needs a road
+        std::printf("yard far from a road: %s\n", far.error.c_str());
+        CHECK(!far.valid && !far.roadSnapped && far.error.find("road") != std::string::npos);
         // zoned lots stay clear, painted-only cells do not matter
         ZoneGrid zg;
         t.BuildRoad(Cubic::Line({-300, 2400}, {300, 2400}), 4, 4, ProfileIndex("Two-Lane Road"));
@@ -248,7 +258,9 @@ int main() {
         CHECK(w.HitTest({0, 0}) == a);
         CHECK(w.HitTest({3000, 3000}) < 0);
         CHECK(w.Remove(a) && w.HitTest({0, 0}) < 0);
-        CHECK(w.Plan(cx, depot, {0, 0}, 0).valid); // the lot is free again
+        PlaceContext noNet = cx;
+        noNet.net = nullptr;
+        CHECK(w.Plan(noNet, depot, {0, 0}, 0).valid); // the lot is free again (no network: no road rule to meet)
         // zoning keeps out of placed buildings
         CHECK(w.Count() == 0);
     }

@@ -228,25 +228,11 @@ public:
         Placement r;
         r.front = FrontFromDeg(rotationDeg);
         r.c = cursor;
-        if (snapRoad && cx.net) {
-            int best = -1;
-            float bestGap = 45.0f, bt = 0;
-            for (size_t s = 0; s < cx.net->segs.size(); ++s) {
-                if (!CarriesUtilities(*cx.net, (int)s)) continue;
-                float t, d;
-                cx.net->Nearest((int)s, cursor, t, d);
-                const float gap = d - cx.net->Prof((int)s).Half();
-                if (gap < bestGap) bestGap = gap, best = (int)s, bt = t;
-            }
-            if (best >= 0) {
-                const V2 P = cx.net->Curve(best).At(bt);
-                V2 away = cursor - P;
-                if (Len(away) < 1e-3f) away = LeftOf(cx.net->Curve(best).Tan(bt));
-                away = away * (1.0f / std::max(1e-4f, Len(away)));
-                const SnapResult sr = RoadSnap(P, away, cx.net->Prof(best).Half(), D.W(), D.D(), QuarterTurns(rotationDeg), 1.0f);
-                r.front = sr.front, r.c = sr.c;
-                r.snapped = true;
-            }
+        if (snapRoad && cx.net) { // [snap] the shared helper (building_snap.h): entrance (the front) to the road
+            const Network& net = *cx.net;
+            const BuildingSnap sr = SnapBesideRoad(net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), 0, 1.0f, std::max(45.0f, SnapRangeFor(D.W(), D.D())),
+                                                   [&](int s) { return CarriesUtilities(net, s); });
+            if (sr.snapped) r.front = sr.front, r.c = sr.c, r.snapped = true;
         }
         r.y = cx.Ground(r.c);
         Validate(cx, D, r);

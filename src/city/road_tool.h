@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "rail_port.h"
 #include "road_network.h"
 
 namespace tbd {
@@ -88,11 +89,12 @@ struct Snap {
     const char* kind = "";
     bool lane = false; // locked onto a highway lane's centre: the new road leaves / joins along that lane
     V2 laneDir{};      // the lane's direction there (a -> b of its road)
+    int port = -1;     // [yard] a rail yard's track end (RoadTool::ports); the new track carries the yard track straight on
 };
 // Snap::kind values that join the new piece to the network (the connection snaps' marker and the aim dot's label).
 inline bool IsConnection(const char* k) {
     if (!k || !k[0]) return false;
-    for (const char* c : {"node", "end", "switch", "middle", "road", "lane"})
+    for (const char* c : {"node", "end", "switch", "middle", "road", "lane", "yard"})
         if (std::strcmp(k, c) == 0) return true;
     return false;
 }
@@ -100,7 +102,7 @@ inline bool IsConnection(const char* k) {
 inline const char* SnapLabel(const char* k) {
     static const char* const kinds[][2] = {{"node", "Junction"}, {"end", "Connect end"}, {"switch", "Switch"}, {"middle", "Mid-point"},
                                            {"road", "T-junction"}, {"lane", "Lane"}, {"guide", "Guideline"}, {"length", "Length"},
-                                           {"angle", "Angle"}, {"net side", "Lot depth"}, {"grid", "Grid"}};
+                                           {"angle", "Angle"}, {"net side", "Lot depth"}, {"grid", "Grid"}, {"yard", "Rail yard track"}};
     if (!k || !k[0]) return "";
     for (const auto& p : kinds)
         if (std::strcmp(k, p[0]) == 0) return p[1];
@@ -137,6 +139,21 @@ public:
     // Metres the connection snaps reach (0: the mouse's own radii). The host sets it from a finger's width at the aim dot
     // or the touch point, so the snap radius follows the zoom.
     float snapRadius = 0;
+    // [yard] the rail yards' track ends (the host fills it from the placed yards, transport.h TransportWorld::PortsOf). With
+    // a railway out, each one free of track is a connection snap of its own (kind "yard") and shows a small marker.
+    std::vector<RailPort> ports;
+    static constexpr float kPortRadius = 6.0f; // each track end's own pull (or the finger's snapRadius); the nearest end wins
+                                               // so the yard's 5 m track spacing always picks the track under the cursor
+    // The track end within reach of p that no railway joins yet, or -1.
+    int NearestPort(V2 p, float reach) const {
+        int best = -1;
+        float bd = reach;
+        for (size_t i = 0; i < ports.size(); ++i) {
+            const float d = Len(ports[i].p - p);
+            if (d < bd && PortNode(net, ports[i]) < 0) bd = d, best = (int)i;
+        }
+        return best;
+    }
     static constexpr float kRailSwitchCos = 0.819f; // cos 35 deg: the sharpest a train turns through a switch
     static constexpr float kAlignCos = 0.819f;      // a road within 35 deg of a dead end's tangent carries it on
     float gridSpacing = 96.0f; // 12 zone cells
@@ -212,7 +229,7 @@ public:
     // A tablet has no hover: the cursor only moves with a touch. Keep its free point at the new elevation right away so the
     // ghost, the elevation stick and the label follow the buttons (a point snapped to a road / node keeps that height).
     void ReheightCursor() {
-        if (haveCursor && cursor.node < 0 && cursor.seg < 0 && !cursor.lane) cursor.p.y = Ground(cursor.p.x, cursor.p.z) + elevation;
+        if (haveCursor && cursor.node < 0 && cursor.seg < 0 && !cursor.lane && cursor.port < 0) cursor.p.y = Ground(cursor.p.x, cursor.p.z) + elevation;
     }
 
     // ---- undo
@@ -579,6 +596,18 @@ public:
             GhostCurve(pc, del ? Vec3{0.95f, 0.25f, 0.2f} : Vec3{0.2f, 0.55f, 1.0f}, tris, lines, 0.35f);
             if (!del) GhostCurve({pc.c, pc.ya, pc.yb, ProfileId()}, {0.45f, 0.8f, 1.0f}, tris, lines, 0.6f, true);
         }
+        if (IsRail() && Current().kind == AssetKind::Road && mode != ToolMode::Bulldoze) // [yard] every rail yard track end
+            for (const RailPort& rp : ports) {
+                const bool joined = PortNode(net, rp) >= 0;
+                const Vec3 c = joined ? Vec3{0.35f, 1.0f, 0.55f} : Vec3{1.0f, 0.85f, 0.3f};
+                const Vec3 at{rp.p.x, Ground(rp.p.x, rp.p.z) + 0.6f, rp.p.z};
+                circle(at, 1.4f, c);
+                if (joined) continue;
+                const V2 tip = rp.p + rp.dir * 5.0f, sd{rp.dir.z, -rp.dir.x};
+                const Vec3 t3{tip.x, at.y, tip.z};
+                line(at, t3, c);
+                for (float s : {1.0f, -1.0f}) line(t3, {tip.x - rp.dir.x * 1.8f + sd.x * s, at.y, tip.z - rp.dir.z * 1.8f + sd.z * s}, c);
+            }
         if (!haveCursor) return;
         std::vector<PreviewCurve> curves;
         const bool ok = PendingCurves(curves);
@@ -598,9 +627,9 @@ public:
             const Vec3 join{0.35f, 1.0f, 0.55f};
             circle({cursor.p.x, cursor.p.y + 0.6f, cursor.p.z}, std::max(3.6f, Prof().Half() + 1.0f), join);
             V2 d;
-            if (cursor.node >= 0 && LiveSegs(cursor.node) == 1) {
-                const int sg = net.nodes[cursor.node].segs.front();
-                d = net.OutDir(sg, cursor.node) * -1.0f;
+            const bool port = cursor.port >= 0 && cursor.port < (int)ports.size();
+            if (port || (cursor.node >= 0 && LiveSegs(cursor.node) == 1)) {
+                d = port ? ports[cursor.port].dir : net.OutDir(net.nodes[cursor.node].segs.front(), cursor.node) * -1.0f;
                 for (int i = 0; i < 6; i += 2) // dashes along the extension
                     line({cursor.p.x + d.x * (2 + i * 2.0f), cursor.p.y + 0.6f, cursor.p.z + d.z * (2 + i * 2.0f)},
                          {cursor.p.x + d.x * (4 + i * 2.0f), cursor.p.y + 0.6f, cursor.p.z + d.z * (4 + i * 2.0f)}, join);
@@ -714,6 +743,10 @@ private:
     // the end that way; else: it arrives at the end moving that way.
     // Roads: only an end the connection snap found ("end"; a chained road's own end stays a free corner, as in CS2).
     bool EndTangent(const Snap& sp, bool start, V2& dir) const {
+        if (IsRail() && sp.port >= 0 && sp.port < (int)ports.size()) { // [yard] out of the yard along its track
+            dir = start ? ports[sp.port].dir : ports[sp.port].dir * -1.0f;
+            return true;
+        }
         if (!IsRail() && std::strcmp(sp.kind ? sp.kind : "", "end") != 0) return false;
         if (sp.node < 0 || sp.node >= (int)net.nodes.size() || !net.nodes[sp.node].alive || LiveSegs(sp.node) != 1) return false;
         int sg = -1;
@@ -761,6 +794,13 @@ private:
             const bool connect = On(SnapConnect);
             const float reach = std::max(std::max(5.0f, hwNew + 3.0f), connect ? snapRadius : 0.0f);
             int n = connect ? NearestEnd(p, reach * 1.5f, as.profile) : -1; // [connect] open ends pull from further away
+            if (connect && IsRail() && as.kind == AssetKind::Road) { // [yard] a rail yard's free track end, when it is nearer
+                const int k = NearestPort(p, std::max(kPortRadius, snapRadius));
+                if (k >= 0 && (n < 0 || Len(ports[k].p - p) < Len(XZ(net.nodes[n].p) - p))) {
+                    s.p = {ports[k].p.x, ports[k].y, ports[k].p.z}, s.port = k, s.kind = "yard";
+                    return s;
+                }
+            }
             if (n < 0) n = net.NearestNode(p, reach, -1, as.profile);
             if (n >= 0) {
                 s.p = net.NodePos(n), s.node = n, s.kind = "node";
@@ -944,6 +984,10 @@ private:
                 else if (sp.seg >= 0 && sp.seg < (int)net.segs.size() && net.segs[sp.seg].alive) {
                     const V2 t = net.Curve(sp.seg).Tan(sp.t);
                     arms.push_back(t), arms.push_back(t * -1.0f);
+                } else if (sp.port >= 0 && sp.port < (int)ports.size()) arms.push_back(ports[sp.port].dir * -1.0f); // [yard] its track runs in
+                if (sp.port >= 0 && Profiles()[pc.profile].cat == Cat::Rail) { // [yard] only out of the yard, along its track
+                    if (Dot2(ports[sp.port].dir, d) < kRailSwitchCos) { error = "Leave the rail yard along its track: within 35 deg"; return false; }
+                    continue;
                 }
                 if (Profiles()[pc.profile].cat == Cat::Rail && On(SnapConnect)) { // [connect] track: through a switch
                     if (arms.empty()) continue;
