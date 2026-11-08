@@ -44,6 +44,9 @@ void EdgePan(float dxPx, float dyPx);
 bool TouchOnGui(float x, float y);
 // Turns the camera about its target by `radians` (a two-finger twist).
 void Twist(float radians);
+// Tilts the camera about its target by `radians`: positive towards straight down, negative towards the horizon (a two-finger
+// vertical drag). The city clamps it from just above level (street view) to straight down (src/city_camera.h).
+void Tilt(float radians);
 // Keys from a hardware keyboard: tbd::platform::Key values; ch is the character typed (0 if none).
 void KeyDown(int key, bool repeat, unsigned ch);
 void KeyUp(int key);

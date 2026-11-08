@@ -1594,7 +1594,8 @@ void UpdateCityCam(float dt) {
     const float pan = std::max(cam.distance, 0.5f) * 1.1f * fast * k * dt; // screen-relative: the same feel at every zoom
     cam.target = cam.target + (f * fw + r * rt) * pan;
     cam.yaw += turn * 1.6f * fast * k * dt;
-    cam.pitch = std::clamp(cam.pitch + tilt * 0.9f * fast * k * dt, 0.05f, 1.5f);
+    if (g_terrainSandbox) tbd::citycam::Tilt(cam, tilt * 0.9f * fast * k * dt); // the city: straight down to the horizon
+    else cam.pitch = std::clamp(cam.pitch + tilt * 0.9f * fast * k * dt, 0.05f, 1.5f);
 }
 
 // Loads a terrain file for the walking ground grid (worker thread; ImportFile touches no shared state).
@@ -1675,8 +1676,16 @@ float RoadsGround(float x, float z) { return g_engine.terrain.params.enabled ? g
 // The city camera never goes under the ground or right up against it: the eye keeps kCamClearance above the terrain at its own
 // spot (and a little more at the target), by tilting up first and lifting the target only when tilting is not enough. Buildings
 // are not tested here; that needs a spatial query over the city cells.
+// The city game (g_terrainSandbox) uses the CS2-style camera of src/city_camera.h instead: tilt from straight down to the
+// horizon, street level to the whole map, the pivot on the ground and lifted (not tilted) to keep the eye 2 m up.
+bool CityCamOn() { return g_terrainSandbox && !g_play.active && g_engine.drag != Drag::Fly; }
+float CityCamGround(float x, float z) { // terrain or sea, whichever is higher
+    const float sea = g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind >= 1 ? tbd::IslandMap::kSeaLevel : -1e9f;
+    return std::max(RoadsGround(x, z), sea);
+}
 void CityCamGroundFloor() {
     if (g_play.active || g_engine.drag == Drag::Fly) return;
+    if (CityCamOn()) { tbd::citycam::GroundFloor(g_engine.camera, CityCamGround); return; }
     constexpr float kCamClearance = 1.5f; // metres of the city's units
     tbd::OrbitCamera& cam = g_engine.camera;
     const tbd::Vec3 eye = cam.Eye();
@@ -3466,7 +3475,12 @@ void ContinueDrag(int x, int y) {
         break;
     case Drag::Orbit: g_engine.camera.Orbit(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break; // creator open: slower
     case Drag::Fly: g_engine.camera.Look(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break;
-    case Drag::Pan: g_engine.camera.Pan(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale(), (float)g_engine.vpH); break;
+    case Drag::Pan:
+        if (CityCamOn()) // the city: the ground follows the finger / cursor, the camera never rises or sinks
+            tbd::citycam::PanGround(g_engine.camera, (float)x - dx, (float)y - dy, (float)x, (float)y, (float)g_engine.vpW, (float)g_engine.vpH,
+                                    CityCamGround(g_engine.camera.target.x, g_engine.camera.target.z));
+        else g_engine.camera.Pan(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale(), (float)g_engine.vpH);
+        break;
     case Drag::Zoom: g_engine.camera.Zoom(-dy * 0.1f * tbd::shell::EditorCameraScale()); break; // drag up = closer
     case Drag::Terrain: break; // the brush follows lastX / lastY, applied once per frame
     case Drag::None: break;
@@ -3850,11 +3864,16 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
             const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();
             const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
-            g_camSmooth.goal = std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
+            // the city: street level (1 m) to the whole map (9 km); was 0.04 .. 200 there too, so a pinch out from the 3.2 km
+            // start view snapped in to 200 m and zoom out never worked
+            g_camSmooth.goal = CityCamOn() ? tbd::citycam::ZoomedDistance(from, 2.0f * n) : std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
             g_camSmooth.lastSet = g_engine.camera.distance;
             tbd::Vec3 hit; // e.x / e.y: the cursor in viewport coordinates
             g_camSmooth.anchored = !g_play.active &&
                 GroundHit(g_engine.camera.ScreenRay((float)e.x, (float)e.y, (float)g_engine.vpW, (float)g_engine.vpH), hit);
+            // near the horizon the point under the cursor can be kilometres away: zooming toward it would throw the camera
+            if (g_camSmooth.anchored && CityCamOn() && std::sqrt(tbd::Dot(hit - g_engine.camera.target, hit - g_engine.camera.target)) > 4.0f * std::max(g_engine.camera.distance, 25.0f))
+                g_camSmooth.anchored = false;
             if (g_camSmooth.anchored) g_camSmooth.anchor = hit;
         }
         return true;

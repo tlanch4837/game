@@ -27,6 +27,7 @@
 #include "material_lab.h"
 #include "audio.h"
 #include "camera.h"
+#include "city_camera.h"
 #include "core/jobs.h"
 #include "glb_bounds.h"
 #include "render/cloud_noise.h"
@@ -212,10 +213,19 @@ bool tbd::host::TouchOnGui(float x, float y) { return g_gui.WantsMouseAt(x, y); 
 
 void tbd::host::EdgePan(float dxPx, float dyPx) {
     if (!gdock::EdgePanOn()) return;
-    g_engine.camera.Pan(dxPx, dyPx, (float)g_engine.vpH); // the middle drag's own call (game_core.inl, Drag::Pan)
+    if (!CityCamOn()) { g_engine.camera.Pan(dxPx, dyPx, (float)g_engine.vpH); return; }
+    const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f; // the middle drag's own pan (Drag::Pan), from the centre
+    tbd::citycam::PanGround(g_engine.camera, cx, cy, cx + dxPx, cy + dyPx, (float)g_engine.vpW, (float)g_engine.vpH,
+                            CityCamGround(g_engine.camera.target.x, g_engine.camera.target.z));
 }
 
 void tbd::host::Twist(float radians) { g_engine.camera.yaw -= radians; }
+
+void tbd::host::Tilt(float radians) {
+    if (g_play.active) return;
+    if (g_terrainSandbox) tbd::citycam::Tilt(g_engine.camera, radians);
+    else g_engine.camera.pitch = std::clamp(g_engine.camera.pitch + radians, -1.5f, 1.5f);
+}
 
 void tbd::host::Zoom(float notches, float x, float y) {
     GuiPtrEffect fx;

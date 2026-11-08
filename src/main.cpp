@@ -28,6 +28,7 @@
 #include "bmp_header.h"
 #include "game/shell.h"
 #include "camera.h"
+#include "city_camera.h"
 #include "content_browser.h"
 #include <set>
 #include <tuple>

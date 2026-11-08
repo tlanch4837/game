@@ -1,12 +1,22 @@
 // iOS shell: a UIKit scene with a CAMetalLayer view, driving the game without the editor (src/game/game_host.h).
-// The display link runs the frames while the scene is active; touches become the game's pointer input, SimCity style:
-//   one finger on the GUI or with a build tool out   the left button (press, draw, place);
-//   one finger on the city otherwise                 a drag pans the camera (the middle button), a tap selects (a click);
-//   two fingers                                      pan (their centre), pinch zooms (wheel notches), twist turns the camera.
+// The display link runs the frames while the scene is active; touches become the game's pointer input.
+//
+// Touch scheme (CS2 / Maps style; the city camera's limits are in src/city_camera.h):
+//   one finger on the GUI or with a build tool out   the left button (press, draw, place) - unchanged;
+//   one finger on the city otherwise                 a drag pans (the ground follows the finger), a tap selects (a click);
+//   two fingers, after 12 pt of movement, lock into ONE of two gestures until a finger lifts:
+//     TILT   both fingers move the same way vertically (each mostly vertical, their spacing and angle nearly unchanged):
+//            fingers up = tilt toward the horizon / street level, fingers down = toward straight down (top-down);
+//     MOVE   anything else: pinch zooms (spread = closer, the whole range from street level to the whole map), twist turns
+//            the camera, and the fingers' centre pans - so a pan with a tool out still works (two fingers, not straight up/down).
+// Why a lock and not "centre vertical = tilt" at all times: a two-finger pan always has some vertical centre movement, so
+// tilt and pan would fight on every drag. Locking on the first 12 pt decides once and is never ambiguous afterwards; a pure
+// vertical two-finger drag is tilt (as in Apple / Google Maps), pans use one finger, or two fingers off the vertical.
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -40,7 +50,11 @@
     CGPoint _fingerNow;   // the one dragging finger, device pixels, for the edge pan each frame
     CGPoint _start;       // where it landed, device pixels
     CGFloat _twistAngle;  // the two fingers' angle last move
-    BOOL _twoFinger;      // two fingers: camera pan (middle button) and pinch
+    BOOL _twoFinger;      // two fingers on the camera
+    int _twoMode;         // 0 undecided (under the slop), 1 TILT, 2 MOVE (pan + pinch + twist; the middle button is down)
+    UITouch* _ta;         // the two fingers, by identity (a touch set has no stable order)
+    UITouch* _tb;
+    CGPoint _a0, _b0;     // where they were when the second landed, device pixels
     CGPoint _panCentre;   // device pixels
     CGFloat _pinchDistance;
 }
@@ -179,18 +193,71 @@
         _panning = NO;
     }
     _camera = NO;
-    const CGPoint a = [self pixels:[touches[0] locationInView:self.view]], b = [self pixels:[touches[1] locationInView:self.view]];
+    _ta = touches[0];
+    _tb = touches[1];
+    const CGPoint a = [self pixels:[_ta locationInView:self.view]], b = [self pixels:[_tb locationInView:self.view]];
+    _a0 = a, _b0 = b;
     _panCentre = CGPointMake((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
     _pinchDistance = std::hypot(a.x - b.x, a.y - b.y);
     _twistAngle = std::atan2(b.y - a.y, b.x - a.x);
     _twoFinger = YES;
-    tbd::host::PointerDown(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
+    _twoMode = 0; // the middle button goes down only once the gesture is known to be MOVE
 }
 
 - (void)endTwoFinger {
     if (!_twoFinger) return;
-    tbd::host::PointerUp(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
+    if (_twoMode == 2) tbd::host::PointerUp(tbd::host::Button::Middle, (float)_panCentre.x, (float)_panCentre.y);
     _twoFinger = NO;
+    _twoMode = 0;
+    _ta = _tb = nil;
+}
+
+static CGFloat WrapAngle(CGFloat a) {
+    while (a > M_PI) a -= 2 * M_PI;
+    while (a < -M_PI) a += 2 * M_PI;
+    return a;
+}
+
+// Two fingers at device pixels a, b: decide the gesture once they have moved enough, then drive it.
+- (void)twoFingerMoveA:(CGPoint)a b:(CGPoint)b {
+    const CGPoint centre = CGPointMake((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+    const CGFloat d = std::hypot(a.x - b.x, a.y - b.y), ang = std::atan2(b.y - a.y, b.x - a.x);
+    if (_twoMode == 0) {
+        const CGFloat s = [self pixelScale], slop = 12.0 * s;
+        const CGPoint da = CGPointMake(a.x - _a0.x, a.y - _a0.y), db = CGPointMake(b.x - _b0.x, b.y - _b0.y);
+        const CGPoint c0 = CGPointMake((_a0.x + _b0.x) * 0.5, (_a0.y + _b0.y) * 0.5);
+        const CGFloat cdy = centre.y - c0.y, cmove = std::hypot(centre.x - c0.x, cdy);
+        const CGFloat spread = std::fabs(d - _pinchDistance), arc = std::fabs(WrapAngle(ang - _twistAngle)) * _pinchDistance * 0.5;
+        if (std::max(cmove, std::max(spread, arc)) < slop) return; // not yet: nothing moves
+        const bool vertical = da.y * db.y > 0.0 && std::fabs(da.y) > 1.5 * std::fabs(da.x) && std::fabs(db.y) > 1.5 * std::fabs(db.x);
+        if (vertical && spread < 0.5 * std::fabs(cdy) && arc < 0.5 * std::fabs(cdy)) {
+            _twoMode = 1; // TILT, from where the fingers started (the slop's movement is not lost)
+            _panCentre = c0;
+        } else {
+            _twoMode = 2; // MOVE: the middle button from the start centre, so the slop's pan, pinch and twist all apply now
+            _panCentre = c0;
+            tbd::host::PointerDown(tbd::host::Button::Middle, (float)c0.x, (float)c0.y);
+        }
+    }
+    if (_twoMode == 1) {
+        // about 1.65 rad (straight down to level) over 370 pt of finger travel
+        const CGFloat perPx = 0.0045 / [self pixelScale];
+        const CGFloat dy = centre.y - _panCentre.y;
+        if (std::fabs(dy) > 0.0) tbd::host::Tilt((float)(dy * perPx));
+        _panCentre = centre;
+        return;
+    }
+    _panCentre = centre;
+    tbd::host::PointerMove((float)centre.x, (float)centre.y);
+    if (_pinchDistance > 1.0 && d > 1.0) {
+        // The wheel zooms the camera distance by 0.9^(0.5 n); spreading the fingers by f should divide it by f.
+        const float notches = (float)(-2.0 * std::log(d / _pinchDistance) / std::log(0.9));
+        if (std::fabs(notches) > 0.01f) tbd::host::Zoom(notches, (float)centre.x, (float)centre.y);
+    }
+    _pinchDistance = d;
+    const CGFloat da = WrapAngle(ang - _twistAngle);
+    if (std::fabs(da) > 0.002) tbd::host::Twist((float)da);
+    _twistAngle = ang;
 }
 
 - (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
@@ -220,24 +287,8 @@
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if (!_started) return;
     if (_twoFinger) {
-        NSArray<UITouch*>* active = [self activeTouches:event];
-        if (active.count < 2) return;
-        const CGPoint a = [self pixels:[active[0] locationInView:self.view]], b = [self pixels:[active[1] locationInView:self.view]];
-        _panCentre = CGPointMake((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
-        tbd::host::PointerMove((float)_panCentre.x, (float)_panCentre.y);
-        const CGFloat d = std::hypot(a.x - b.x, a.y - b.y);
-        if (_pinchDistance > 1.0 && d > 1.0) {
-            // The wheel zooms the camera distance by 0.9^(0.5 n); spreading the fingers by f should divide it by f.
-            const float notches = (float)(-2.0 * std::log(d / _pinchDistance) / std::log(0.9));
-            if (std::fabs(notches) > 0.01f) tbd::host::Zoom(notches, (float)_panCentre.x, (float)_panCentre.y);
-        }
-        _pinchDistance = d;
-        const CGFloat ang = std::atan2(b.y - a.y, b.x - a.x);
-        CGFloat da = ang - _twistAngle;
-        if (da > M_PI) da -= 2 * M_PI;
-        if (da < -M_PI) da += 2 * M_PI;
-        if (std::fabs(da) > 0.002) tbd::host::Twist((float)da);
-        _twistAngle = ang;
+        if (!_ta || !_tb) return;
+        [self twoFingerMoveA:[self pixels:[_ta locationInView:self.view]] b:[self pixels:[_tb locationInView:self.view]]];
         return;
     }
     if (_camera && [touches containsObject:_first]) {
@@ -261,7 +312,7 @@
 - (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
     if (!_started) return;
     if (_twoFinger) {
-        if ([self activeTouches:event].count < 2) [self endTwoFinger];
+        if ([touches containsObject:_ta] || [touches containsObject:_tb] || [self activeTouches:event].count < 2) [self endTwoFinger];
         return;
     }
     if (_camera && [touches containsObject:_first]) {
@@ -288,6 +339,8 @@
     tbd::host::PointerCancel();
     _leftDown = _toolDrag = NO;
     _twoFinger = NO;
+    _twoMode = 0;
+    _ta = _tb = nil;
     _camera = _panning = NO;
     _first = nil;
 }

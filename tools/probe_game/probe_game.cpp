@@ -29,6 +29,7 @@
 #include "material_lab.h"
 #include "audio.h"
 #include "camera.h"
+#include "city_camera.h"
 #include "core/jobs.h"
 #include "glb_bounds.h"
 #include "render/cloud_noise.h"
