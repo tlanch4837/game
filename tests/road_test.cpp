@@ -3,6 +3,8 @@
 // Build and run: tests\road_test.bat
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 #include "city/road_tool.h"
 
@@ -127,6 +129,130 @@ int main() {
         CHECK(t.Click());
         CHECK(Degree(t.net, 4) >= 1);
         std::printf("grid: %d segments\n", Alive(t.net, nodes));
+    }
+    // elevation: down as well as up, through ground level, clamped at -60 / +60, every step size (the iPad's "can't lower")
+    {
+        RoadTool t;
+        t.stepIdx = 1; // 5 m
+        CHECK(t.elevation == 0.0f);
+        t.Raise(-1);
+        CHECK(t.elevation == -5.0f);
+        t.Raise(-1);
+        CHECK(t.elevation == -10.0f && t.InTunnel());
+        t.Raise(1), t.Raise(1);
+        CHECK(t.elevation == 0.0f && !std::signbit(t.elevation)); // back through 0, no "-0 m"
+        t.Raise(1);
+        CHECK(t.elevation == 5.0f && t.OnBridge());
+        for (int i = 0; i < 40; ++i) t.Raise(-1);
+        CHECK(t.elevation == RoadTool::kMinElevation && t.elevation == -60.0f);
+        for (int i = 0; i < 40; ++i) t.Raise(1);
+        CHECK(t.elevation == RoadTool::kMaxElevation && t.elevation == 60.0f);
+        t.GroundLevel();
+        CHECK(t.elevation == 0.0f);
+        const float expect[4] = {10.0f, 5.0f, 2.5f, 1.25f};
+        for (int s = 0; s < 4; ++s) { // each step size, down twice and up twice
+            t.stepIdx = s;
+            CHECK(t.Step() == expect[s]);
+            t.Raise(-1), t.Raise(-1);
+            CHECK(std::fabs(t.elevation + 2 * expect[s]) < 1e-4f);
+            t.Raise(1), t.Raise(1);
+            CHECK(t.elevation == 0.0f);
+        }
+        t.stepIdx = 2; // 2.5 m: a cut, not yet a tunnel; 5 m below is one
+        t.Raise(-1);
+        CHECK(t.elevation == -2.5f && !t.InTunnel());
+        t.Raise(-1);
+        CHECK(t.elevation == -5.0f && t.InTunnel());
+        t.CycleStep();
+        CHECK(t.stepIdx == 3);
+        t.CycleStep();
+        CHECK(t.stepIdx == 0);
+        // a free cursor follows the buttons at once (a touch screen has no hover to move it)
+        t.GroundLevel();
+        t.active = true;
+        t.Move(true, {10, 0, 10});
+        CHECK(std::fabs(t.cursor.p.y) < 1e-4f);
+        t.Raise(-1);
+        CHECK(std::fabs(t.cursor.p.y + 10.0f) < 1e-4f);
+        t.GroundLevel();
+        CHECK(std::fabs(t.cursor.p.y) < 1e-4f);
+    }
+    // segments built below -kTunnelDepth are tunnels (no surface drawn); a ramp down gets a portal; the elevation stick
+    // points up to the ground from under it
+    {
+        auto build = [](const char* asset, float y0, float y1, float len, std::string* err = nullptr) {
+            RoadTool t;
+            t.active = true;
+            t.Select(RoadTool::AssetIndex(asset));
+            t.snapAll = false;
+            t.stepIdx = 3; // 1.25 m: reach any multiple
+            auto setElev = [&](float y) { t.GroundLevel(); while (t.elevation > y + 1e-3f) t.Raise(-1); while (t.elevation < y - 1e-3f) t.Raise(1); };
+            setElev(y0);
+            t.Move(true, {0, 0, 0});
+            CHECK(std::fabs(t.cursor.p.y - y0) < 1e-3f);
+            t.Click();
+            setElev(y1);
+            t.Move(true, {0, 0, len});
+            const bool built = t.Click();
+            if (err) *err = t.error;
+            MeshOut out;
+            if (built) BuildNetwork(t.net, t.ground, out);
+            return built ? (long long)out.Triangles() : -1ll;
+        };
+        const long long ground = build("Two-Lane Road", 0, 0, 200);
+        const long long tunnel = build("Two-Lane Road", -10, -10, 200);
+        const long long ramp = build("Two-Lane Road", 0, -10, 200);
+        const long long deep = build("Two-Lane Road", -60, -60, 200);
+        std::printf("tunnel triangles: ground %lld, ramp %lld, tunnel %lld, -60 m %lld\n", ground, ramp, tunnel, deep);
+        CHECK(ground > 100);
+        CHECK(tunnel == 0 && deep == 0); // wholly underground: nothing on the surface
+        CHECK(ramp > 0 && ramp < ground); // the open approach and its portal; the rest is in the tunnel
+        // rail: the same tool, the same elevation; trains need a gentle grade (6 %)
+        const long long railGround = build("Double Track Railway", 0, 0, 300);
+        const long long railTunnel = build("Double Track Railway", -10, -10, 300);
+        const long long railRamp = build("Double Track Railway", 0, -10, 300);
+        std::string why;
+        const long long railSteep = build("Double Track Railway", 0, -20, 120, &why);
+        std::printf("rail triangles: ground %lld, ramp %lld, tunnel %lld; steep: %s\n", railGround, railRamp, railTunnel, why.c_str());
+        CHECK(railGround > 0 && railTunnel == 0 && railRamp > 0 && railRamp < railGround);
+        CHECK(railSteep == -1 && !why.empty());
+        // the elevation stick: a line from the cursor up to the ground
+        RoadTool t;
+        t.active = true;
+        t.stepIdx = 0;
+        t.Raise(-1), t.Raise(-1); // -20 m
+        t.Move(true, {30, 0, 40});
+        std::vector<tbd::Vertex> tris, lines;
+        t.Ghost(tris, lines);
+        bool stick = false;
+        for (size_t i = 0; i + 1 < lines.size(); i += 2)
+            stick = stick || (std::fabs(lines[i].px - 30) < 1e-3f && std::fabs(lines[i].pz - 40) < 1e-3f && std::fabs(lines[i + 1].px - 30) < 1e-3f &&
+                              std::fabs(lines[i].py + 20) < 1e-3f && std::fabs(lines[i + 1].py) < 1e-3f);
+        CHECK(stick);
+        std::vector<WorldLabel> labels;
+        t.Click();
+        t.Move(true, {30, 0, 240});
+        t.Labels(labels);
+        bool tunnelLabel = false;
+        for (const WorldLabel& l : labels) tunnelLabel = tunnelLabel || std::strstr(l.text, "tunnel") != nullptr;
+        CHECK(tunnelLabel);
+    }
+    // the toolkit's other steps: parallel offset, grid size, snapping toggles
+    {
+        RoadTool t;
+        const float w = t.Prof().width;
+        t.NudgeParallel(-1);
+        CHECK(t.ParallelOffset() >= w + 0.5f);
+        for (int i = 0; i < 200; ++i) t.NudgeParallel(1);
+        CHECK(t.ParallelOffset() == 400.0f);
+        const float g0 = t.gridSpacing;
+        t.NudgeGrid(1);
+        CHECK(t.gridSpacing == g0 + 16.0f);
+        for (int i = 0; i < 40; ++i) t.NudgeGrid(-1);
+        CHECK(t.gridSpacing == 32.0f);
+        const bool had = t.On(SnapGuide);
+        t.ToggleSnap(SnapGuide);
+        CHECK(t.On(SnapGuide) != had);
     }
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

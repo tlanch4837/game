@@ -2,8 +2,9 @@
 //   Tool modes  Straight (2 clicks, chains), Simple curve (3 clicks), Complex curve (4 clicks), Continuous (tangent
 //               chained arcs), Grid (3 clicks), Replace (upgrade / flip one-way), Swap (press on a road, drag the
 //               way traffic should go, release: it becomes the picked road, pointing that way), plus Bulldoze.
-//   Elevation   -60 .. +60 m in steps of 10 / 5 / 2.5 / 1.25 m (Page Up / Page Down); over 3 m above the ground it is
-//               a bridge (pillars, parapets), under 4 m below it a tunnel (portals where it dives in).
+//   Elevation   -60 .. +60 m in steps of 10 / 5 / 2.5 / 1.25 m (Page Up / Page Down, or the touch toolkit's chevrons and
+//               its ground-level button: gui/road_toolkit.h); over 3 m above the ground it is a bridge (pillars,
+//               parapets), a little under the ground a cut, more than 4 m below it a tunnel (portals where it dives in).
 //   Parallel    a second road offset to the right of each one placed.
 //   Snapping    all on / off, cell length (8 m), existing geometry (nodes and road surfaces), straight directions
 //               (15 degree steps from the connected road or the world axes), net side (zone-cell distances from a
@@ -163,9 +164,28 @@ public:
         contHas_ = false;
         error.clear();
     }
-    void Raise(int dir) { elevation = std::clamp(std::round((elevation + dir * Step()) / Step()) * Step(), -60.0f, 60.0f); }
+    // ---- elevation: CS2's down chevron / readout / up chevron, in the chosen step, both ways through 0 (ground level)
+    static constexpr float kMinElevation = -60.0f, kMaxElevation = 60.0f;
+    void Raise(int dir) {
+        elevation = std::clamp(std::round((elevation + dir * Step()) / Step()) * Step(), kMinElevation, kMaxElevation);
+        if (std::fabs(elevation) < 1e-3f) elevation = 0; // no "-0 m"
+        ReheightCursor();
+    }
+    void GroundLevel() { elevation = 0, ReheightCursor(); } // one tap back to the ground
     void CycleStep() { stepIdx = (stepIdx + 1) & 3; }
+    bool InTunnel() const { return elevation < -mesh::kTunnelDepth; } // the mesh's own test (BuildSegment): not drawn, portals
+    bool OnBridge() const { return elevation > mesh::kElevated; }
+    bool IsRail() const { return Prof().cat == Cat::Rail; }
     void Rotate(float deg) { rotationDeg = std::fmod(rotationDeg + deg + 360.0f, 360.0f); }
+    // ---- the other options' steps (the touch toolkit's - / + buttons; no keyboard on a tablet)
+    void NudgeParallel(int dir) { parallelOffset = std::clamp(ParallelOffset() + dir * 4.0f, Prof().width + 0.5f, 400.0f); }
+    void NudgeGrid(int dir) { gridSpacing = std::clamp(gridSpacing + dir * 16.0f, 32.0f, 256.0f); } // whole zone-cell pairs
+    void ToggleSnap(uint32_t bit) { snaps ^= bit; }
+    // A tablet has no hover: the cursor only moves with a touch. Keep its free point at the new elevation right away so the
+    // ghost, the elevation stick and the label follow the buttons (a point snapped to a road / node keeps that height).
+    void ReheightCursor() {
+        if (haveCursor && cursor.node < 0 && cursor.seg < 0 && !cursor.lane) cursor.p.y = Ground(cursor.p.x, cursor.p.z) + elevation;
+    }
 
     // ---- undo
     void PushUndo() {
@@ -492,7 +512,7 @@ public:
         if (std::fabs(elevation) > 0.01f) {
             WorldLabel e;
             e.p = {cursor.p.x, cursor.p.y + 4.0f, cursor.p.z};
-            std::snprintf(e.text, sizeof(e.text), "%+.1f m%s", elevation, elevation <= -mesh::kTunnelDepth - 0.5f ? "  tunnel" : elevation >= mesh::kElevated ? "  bridge" : "");
+            std::snprintf(e.text, sizeof(e.text), "%+g m%s", elevation, InTunnel() ? "  tunnel" : OnBridge() ? "  bridge" : elevation < 0 ? "  cut" : "");
             out.push_back(e);
         }
     }
