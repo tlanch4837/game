@@ -1916,7 +1916,7 @@ void RoadsWorldLabels() {
 
     // the road under the cursor: name, class, house number; F2 renames
     g_hoverSeg = -1;
-    if (g_roads.haveCursor && !g_roads.Pending() && !g_roadRename.active) {
+    if (g_roads.haveCursor && !g_roads.Pending() && !g_roadRename.active && !gdock::ReticleOn()) { // [road ux] not over the aim dot
         const tbd::city::Network& net = g_roads.net;
         const tbd::city::V2 p{g_roads.cursor.p.x, g_roads.cursor.p.z};
         float t = 0, d = 0;
