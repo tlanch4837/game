@@ -108,6 +108,8 @@ struct Model {
     // the active tool (empty: none)
     std::string tool, toolCost, toolIcon, modeName, modeIcon;
     std::vector<std::pair<std::string, std::string>> toolOpts; // (name, icon) shown on the placement bar
+    std::vector<bool> toolOptOn; // [interact] parallel to toolOpts: a toggle that is on (Rotate, Snap) is drawn lit
+    bool bulldozeOn = false;     // [interact] the dock's Bulldoze button is lit
     // the settings
     bool sound = true; // the UI ticks (follows the Effects volume)
     int volume[5] = {100, 70, 80, 100, 100}; // the Sound page, percent: Master, Music, Ambience, Effects, Radio
@@ -140,6 +142,7 @@ struct Out {
     int opt = -1;           // a placement option button (index into Model::toolOpts)
     bool save = false, load = false, photo = false, mainMenu = false;
     bool alertsPressed = false, layersPressed = false, cameraPressed = false;
+    bool bulldozePressed = false; // [interact] the dock's Bulldoze button
     bool settingsChanged = false;
     bool menuOpen = false;  // the pause menu is up (the host pauses the sim under it)
     std::vector<float> sfx; // pitches of the UI tick to play (volume .6)
@@ -487,8 +490,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 return tap;
             };
             if (!m.modeIcon.empty() && btn(m.modeIcon, kChip, false)) out.mode = true, sfx(1.25f);
-            for (int i = 0; i < nopt; ++i)
-                if (btn(m.toolOpts[i].second, kChip, false)) out.opt = i, sfx(1.25f);
+            for (int i = 0; i < nopt; ++i) // [interact] tinted white (the native rotate cell is slate grey: it read as disabled), lit when on
+                if (btn(m.toolOpts[i].second, i < (int)m.toolOptOn.size() && m.toolOptOn[i] ? kAccent : kChip, true)) out.opt = i, sfx(1.25f);
             if (btn("undo", kChip, false)) out.undo = true, sfx(0.65f);
             if (btn("x", kChip, false)) out.cancel = true, sfx(0.65f);
             if (btn("ok", kAccent, true)) out.confirm = true, sfx(0.7f);
@@ -539,22 +542,24 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         P.Box(lx - 0.5f, midY - (barH - 16) * 0.5f, 1, barH - 16, 0, Rgba(255, 255, 255, 34)); // divider
         const float leftEnd = lx + k.gap;
         // right cluster: alerts (badge), layers, camera, settings
-        const char* const rIcons[4] = {"alert", "layers", "cam", "gear"};
-        float rx = bx + bw - k.pad - 4 * k.rBtn - 3 * k.rGap;
+        const char* const rIcons[5] = {"bulldoze", "alert", "layers", "cam", "gear"}; // [interact] Bulldoze first
+        float rx = bx + bw - k.pad - 5 * k.rBtn - 4 * k.rGap;
         P.Box(rx - k.rr - 0.5f, midY - (barH - 16) * 0.5f, 1, barH - 16, 0, Rgba(255, 255, 255, 34));
         const float rightStart = rx - k.rr - k.gap;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             const float x = rx + i * (k.rBtn + k.rGap), y = midY - k.rBtn * 0.5f;
             bool held = false;
             if (T.Tap(R(x, y, k.rBtn, k.rBtn), &held)) {
-                if (i == 0) out.alertsPressed = true, sfx(1.1f);
-                if (i == 1) out.layersPressed = true, sfx(1.15f);
-                if (i == 2) out.cameraPressed = true, sfx(1.1f);
-                if (i == 3) st.menu = true, st.settings = false, st.menuT = 0, sfx(0.55f);
+                if (i == 0) out.bulldozePressed = true, sfx(m.bulldozeOn ? 0.75f : 1.2f);
+                if (i == 1) out.alertsPressed = true, sfx(1.1f);
+                if (i == 2) out.layersPressed = true, sfx(1.15f);
+                if (i == 3) out.cameraPressed = true, sfx(1.1f);
+                if (i == 4) st.menu = true, st.settings = false, st.menuT = 0, sfx(0.55f);
             }
-            P.Box(x, y, k.rBtn, k.rBtn, phoneLayout ? 8 : 12, held ? Rgba(255, 255, 255, 40) : Rgba(255, 255, 255, 20));
+            const bool lit = i == 0 && m.bulldozeOn;
+            P.Box(x, y, k.rBtn, k.rBtn, phoneLayout ? 8 : 12, lit ? Rgba(239, 68, 68, 150) : held ? Rgba(255, 255, 255, 40) : Rgba(255, 255, 255, 20));
             P.Icon(rIcons[i], x + k.rBtn * 0.5f, midY, k.rIcon);
-            if (i == 0 && m.alerts > 0) {
+            if (i == 1 && m.alerts > 0) {
                 char b[8];
                 std::snprintf(b, sizeof(b), "%d", m.alerts);
                 const float bw2 = std::max(14.0f, P.TextW(b, 9) + 10);
@@ -650,6 +655,10 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             if (T.Tap(R(sl, y, 48, 48), &held)) st.menu = true, st.settings = false, st.menuT = 0, sfx(0.55f);
             P.Glass(sl, y, 48, 48, 24, kPanel, 24, 1.7f, true);
             P.Icon("pause", sl + 24, y + 24, 20, kInk, false);
+            // [interact] Bulldoze beside pause (the placement controls take this corner while it is on: its cross ends it)
+            if (T.Tap(R(sl + 56, y, 48, 48), &held)) out.bulldozePressed = true, sfx(1.2f);
+            P.Glass(sl + 56, y, 48, 48, 24, held ? Rgba(60, 62, 70, 200) : kPanel, 24, 1.7f, true);
+            P.Icon("bulldoze", sl + 56 + 24, y + 24, 22, kInk, true);
             const float rx = W - sl - 48;
             if (T.Tap(R(rx, y, 48, 48))) {
                 st.open = !st.open, st.openT = 0;
@@ -790,13 +799,13 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 P.Text(m.tool, x + 14 + 18 + 8, y + h * 0.5f, 12.5f, kInk, true);
                 if (!sub.empty()) P.Text(sub, x + 14 + 18 + 8 + P.TextW(m.tool, 12.5f, true) + 8, y + h * 0.5f, 12.5f, kMuted);
             }
-            auto sb = [&](float x, float y, float size, float r, const std::string& icon, bool big) {
+            auto sb = [&](float x, float y, float size, float r, const std::string& icon, bool big, bool on = false) { // on: [interact] a lit toggle
                 bool held = false;
                 const bool tap = T.Tap(R(x, y, size, size), &held);
                 if (big) {
                     P.dl.Shadow(x * s, (y + 6) * s, (x + size) * s, (y + size + 6) * s, r * s, 10 * s, Fade(Rgba(0, 0, 0, 85), P.alpha));
                     P.Box(x, y, size, size, r, held ? Mix(kAccent, kInk, 0.15f) : kAccent);
-                } else P.Glass(x, y, size, size, r, held ? Rgba(60, 62, 70, 200) : kPanel, 18, 1.0f, false);
+                } else P.Glass(x, y, size, size, r, held ? Rgba(60, 62, 70, 200) : on ? Rgba(10, 132, 255, 170) : kPanel, 18, 1.0f, false);
                 P.Icon(icon, x + size * 0.5f, y + size * 0.5f, big ? 28 : 20, kInk, false);
                 return tap;
             };
@@ -806,7 +815,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             x += 56;
             if (sb(x, y, 48, 16, "undo", false)) out.undo = true, sfx(0.65f);
             x += 56;
-            if (!m.toolOpts.empty() && sb(x, y, 48, 16, m.toolOpts[0].second, false)) out.opt = 0, sfx(1.25f);
+            auto optOn = [&](int i) { return i < (int)m.toolOptOn.size() && m.toolOptOn[(size_t)i]; }; // [interact]
+            if (!m.toolOpts.empty() && sb(x, y, 48, 16, m.toolOpts[0].second, false, optOn(0))) out.opt = 0, sfx(1.25f);
             float rx = W - 58 - 64;
             if (sb(rx, H - 16 - 64 + lift, 64, 22, "ok", true)) out.confirm = true, sfx(0.7f);
             rx -= 8 + 48;
@@ -814,7 +824,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 if (sb(rx, y, 48, 16, m.modeIcon, false)) out.mode = true, sfx(1.25f);
                 rx -= 8 + 48;
             }
-            if (m.toolOpts.size() > 1 && sb(rx, y, 48, 16, m.toolOpts[1].second, false)) out.opt = 1, sfx(1.25f);
+            if (m.toolOpts.size() > 1 && sb(rx, y, 48, 16, m.toolOpts[1].second, false, optOn(1))) out.opt = 1, sfx(1.25f);
             P.alpha = 1;
         }
     }
