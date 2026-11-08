@@ -61,6 +61,7 @@
 #include "city/sim.h"              // the city sim's fixed-step scheduler (city_sim.inl hosts it)
 #include "city/sim_children.h"     // neighbourhoods, herds, routes, visible children (city_herds.inl hosts them)
 #include "city/sim_routes.h"
+#include "city/sim_town_traffic.h"   // local trips, outside connections, parked cars (city_herds.inl hosts them)
 #include "city/sim_cells.h"        // the city sim's per-cell counters: homes, jobs, residents, employment
 #include "city/sim_growth.h"       // the city sim's demand, demand-gated growth, level up / down, abandonment
 #include "city/sim_coverage.h"     // the city sim's utilities per cell and service coverage

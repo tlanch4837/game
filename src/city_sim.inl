@@ -293,6 +293,8 @@ void SimDirtyRoadCells() {
     for (size_t s = 0; s < net.segs.size(); ++s) alive[s] = net.segs[s].alive ? 1 : 0;
 }
 
+void SimAppendTownTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips); // city_herds.inl (town traffic)
+
 // The trips of the peak hour: commutes from the supercell links, shopping from homes to commercial (gravity).
 void SimBuildTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips) {
     using namespace tbd::city;
@@ -342,6 +344,7 @@ void SimBuildTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& 
         for (const auto& [c, v] : w)
             if (node[(size_t)c] != node[(size_t)h]) trips.push_back({node[(size_t)h], node[(size_t)c], (float)(total * v / wsum), 2});
     }
+    SimAppendTownTrips(g, trips); // trips inside one hood and from the outside connections (city_herds.inl, sim_town_traffic.h)
 }
 
 void SimFlow(const tbd::city::SimTick& t) {
