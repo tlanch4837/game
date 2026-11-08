@@ -24,6 +24,11 @@ New-Item -ItemType Directory -Force "$Out\assets\gui", "$Out\assets\audio\sfx" |
 Copy-Item "$repo\assets_src\gui\glass_atlas.png", "$repo\assets_src\gui\glass_atlas.txt" "$Out\assets\gui" -Force
 Copy-Item "$repo\assets_src\gui\ui_category_select.mp3" "$Out\assets\audio\sfx" -Force
 
+# [title] The logo of the loading / title screens and the example city that becomes Save 1 (the app carries these too).
+New-Item -ItemType Directory -Force "$Out\assets\branding", "$Out\assets\saves_template" | Out-Null
+Copy-Item "$repo\assets_src\branding\optima_engine_1024.png" "$Out\assets\branding" -Force
+Copy-Item "$repo\assets_src\saves_template\bayside.*" "$Out\assets\saves_template" -Force
+
 # The City News lines (the radio's written headlines, the neighbour pairs): on the PC the game reads src\city\, on the
 # iPad assets\news\ (city_radio.inl, city_sim.inl). Without it the feed shows plain fallback headlines.
 New-Item -ItemType Directory -Force "$Out\assets\news" | Out-Null

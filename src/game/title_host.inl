@@ -164,7 +164,7 @@ void ExampleSaveTick() {
     if (tbd::platform::TickCountMs() - start < (uint64_t)seconds * 1000ull) return;
     if (!SaveCityGame(sv::kScratchSlot)) { tbd::shell::Quit(); return; }
     std::error_code ec;
-    const std::filesystem::path to = tbd::platform::FsPath(tbd::Join(g_engine.assetsRoot, L"..\\assets_src\\saves_template"));
+    const std::filesystem::path to = tbd::platform::FsPath(tbd::Join(tbd::ExeDirectory(), L"..\\assets_src\\saves_template")); // the repo beside bin
     std::filesystem::create_directories(to, ec);
     const sv::Store st = Store();
     for (const char* ext : {".tbdgame", ".hfd"}) std::filesystem::copy_file(st.File(sv::kScratchSlot, ext), to / (std::string("bayside") + ext), std::filesystem::copy_options::overwrite_existing, ec);
