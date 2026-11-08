@@ -8,8 +8,11 @@
 //               roll-up of the cell counters, hood commute / school / shop links
 //     herds     every 15 game minutes (a window): the day's demand curve becomes herds on their routes
 //     herdmove  every game minute: herds advance by the link speeds (BPR from their own loads) and dissolve at the destination
-//   per frame (HerdsSync, after SimSync): the children near the camera (one pool, no allocation), promotion, follow camera
-//   drawing (HerdsDraw, next to SimAgentsDraw): one instanced draw per car model; it replaces the flow-driven cosmetic cars
+//   per frame (HerdsSync, after SimSync): the cars near the camera (sim_children.h: every route's releases become a stream
+//   of trips on the cars' own clock; trips near the camera are materialised as IDM cars out of view or at their driveway,
+//   and dropped back to their trip out of view; one pool, no allocation), follow camera
+//   drawing (HerdsDraw, next to SimAgentsDraw): one instanced draw per car model, fades as scale, near cars cast shadows;
+//   it replaces the flow-driven cosmetic cars
 //   town traffic (sim_town_traffic.h, rebuilt with the hoods): the trips inside one hood, the outside connections (dead-end
 //   roads at the map edge and the player's road outside connections) and the parked cars. Its node links go to the herds
 //   with the hood links and, as peak-hour trips, to the flow solve (SimAppendTownTrips, called by city_sim.inl).
@@ -40,6 +43,7 @@ double releasedDay[tbd::city::kTripTypes] = {};
 std::vector<tbd::city::CarInstance> moving, parked;
 std::vector<float> rows;
 uint32_t carsDrawn = 0;
+float frameDt = 0; // HerdsSync's real seconds, for the curbside cars' fades in HerdsDraw
 
 double Now() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
@@ -202,6 +206,7 @@ void HerdsSync(float realDt) {
     }
     if (!enabled) { g_herdsOwnCars = false; return; }
     g_herdsOwnCars = tableReady;
+    frameDt = realDt;
     if (!tableReady || g_engine.camera.distance > 1400.0f) return;
     children.params.models = std::max(1, (int)g_simCars.size());
     const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
@@ -231,8 +236,12 @@ void HerdsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     if (!enabled || !tableReady || g_simCars.empty() || g_engine.camera.distance > 1400.0f) return;
     const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
     children.Collect(moving, parked, focus);
-    town.Parked(focus, children.params.radius, g_clock.minutes, parked, kMaxParked); // curbside cars: home at night, work by day
+    // curbside cars: home at night, work by day; a spot that changes in view fades
+    town.Parked(focus, children.params.radius, g_clock.minutes, parked, kMaxParked, g_clock.paused ? 0.0f : frameDt);
     moving.insert(moving.end(), parked.begin(), parked.end());
+    // the near ones cast shadows like the cosmetic cars (city_sim.inl SimAgentsCasters draws these rows next frame)
+    g_simCarShadowRows.resize(g_simCars.size());
+    const tbd::Vec3 eye = g_engine.camera.Eye();
     for (int m = 0; m < (int)g_simCars.size(); ++m) {
         rows.clear();
         for (const tbd::city::CarInstance& c : moving) {
@@ -240,6 +249,9 @@ void HerdsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
             float row[12];
             tbd::city::CarRow(c, row);
             rows.insert(rows.end(), row, row + 12);
+            const tbd::Vec3 at{row[3], row[7], row[11]};
+            if (c.scale > 0.5f && tbd::Dot(at - eye, at - eye) < kSimCarShadowRange * kSimCarShadowRange)
+                g_simCarShadowRows[(size_t)m].insert(g_simCarShadowRows[(size_t)m].end(), row, row + 12);
         }
         if (rows.empty()) continue;
         const uint32_t n = (uint32_t)(rows.size() / 12);
@@ -340,6 +352,11 @@ bool HerdsRemote(const std::string& sub, const std::string& arg, std::string& ou
     const TownTrafficStats& ts = town.stats;
     snprintf(b, sizeof(b), " | outside %d: a day %.0f through %.0f in %.0f out, local %.0f, %zu node links | through released %.0f freight %.0f | parked %d",
              ts.conns, ts.throughPerDay, ts.inPerDay, ts.outPerDay, ts.localPerDay, ts.links, st.released[kTripThrough], st.released[kTripFreight], ts.parkedShown);
+    out += b;
+    const ChildStats& cs = children.stats;
+    snprintf(b, sizeof(b), " | streams %d budget x%.2f: departures %llu arrivals %llu dropped %llu faded in %llu skipped %llu stop-line waits %llu",
+             cs.streams, children.BudgetScale(), (unsigned long long)cs.departures, (unsigned long long)cs.arrivals, (unsigned long long)cs.dropped,
+             (unsigned long long)cs.fadedIn, (unsigned long long)cs.skipped, (unsigned long long)cs.waits);
     out += b;
     return true;
 }
