@@ -181,6 +181,12 @@ int main() {
         if (!outlet.valid) std::printf("  (outlet: %s)\n", outlet.error.c_str());
         CHECK(outlet.valid);
         CHECK(u.Plan(cx, Def("Groundwater Pump"), {0, 30}, 0, true).valid);
+        // the Wastewater Treatment Plant is not a shore building: it places inland, away from any water
+        CHECK(!UtilDefShore(Def("Wastewater Treatment Plant")) && UtilDefShore(Def("Large Water Pumping Station")));
+        const Placement treat = u.Plan(cx, Def("Wastewater Treatment Plant"), {0, 40}, 0, true);
+        if (!treat.valid) std::printf("  (treatment inland: %s)\n", treat.error.c_str());
+        CHECK(treat.valid);
+        CHECK(std::string(UtilDefs()[Def("Wastewater Treatment Plant")].rule).find("horeline:") == std::string::npos);
         cx.sea = -1e9f; // a map without a sea: the rule cannot apply
         CHECK(u.Plan(cx, Def("Water Pumping Station"), {0, 30}, 0, true).valid);
     }
