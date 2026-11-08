@@ -3521,6 +3521,8 @@ bool HandleKey(int key, bool repeat) {
         g_clock.paused = !g_clock.paused;
         return true;
     }
+    if (key == 'R' && !ctrl && !alt && BuildingRotate(tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? -90.0f : 90.0f)) return true; // R / Shift+R turn the building being placed (city_industry.inl)
+
     if (g_indTool.active && IndustryKey(key)) return true;
     if (g_utilTool.active) { // the utilities tool's keys: Esc ends the line / drops the item / closes, Page Up / Down elevation, , . rotate
         switch (key) {
@@ -3865,6 +3867,8 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         return true;
     case VpEv::Wheel: {
         const float notches = e.wheel;
+        if (notches != 0.0f && tbd::platform::KeyDownSync(tbd::platform::Key::Control) && BuildingRotate(notches > 0 ? 15.0f : -15.0f)) return true; // Ctrl + wheel turns the building being placed
+
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
             const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();

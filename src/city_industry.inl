@@ -23,6 +23,7 @@ struct IndustryTool {
     tbd::city::IndSite ghost;
     bool ghostOk = false, ghostShown = false;
     int drawing = -1, sel = -1, dragIdx = -1; // dragIdx: index into sites[sel].area
+    float rotation = 0; // the hub / point building being placed: turned from facing its road by whole quarter turns (R)
 } g_indTool;
 
 // The terrain mesh is coarser than the height field: take the highest ground nearby so draped geometry never sinks into it.
@@ -1172,7 +1173,7 @@ bool WasteContains(const WasteBuilding& b, tbd::city::V2 q, float pad = 0) {
     const tbd::city::V2 d = q - b.c;
     return std::fabs(tbd::city::Dot2(d, WasteSide(b))) < t.w * 0.5f + pad && std::fabs(tbd::city::Dot2(d, b.front)) < t.d * 0.5f + pad;
 }
-bool WasteSnap(tbd::city::V2 p, WasteBuilding& b) {
+bool WasteSnap(tbd::city::V2 p, WasteBuilding& b, int quarter = 0) { // quarter: turned from facing the road (R)
     float t, d;
     const int seg = g_roads.net.SegmentAt(p, 90.0f, t, d);
     if (seg < 0) return false;
@@ -1181,8 +1182,8 @@ bool WasteSnap(tbd::city::V2 p, WasteBuilding& b) {
     const tbd::city::Cubic cu = g_roads.net.Curve(seg);
     const tbd::city::V2 rp = cu.At(t), left = tbd::city::LeftOf(cu.Tan(t));
     const tbd::city::V2 out = tbd::city::Dot2(p - rp, left) >= 0 ? left : left * -1.0f;
-    b.c = rp + out * (pr.Half() + kWasteTypes[b.type].d * 0.5f + 1.0f);
-    b.front = out * -1.0f;
+    const tbd::city::SnapResult r = tbd::city::RoadSnap(rp, out, pr.Half(), kWasteTypes[b.type].w, kWasteTypes[b.type].d, quarter, 1.0f);
+    b.c = r.c, b.front = r.front;
     b.y = RoadsGround(rp.x, rp.z);
     return true;
 }
@@ -1271,14 +1272,14 @@ void IndustryCursor() {
     T.cur = {hit.x, hit.z};
     if (T.mode == IndustryTool::Place && T.point) {
         g_wasteGhost.b.type = T.point - 1;
-        g_wasteGhost.shown = WasteSnap(T.cur, g_wasteGhost.b);
+        g_wasteGhost.shown = WasteSnap(T.cur, g_wasteGhost.b, tbd::city::QuarterTurns(T.rotation));
         g_wasteGhost.ok = g_wasteGhost.shown && WasteFree(g_wasteGhost.b);
         return;
     }
     if (T.mode == IndustryTool::Place) {
         T.ghost.kind = (tbd::city::IndKind)T.kind;
         T.ghost.id = 0;
-        T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost);
+        T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost, tbd::city::QuarterTurns(T.rotation));
         if (T.ghostShown) {
             T.ghost.y = HubHeight(T.ghost);
             T.ghostOk = g_ind.Free(g_roads.net, T.ghost);
@@ -1884,4 +1885,41 @@ bool IndustryToolbar(float lift) {
     }
     g.EndPanel();
     return false;
+}
+
+// ---- rotating the building being placed (every placement tool: utilities, transport / services, industry hubs, waste)
+// R turns it 90 degrees, Shift+R back (game_core.inl HandleKey); Ctrl + wheel 15 degrees free / 90 snapped; on touch the
+// placement bar's two rotate buttons (glass_dock_host.inl). The ghost, the validation (footprint, the pumps' and outlets'
+// shoreline, the road in the way), the placed building and the save (its front, already in B / U / D records) all follow
+// the tool's rotation (src/city/placement_rotation.h). Snapped to a road a building turns in quarter turns from facing it.
+// Which tool has a building ghost out, and whether it snaps to a road (0 none, 1 free heading, 2 road-snapped).
+int BuildingGhostKind() {
+    using namespace tbd::city;
+    if (g_utilTool.active && g_utilTool.def >= 0 && !g_utilTool.bulldoze) return g_utilTool.snapRoad ? 2 : 1;
+    if (g_transportTool.active && g_transportTool.def >= 0 && !g_transportTool.lines && !g_transportTool.bulldoze)
+        return Defs()[g_transportTool.def].site == Site::Flat ? 1 : 3; // 3: the coast / the track sets it
+    if (g_indTool.active && g_indTool.mode == IndustryTool::Place) return 2;
+    return 0;
+}
+bool BuildingGhostHeld() { return BuildingGhostKind() != 0; }
+// Turns the held building by deg (positive: R, the tools' "rotate left"). Returns false when no building is out.
+bool BuildingRotate(float deg) {
+    using namespace tbd::city;
+    const int kind = BuildingGhostKind();
+    if (!kind) return false;
+    if (kind == 3) {
+        Toast(Defs()[g_transportTool.def].site == Site::Coast ? "HARBOURS ALWAYS FACE THE WATER" : "STATIONS LINE UP WITH THE TRACK");
+        return true;
+    }
+    float* rot = g_utilTool.active && g_utilTool.def >= 0 ? &g_utilTool.rotation : g_transportTool.active && g_transportTool.def >= 0 ? &g_transportTool.rotation : &g_indTool.rotation;
+    if (kind == 2) deg = deg >= 0.0f ? 90.0f : -90.0f; // snapped: whole quarter turns from facing the road
+    if (kind == 2) *rot = (float)(QuarterTurns(*rot) * 90); // drop any free-placement remainder first
+    *rot = StepRotation(*rot, deg);
+    char b[48];
+    if (kind == 2) {
+        static const char* const kSide[] = {"FACING THE ROAD", "SIDE TO THE ROAD", "BACK TO THE ROAD", "OTHER SIDE TO THE ROAD"};
+        std::snprintf(b, sizeof(b), "ROTATED: %s", kSide[QuarterTurns(*rot)]);
+    } else std::snprintf(b, sizeof(b), "ROTATED %.0f DEG", *rot);
+    Toast(b);
+    return true;
 }

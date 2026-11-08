@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "placement_rotation.h"
 #include "road_network.h"
 #include "transport.h"
 #include "zoning.h"
@@ -172,6 +173,18 @@ inline int UtilRoadNear(const Network& net, V2 p, float reach, float* gapOut = n
     return best;
 }
 
+// The utility road a source building of W x D metres reaches from any edge of its (possibly turned) lot: the front edge
+// first, then the sides and the back (placement_rotation.h EdgeMids). The segment, or -1.
+inline int UtilRoadAccess(const Network& net, V2 c, V2 front, float W, float D, float reach) {
+    V2 mid[4], out[4];
+    EdgeMids(c, front, W, D, mid, out);
+    for (int e = 0; e < 4; ++e) {
+        const int s = UtilRoadNear(net, mid[e], reach);
+        if (s >= 0) return s;
+    }
+    return -1;
+}
+
 // What the solver says about one building.
 struct UtilStatus {
     bool road = true, elec = true, water = true, sewage = true; // false: the building lacks it
@@ -206,12 +219,12 @@ public:
 
     // ------------------------------------------------------------------------------------------ placing a source
     // The best placement for def with the cursor at p. With snapRoad the building jumps to the nearest utility road within
-    // 45 m, faces it and sits with its front a metre off the kerb.
+    // 45 m, faces it (turned by rotationDeg's nearest quarter turns: 90 puts its side to the road) and sits with its
+    // road-side edge a metre off the kerb (placement_rotation.h RoadSnap). Free, rotationDeg is its heading.
     Placement Plan(const PlaceContext& cx, int def, V2 cursor, float rotationDeg, bool snapRoad) const {
         const UtilDef& D = UtilDefs()[def];
         Placement r;
-        const float a = rotationDeg * 0.01745329f;
-        r.front = {std::sin(a), std::cos(a)};
+        r.front = FrontFromDeg(rotationDeg);
         r.c = cursor;
         if (snapRoad && cx.net) {
             int best = -1;
@@ -228,8 +241,8 @@ public:
                 V2 away = cursor - P;
                 if (Len(away) < 1e-3f) away = LeftOf(cx.net->Curve(best).Tan(bt));
                 away = away * (1.0f / std::max(1e-4f, Len(away)));
-                r.front = away * -1.0f;
-                r.c = P + away * (cx.net->Prof(best).Half() + 1.0f + D.D() * 0.5f);
+                const SnapResult sr = RoadSnap(P, away, cx.net->Prof(best).Half(), D.W(), D.D(), QuarterTurns(rotationDeg), 1.0f);
+                r.front = sr.front, r.c = sr.c;
                 r.snapped = true;
             }
         }
@@ -351,8 +364,7 @@ public:
         for (int i = 0; i < B; ++i) {
             if (!items[i].alive) continue;
             const UtilDef& D = UtilDefs()[items[i].def];
-            const V2 mid = items[i].c + items[i].front * (D.D() * 0.5f);
-            srcSeg[i] = UtilRoadNear(net, mid, 6.0f);
+            srcSeg[i] = UtilRoadAccess(net, items[i].c, items[i].front, D.W(), D.D(), 6.0f); // any edge of a turned lot
             const bool road = srcSeg[i] >= 0;
             if (items[i].hasRoad != road) {
                 items[i].hasRoad = road;

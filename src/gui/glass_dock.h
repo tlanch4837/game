@@ -205,15 +205,18 @@ struct Painter {
     void BoxV(float x, float y, float w, float h, float r, Color top, Color bottom, float border = 0, Color bc = 0) {
         dl.Rect(x * s, y * s, (x + w) * s, (y + h) * s, F(top), F(bottom), r * s, border * s, F(bc));
     }
-    // an icon: `size` points across; native = its own colours (the "n:" cell) when it has them
-    void Icon(const std::string& name, float cx, float cy, float size, Color tint = kInk, bool native = true) {
+    // an icon: `size` points across; native = its own colours (the "n:" cell) when it has them. A trailing '~' mirrors
+    // it left to right ("rotate~": the rotate-back button).
+    void Icon(const std::string& name0, float cx, float cy, float size, Color tint = kInk, bool native = true) {
+        const bool flip = !name0.empty() && name0.back() == '~';
+        const std::string name = flip ? name0.substr(0, name0.size() - 1) : name0;
         int c = native ? atlas.Find("n:" + name) : -1;
         if (c < 0) c = atlas.Find("i:" + name);
         if (c < 0) c = atlas.Find("i:info");
         if (c < 0) return;
         const Sprite& sp = atlas.cells[c];
         const float h = size * 0.5f;
-        dl.Image((cx - h) * s, (cy - h) * s, (cx + h) * s, (cy + h) * s, sp.u0, sp.v0, sp.u1, sp.v1, native && atlas.Find("n:" + name) >= 0 ? F(kInk) : F(tint));
+        dl.Image((cx - h) * s, (cy - h) * s, (cx + h) * s, (cy + h) * s, flip ? sp.u1 : sp.u0, sp.v0, flip ? sp.u0 : sp.u1, sp.v1, native && atlas.Find("n:" + name) >= 0 ? F(kInk) : F(tint));
     }
     void Glow(const std::string& name, float cx, float cy, float size, Color col) { // drop-shadow(0 0 6px cc 50%)
         const int c = atlas.Find("g:" + name);

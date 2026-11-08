@@ -701,10 +701,9 @@ void UtilToolLabels() {
             tbd::gui::transport_ui::Money(cost, sizeof(cost), D.cost);
             std::snprintf(t, sizeof(t), "%s   %s", D.name, cost);
             g_gui.Chip(x, y, t);
-            // a building with no road in front of it is flagged from the start
-            const V2 mid = p.c + p.front * (D.D() * 0.5f);
-            if (UtilRoadNear(g_roads.net, mid, 6.0f) < 0 && project({at.x, at.y + 4.0f, at.z}, x, y))
-                g_gui.Chip(x, y - 18.0f * g_gui.Scale(), "No road in front: it will be demolished after 10 days", tbd::gui::Rgba(150, 100, 20, 230));
+            // a building with no road along any edge of its (turned) lot is flagged from the start
+            if (UtilRoadAccess(g_roads.net, p.c, p.front, D.W(), D.D(), 6.0f) < 0 && project({at.x, at.y + 4.0f, at.z}, x, y))
+                g_gui.Chip(x, y - 18.0f * g_gui.Scale(), "No road beside it: it will be demolished after 10 days", tbd::gui::Rgba(150, 100, 20, 230));
         }
     } else if (g_utilTool.Laying() && g_utilIn.laying) {
         const V2 end = g_utilIn.endSnapped ? g_utilIn.end : V2{g_utilIn.hit.x, g_utilIn.hit.z};

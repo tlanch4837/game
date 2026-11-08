@@ -102,8 +102,10 @@ void SimServices() {
         s.kind = kind;
         s.radius = (float)std::min(g_simTune.serviceRadiusMax, g_simTune.serviceRadiusBase + g_simTune.serviceRadiusPerVehicle * d.vehicles);
         float t, dd;
-        const V2 gate = b.c + b.front * (d.D() * 0.5f + 2.0f);
-        const int seg = g_roads.net.SegmentAt(gate, 14.0f, t, dd);
+        V2 mid[4], out[4]; // the gate: the front edge's road, else whichever edge of a turned lot has one (placement_rotation.h)
+        EdgeMids(b.c, b.front, d.W(), d.D(), mid, out);
+        int seg = -1;
+        for (int e = 0; e < 4 && seg < 0; ++e) seg = g_roads.net.SegmentAt(mid[e] + out[e] * 2.0f, 14.0f, t, dd);
         s.comp = seg >= 0 && seg < (int)segComp.size() ? segComp[(size_t)seg] : -1;
         src.push_back(s);
     }

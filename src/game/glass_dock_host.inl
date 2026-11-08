@@ -266,13 +266,15 @@ void FillTool() {
     } else if (g_utilTool.active && (g_utilTool.def >= 0 || g_utilTool.line >= 0)) {
         if (g_utilTool.def >= 0) M.tool = UtilDefs()[g_utilTool.def].name, M.toolCost = Money(UtilDefs()[g_utilTool.def].cost), M.toolIcon = "power";
         else M.tool = tbd::gui::util_ui::LineShort(g_utilTool.line), M.toolIcon = g_utilTool.line == 0 ? "pylon" : "pipe";
-        M.toolOpts = {{"Rotate", "rotate"}, {"Elevation", "elev"}};
+        if (g_utilTool.def >= 0) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}}; // 90 degrees a tap (city_industry.inl BuildingRotate)
+        else M.toolOpts = {{"Elevation", "elev"}};
     } else if (g_transportTool.active && (g_transportTool.def >= 0 || g_transportTool.lines)) {
         if (g_transportTool.def >= 0) M.tool = Defs()[g_transportTool.def].name, M.toolCost = Money(Defs()[g_transportTool.def].cost), M.toolIcon = "bus";
         else M.tool = std::string(TModeName(g_transportTool.lmode)) + " Line", M.toolIcon = "line";
-        M.toolOpts = {{"Rotate", "rotate"}};
+        if (g_transportTool.def >= 0 && !g_transportTool.lines) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}};
     } else if (g_indTool.active) {
         M.tool = g_indTool.waste && g_indTool.point > 0 ? kWasteTypes[g_indTool.point - 1].name : IndTypeOf((IndKind)g_indTool.kind).name, M.toolIcon = "factory";
+        if (g_indTool.mode == IndustryTool::Place) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}};
     } else if (g_terrainEdit.on) {
         static const char* const tn[] = {"Raise", "Dig", "Flatten"};
         static const char* const ti[] = {"raise", "dig", "flatten"};
@@ -349,7 +351,7 @@ void ToolButton(const tbd::gui::dock::Out& o) {
     }
     if (o.opt >= 0) {
         const std::string& n = g_model.toolOpts[o.opt].first;
-        if (n == "Rotate") g_utilTool.Rotate(90), g_transportTool.Rotate(90);
+        if (n == "Rotate" || n == "Rotate back") BuildingRotate(n == "Rotate" ? 90.0f : -90.0f); // the held ghost, 90 degrees a tap
         else if (n == "Elevation") { if (g_roads.active) g_roads.Raise(1); else g_utilTool.Raise(1); }
         else if (n == "Lower") g_roads.Raise(-1);
         else if (n == "Parallel") g_roads.parallel = !g_roads.parallel;
