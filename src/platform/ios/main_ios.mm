@@ -3,6 +3,7 @@
 //   one finger on the GUI or with a build tool out   the left button (press, draw, place);
 //   one finger on the city otherwise                 a drag pans the camera (the middle button), a tap selects (a click);
 //   two fingers                                      pan (their centre), pinch zooms (wheel notches), twist turns the camera.
+#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
 
@@ -97,7 +98,21 @@
     }
     const std::wstring assets = tbd::platform::Utf8ToWide(std::string(docAssets.fileSystemRepresentation));
     tbd::Log("iOS: assets from %s", docAssets.fileSystemRepresentation);
-    tbd::host::Init(assets);
+    // Sound: the Playback category, so the Ring / Silent switch does not mute the game (miniaudio asks for it too, src/audio.cpp).
+    {
+        AVAudioSession* session = [AVAudioSession sharedInstance];
+        NSError* err = nil;
+        if (![session setCategory:AVAudioSessionCategoryPlayback error:&err]) tbd::Log("iOS: audio session category failed");
+        [session setActive:YES error:nil];
+        [[NSNotificationCenter defaultCenter] addObserverForName:AVAudioSessionInterruptionNotification object:session
+            queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification* note) {
+                const NSInteger type = [note.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
+                if (type != AVAudioSessionInterruptionTypeEnded) return;
+                [[AVAudioSession sharedInstance] setActive:YES error:nil];
+                tbd::host::ResumeAudio();
+            }];
+    }
+    tbd::host::Init(assets); // also starts the audio thread on <assets>/audio (the bundled UI sfx were copied there above)
 
     auto renderer = tbd::CreateMetalRenderer();
     if (!renderer || !renderer->Init((__bridge void*)layer, w, h, false)) {
@@ -297,7 +312,11 @@
     [self.window makeKeyAndVisible];
 }
 
-- (void)sceneDidBecomeActive:(UIScene*)scene { [_controller resumeFrames]; }
+- (void)sceneDidBecomeActive:(UIScene*)scene {
+    [_controller resumeFrames];
+    [[AVAudioSession sharedInstance] setActive:YES error:nil];
+    tbd::host::ResumeAudio(); // no-op before the game started or while the device runs
+}
 - (void)sceneWillResignActive:(UIScene*)scene { [_controller pauseFrames]; }
 
 - (void)sceneDidDisconnect:(UIScene*)scene {

@@ -71,6 +71,7 @@ std::vector<Cmd> g_queue;       // under g_mutex
 Listener g_listener;            // under g_mutex
 std::thread g_thread;
 std::atomic<bool> g_started{false}, g_failed{false}, g_quit{false}, g_radioBusy{false};
+std::atomic<bool> g_restart{false}; // the device was stopped by the OS (interruption) or the app resumed: start it again
 std::atomic<unsigned> g_nextId{1};
 
 // Game-thread-only state (UpdateFrame, footsteps, music edge).
@@ -138,7 +139,17 @@ public:
     explicit Mixer(std::wstring root) : root_(std::move(root)) {}
 
     void Run() {
-        if (ma_engine_init(nullptr, &engine_) != MA_SUCCESS) { g_failed = true; return; }
+        // Our own context, for its iOS audio session: Playback, so the Ring / Silent switch does not mute the game (miniaudio's
+        // default is PlayAndRecord). Elsewhere the context settings are miniaudio's defaults.
+        ma_context_config contextConfig = ma_context_config_init();
+        contextConfig.coreaudio.sessionCategory = ma_ios_session_category_playback;
+        if (ma_context_init(nullptr, 0, &contextConfig, &context_) != MA_SUCCESS) { g_failed = true; return; }
+        ma_engine_config engineConfig = ma_engine_config_init();
+        engineConfig.pContext = &context_;
+        engineConfig.notificationCallback = [](const ma_device_notification* n) {
+            if (n && n->type == ma_device_notification_type_interruption_ended) g_restart = true; // miniaudio leaves it stopped
+        };
+        if (ma_engine_init(&engineConfig, &engine_) != MA_SUCCESS) { ma_context_uninit(&context_); g_failed = true; return; }
         for (int i = 1; i <= 4; ++i) ma_sound_group_init(&engine_, 0, nullptr, &groups_[i]);
         LoadZones();
         auto last = std::chrono::steady_clock::now();
@@ -154,6 +165,10 @@ public:
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.25f);
             last = now;
+            if (g_restart.exchange(false)) {
+                ma_device* device = ma_engine_get_device(&engine_);
+                if (device && !ma_device_is_started(device)) ma_engine_start(&engine_);
+            }
             for (const Cmd& c : commands) Handle(c);
             Tick(listener, dt);
         }
@@ -163,6 +178,7 @@ public:
         beds_.clear(); // every ma_sound is uninitialised by ~Voice, before the groups and the engine go
         for (int i = 1; i <= 4; ++i) ma_sound_group_uninit(&groups_[i]);
         ma_engine_uninit(&engine_);
+        ma_context_uninit(&context_);
     }
 
 private:
@@ -213,7 +229,13 @@ private:
         const ma_uint32 flags = stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
         ma_sound_group* group = bus >= 1 && bus <= 4 ? &groups_[bus] : nullptr;
         std::unique_ptr<ma_sound> raw = std::make_unique<ma_sound>();
-        if (ma_sound_init_from_file_w(&engine_, path.c_str(), flags, group, nullptr, raw.get()) != MA_SUCCESS)
+#ifdef _WIN32
+        const ma_result opened = ma_sound_init_from_file_w(&engine_, path.c_str(), flags, group, nullptr, raw.get());
+#else // Apple: the game path's '\' separators are ordinary file-name characters there; open the UTF-8 '/' form
+        const ma_result opened = ma_sound_init_from_file(&engine_, tbd::platform::WideToUtf8(tbd::platform::FsPath(path).wstring()).c_str(),
+                                                         flags, group, nullptr, raw.get());
+#endif
+        if (opened != MA_SUCCESS)
             return false; // an unreadable file is as silent as a missing one; nothing was initialised
         v.snd.reset(raw.release());
         v.base = volume;
@@ -438,6 +460,7 @@ private:
     }
 
     std::wstring root_;
+    ma_context context_ = {};
     ma_engine engine_ = {};
     ma_sound_group groups_[5] = {};
     Listener listener_;
@@ -495,6 +518,12 @@ void Stop() {
         g_queue.clear();
     }
     g_started = false;
+}
+
+void Resume() {
+    if (!Running()) return;
+    g_restart = true;
+    g_cv.notify_one();
 }
 
 void SetBusVolume(Bus bus, float volume) {

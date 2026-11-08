@@ -23,6 +23,8 @@ void Resize(int width, int height, float scale);
 void Frame();
 // The app is going away.
 void Shutdown();
+// The app is active again, or an audio-session interruption ended: restart the sound device if the OS stopped it.
+void ResumeAudio();
 
 // Pointer input in device pixels. Touch: one finger is the left button; two-finger pan and pinch drive the camera.
 enum class Button { Left = 0, Right = 1, Middle = 2 };

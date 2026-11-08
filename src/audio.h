@@ -30,6 +30,9 @@ enum class Bus { Master = 0, Music = 1, Sfx = 2, Ambience = 3, Radio = 4 };
 bool Start(const std::wstring& assetsRoot);
 // Fades nothing: stops the thread, frees every sound and closes the device. Safe to call when Start returned false.
 void Stop();
+// Restarts the device if the OS stopped it (iOS: an audio-session interruption such as a call or Siri, or the app coming
+// back to the foreground). Does nothing when it is running. Safe to call when Start returned false.
+void Resume();
 
 void SetBusVolume(Bus bus, float volume);
 

@@ -143,7 +143,14 @@ bool tbd::shell::EditorBrushLines(std::vector<tbd::Vertex>&) { return false; }
 bool tbd::shell::EditorClayDraw(std::vector<tbd::Vertex>&, std::vector<tbd::Vertex>&) { return false; }
 
 // ---- tbd::host
-void tbd::host::Init(const std::wstring& assetsRoot) { GameInit(assetsRoot); }
+void tbd::host::Init(const std::wstring& assetsRoot) {
+    GameInit(assetsRoot);
+    // Sound reads <assets>\audio (the shell copies the bundled UI sfx into it on first run, so the folder exists). Without
+    // this every audio:: call is a silent no-op; on Windows main.cpp starts it.
+    if (!tbd::audio::Start(assetsRoot)) tbd::Log("Audio: not started (no %s\\audio folder, or TBD_NOAUDIO)", tbd::WideToUtf8(assetsRoot).c_str());
+}
+
+void tbd::host::ResumeAudio() { tbd::audio::Resume(); }
 
 void tbd::host::AttachRenderer(std::unique_ptr<tbd::Renderer> renderer, int width, int height) {
     if (!renderer) return;
@@ -163,7 +170,10 @@ void tbd::host::Frame() {
     if (g_engine.renderer) GameFrame();
 }
 
-void tbd::host::Shutdown() { GameShutdown(); }
+void tbd::host::Shutdown() {
+    GameShutdown();
+    tbd::audio::Stop();
+}
 
 void tbd::host::PointerDown(Button b, float x, float y) {
     g_buttonsDown |= 1 << (int)b;

@@ -33,6 +33,11 @@ Copy-Item "$repo\src\city\news_lines.json" "$Out\assets\news" -Force
 foreach ($need in "audio\radio", "sim\tuning.json", "buildings") {
     if (-not (Test-Path "$Out\assets\$need")) { Write-Warning "assets\$need is missing from $Assets" }
 }
+# The sound the iPad will have (assets\audio is mirrored whole: sfx, radio, ambience, music, zones.txt).
+foreach ($dir in "audio\sfx", "audio\radio") {
+    $n = @(Get-ChildItem "$Out\assets\$dir" -File -ErrorAction SilentlyContinue).Count
+    "assets\{0}: {1} files" -f $dir, $n
+}
 
 Get-ChildItem "$Out\shaders" -File | Remove-Item
 if ($Shaders) { Copy-Item "$repo\src\shaders\msl\*.metal" "$Out\shaders" }
