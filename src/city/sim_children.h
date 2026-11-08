@@ -137,6 +137,7 @@ public:
         const size_t n = t ? t->links.size() : 0;
         want_.assign(n, 0.0f), span_lo_.assign(n, 0.0f), span_hi_.assign(n, 0.0f), have_.assign(n, 0), herd_.assign(n, -1), stamp_.assign(n, 0);
         centre_.assign(n, V2{}), reach_.assign(n, 0.0f);
+        nearLo_.assign(n, 0.0f), nearHi_.assign(n, 0.0f), nearStamp_.assign(n, 0);
         for (size_t l = 0; l < n; ++l) {
             V2 p, d;
             float y;
@@ -228,10 +229,10 @@ public:
 private:
     const LinkTable* table_ = nullptr;
     const RouteStore* routes_ = nullptr;
-    std::vector<float> want_, span_lo_, span_hi_, reach_;
+    std::vector<float> want_, span_lo_, span_hi_, reach_, nearLo_, nearHi_;
     std::vector<V2> centre_;
     std::vector<int> have_, herd_;
-    std::vector<uint32_t> stamp_;
+    std::vector<uint32_t> stamp_, nearStamp_;
     std::vector<int> touched_;
     std::vector<uint16_t> order_;
     std::vector<int> scratchIdx_;
@@ -251,6 +252,11 @@ private:
             if (onRoad < 0.5f) continue;
             float tail, head;
             hs.Span(h, tail, head);
+            if (head - tail < 40.0f) { // a herd that just left (or a tight one): its cars take at least 40 m of road
+                const float L = routes_->recs[h.route].len, mid = 0.5f * (head + tail);
+                tail = std::max(0.0f, std::min(mid - 20.0f, L - 40.0f));
+                head = std::min(L, tail + 40.0f);
+            }
             const float span = std::max(head - tail, 40.0f);
             const float perM = onRoad / span;
             const RouteStore::Rec& r = routes_->recs[h.route];
@@ -262,7 +268,9 @@ private:
                 const float endM = routes_->EndAt(h.route, i), len = table_->links[(size_t)l].len, startM = endM - len;
                 if (startM > head) break;
                 if (Len(centre_[(size_t)l] - focus) > params.radius + reach_[(size_t)l]) continue;
-                const float lo = std::max(tail, startM), hi2 = std::min(head, endM);
+                if (nearStamp_[(size_t)l] != frame_) nearStamp_[(size_t)l] = frame_, NearRange(l, focus);
+                // only the stretch of the link inside the radius: a long highway pipe would otherwise put its cars km away
+                const float lo = std::max(std::max(tail, startM), startM + nearLo_[(size_t)l]), hi2 = std::min(std::min(head, endM), startM + nearHi_[(size_t)l]);
                 if (hi2 <= lo) continue;
                 if (stamp_[(size_t)l] != frame_) { // first herd on this link this frame
                     stamp_[(size_t)l] = frame_;
@@ -280,6 +288,15 @@ private:
         for (int l : touched_) want_[(size_t)l] *= params.densityScale * scale_;
     }
     float scale_ = 1;
+    // The metres of link l within the radius of the focus (a chord around the nearest point; empty when it is all outside).
+    void NearRange(int l, V2 focus) {
+        float s, d;
+        const float len = table_->links[(size_t)l].len;
+        if (!table_->Project(l, focus, s, d)) { nearLo_[(size_t)l] = 0, nearHi_[(size_t)l] = len; return; }
+        if (d >= params.radius) { nearLo_[(size_t)l] = 1, nearHi_[(size_t)l] = 0; return; }
+        const float r = std::sqrt(params.radius * params.radius - d * d);
+        nearLo_[(size_t)l] = std::max(0.0f, s - r), nearHi_[(size_t)l] = std::min(len, s + r);
+    }
 
     int WantInt(int link) const {
         const float w = want_[(size_t)link];
