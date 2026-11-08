@@ -72,7 +72,7 @@ struct Layout {
     float backX = 0, backY = 0, backS = 0;        // the cross
 };
 
-constexpr float kOk = 64, kBack = 48, kRing = 15;
+constexpr float kOk = 64, kBack = 56, kRing = 15;
 
 // The buttons sit on the right thumb, above the kit's strips (rightTop: points from the top of the screen to them).
 inline Layout Place(const Context& g, const SafeInsets& sa, float rightTop) {
@@ -128,8 +128,12 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
     }
     {
         const float x = L.backX, y = L.backY;
+        // [user] clearer: bigger, an amber ring, a thick undo arrow (also while a point is pending: it takes that point back) and a label
+        const Color amber = Rgba(255, 196, 70);
         P.Glass(x, y, kBack, kBack, kBack * 0.5f, backHeld ? Rgba(60, 62, 70, 200) : kPanel, 18, 1.2f, true);
-        DrawIcon(dl, t.Pending() ? Icon::Close : Icon::Undo, (x + kBack * 0.5f) * s, (y + kBack * 0.5f) * s, std::round(kBack * 0.42f * s), std::max(1.0f, 2.0f * s), kInk);
+        P.Box(x, y, kBack, kBack, kBack * 0.5f, Rgba(0, 0, 0, 0), 2, amber);
+        DrawIcon(dl, Icon::Undo, (x + kBack * 0.5f) * s, (y + kBack * 0.5f) * s, std::round(kBack * 0.44f * s), std::max(1.5f, 3.2f * s), amber);
+        P.Text(t.Pending() ? "Undo point" : "Undo", x + kBack * 0.5f, y + kBack + 9, 11, amber, true, 0.5f);
     }
 
     // ---- the dot: a ring and a centre point; amber on a snap, green on a connection, red when the piece is refused

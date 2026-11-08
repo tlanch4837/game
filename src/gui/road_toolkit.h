@@ -319,7 +319,13 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
             if (bx + it.w > L.panelX + L.panelW - kMPad + 0.5f) break; // a very narrow screen: what does not fit is in the full panel
             switch (it.id) {
             case kClose:
-                if (button(bx, sy, kMB, kMB, Icon::Close, false)) out.close = true, sfx(0.65f), out.changed = true;
+                { // [user] a red down arrow (hides the kit and ends the tool), not an X
+                    bool held = false;
+                    const bool hit = tap(bx, sy, kMB, kMB, &held);
+                    box(bx, sy, kMB, kMB, false, held, false);
+                    DrawIcon(dl, Icon::ChevronDown, (bx + kMB * 0.5f) * s, (sy + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 2.8f * s), Rgba(255, 69, 58));
+                    if (hit) out.close = true, sfx(0.65f), out.changed = true;
+                }
                 break;
             case kMode: {
                 static const Icon kModeIcons[] = {Icon::Straight, Icon::CurveSimple, Icon::CurveComplex, Icon::Continuous, Icon::Grid, Icon::Replace, Icon::Swap, Icon::Bulldoze};
