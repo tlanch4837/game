@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -21,6 +22,7 @@
 
 #include "gui.h"
 #include "news_pill.h"       // the City News card's collapsed / unread state (the host draws the card)
+#include "safe_area.h"       // [safe area] the Dynamic Island / corners / home indicator strips (Model::safe)
 #include "../gfx_settings.h" // the player's graphics options (the Graphics page edits Model::gfx)
 
 namespace tbd {
@@ -115,6 +117,11 @@ struct Model {
     int textSize = 0; // 0 normal, 1 large
     bool edgePan = true;
     bool showStats = false; // Graphics > Show stats: the FPS / draws / polys / camera text (the host keeps it, settings.ini stats=)
+    // [safe area] the strips every anchored element keeps clear, points (the host fills it each frame)
+    SafeInsets safe;
+    // [road ux] a road / rail / terrain tool with its own compact kit is out: the PC UI bar slims to icons (44 pt) and
+    // the placement bar / Phone UI split controls step aside (the kit has their buttons)
+    bool slim = false, hidePlaceBar = false;
     void Resolve(const Atlas& a) { // preview cells by slug, as the mockup's pvImg(): name, name_road, name_highway
         for (Category& c : cats)
             for (Group& g : c.groups) {
@@ -143,6 +150,7 @@ struct Out {
     bool settingsChanged = false;
     bool menuOpen = false;  // the pause menu is up (the host pauses the sim under it)
     std::vector<float> sfx; // pitches of the UI tick to play (volume .6)
+    float bottomH = 0;      // [road ux] points from the screen's bottom edge the dock takes (the kits stack above it)
 };
 
 // ---------------------------------------------------------------- the GUI's own state
@@ -164,6 +172,7 @@ struct State {
     Rect scrollArea;
     float toolT = 1;
     std::string toolShown;
+    float slimT = 0; // [road ux] 0 normal .. 1 the slim bar (Model::slim), eased
 };
 
 // ---------------------------------------------------------------- easing
@@ -299,7 +308,10 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
     const float s = g.Scale();
     Painter P(g, atlas, s);
     P.text = (!st.pcUi && st.pad ? 1.3f : 1.0f) * (m.textSize ? 1.15f : 1.0f);
-    const float W = in.viewW / s, H = in.viewH / s;
+    // [safe area] W / H are the safe area's right / bottom edges (so every right / bottom anchor clears it); left / top
+    // anchors add SL / ST, centred ones centre on (W + SL) / 2
+    const float SL = m.safe.L(), ST = m.safe.T();
+    const float W = in.viewW / s - m.safe.R(), H = in.viewH / s - m.safe.B();
     Tapper T{g, st};
     auto R = [&](float x, float y, float w, float h) { return Rect{x * s, y * s, w * s, h * s}; };
     auto sfx = [&](float pitch) { if (m.sound) out.sfx.push_back(pitch); };
@@ -344,21 +356,32 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             float tileW, pvW, pvH, tileFont, costFont, tileGap, tileR, maxH, placeBottom;
             bool labels;
         };
-        const Mx k = phoneLayout
-            ? Mx{8, 8, 52, 44, 8, 16, 16, 6, 30, 16, 54, 10, 7, 2, 8, 1, 5, 2, 34, 10,
-                 36, 20, 20, 7, 0, 28, 14, 3, 8,
-                 56, 8, 6, 14, 8, 6, 2, 8, 9,
-                 84, 76, 54, 8, 8, 4, 14, 0, 60, false}
+        const Mx kPhone{8, 8, 52, 44, 8, 16, 16, 6, 30, 16, 54, 10, 7, 2, 8, 1, 5, 2, 34, 10,
+                        36, 20, 20, 7, 0, 28, 14, 3, 8,
+                        56, 8, 6, 14, 8, 6, 2, 8, 9,
+                        84, 76, 54, 8, 8, 4, 14, 0, 60, false};
+        Mx k = phoneLayout
+            ? kPhone
             : Mx{12, 12, 78, 56, 12, 22, 20, 10, 46, 24, 92, 14, 10, 4, 11, 4, 7, 3, 44, 10,
                  54, 28, 24, 10, 3, 40, 20, 6, 12,
                  80, 14, 12, 22, 20, 11, 5, 12, 13,
                  118, 104, 78, 11, 10, 8, 14, 300, 86, true};
+        // [road ux] the slim bar: a tool with its own kit is out and no category is open. The iPad's sizes ease into the
+        // iPhone's (every float of Mx, in order) and the bar to its shrunk height without labels: about 44 pt.
+        st.slimT = std::clamp(st.slimT + (m.slim && st.cat < 0 ? dt : -dt) / 0.25f, 0.0f, 1.0f);
+        const float slim = EaseDock(st.slimT);
+        if (!phoneLayout && slim > 0) {
+            float* a = &k.side;
+            const float* b = &kPhone.side;
+            for (size_t i = 0; i < offsetof(Mx, labels) / sizeof(float); ++i) a[i] += (b[i] - a[i]) * slim;
+        }
         // the bar's height: 78 -> 56 over .28 s when a category opens, back when it closes
         const float tOpen = std::min(st.catT / 0.28f, 1.0f);
-        const float shrink = st.cat >= 0 ? EaseDock(tOpen) : (st.closing ? 1 - EaseDock(tOpen) : 0);
+        const float shrink = std::max(st.cat >= 0 ? EaseDock(tOpen) : (st.closing ? 1 - EaseDock(tOpen) : 0), slim);
         const float barH = k.barH + (k.barSm - k.barH) * shrink;
-        const float bx = k.side, bw = W - 2 * k.side, by = H - k.bottom - barH;
+        const float bx = k.side + SL, bw = W - 2 * k.side - SL, by = H - k.bottom - barH; // [safe area] SL
         const float rad = k.r + (k.rSm - k.r) * shrink;
+        out.bottomH = in.viewH / s - by; // [road ux]
 
         // ---- the tool panel (drawn first: it slides out from under the bar)
         const int pc = st.cat >= 0 ? st.cat : (st.closing && st.catT < 0.22f ? st.lastCat : -1);
@@ -373,7 +396,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             const float lift = 14 * (1 - a), scale = 0.96f + 0.04f * a;
             // size: tabs row + tiles (wrapping on iPad, one scrolling row on iPhone)
             const bool tabs = c.groups.size() > 1 || sg;
-            const float maxW = W - 2 * k.panelMargin;
+            const float maxW = W - SL - 2 * k.panelMargin; // [safe area] SL
             const float tabH = k.tabFont * 1.4f + 2 * k.tabPadY;
             float tabsW = 0;
             std::vector<float> tabW;
@@ -406,7 +429,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             }
             innerW = std::max(innerW, std::min(tabsW, maxW - 2 * k.panelPadX));
             const float pw = innerW + 2 * k.panelPadX, ph = (tabs ? tabH + 6 : 0) + gridH + 2 * k.panelPadY;
-            const float cx = W * 0.5f, cy = H - k.panelBottom - ph * 0.5f + lift;
+            const float cx = (W + SL) * 0.5f, cy = H - k.panelBottom - ph * 0.5f + lift; // [safe area] SL
             const float px = cx - pw * scale * 0.5f, py = cy - ph * scale * 0.5f;
             P.alpha = a;
             P.Glass(px, py, pw * scale, ph * scale, k.panelR * scale, kPanel, 22, 1.6f, false);
@@ -461,14 +484,15 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         }
 
         // ---- the placement bar (above the dock)
-        if (toolOn && st.cat < 0) {
+        if (toolOn && st.cat < 0 && !m.hidePlaceBar) { // [road ux] hidePlaceBar
             const float a = EaseOut(std::min(st.toolT / 0.25f, 1.0f));
             P.alpha = a;
             const float bh = 50, nameW = P.TextW(m.tool, 14, true), costW = P.TextW(m.toolCost, 12);
             const int nopt = std::min((int)m.toolOpts.size(), phoneLayout ? 2 : 5);
             const int nbtn = (m.modeIcon.empty() ? 0 : 1) + nopt + 3;
             const float w = 14 + 22 + 6 + nameW + 2 + 6 + costW + 8 + 6 + nbtn * (38 + 6) - 6 + 6;
-            const float x = (W - w) * 0.5f, y = H - k.placeBottom - bh + 24 * (1 - a);
+            const float x = (W + SL - w) * 0.5f, y = H - k.placeBottom - bh + 24 * (1 - a); // [safe area] SL
+            out.bottomH = std::max(out.bottomH, in.viewH / s - y);                       // [road ux]
             P.Glass(x, y, w, bh, 18, kPanel, 22, 1.0f, false);
             float cx = x + 14;
             P.Icon(m.toolIcon, cx + 11, y + bh * 0.5f, 22);
@@ -597,7 +621,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
     }
     // ================================================================ Phone UI
     else {
-        const float st0 = 14, sl = 60;
+        const float st0 = 14 + ST, sl = 60 + SL; // [safe area] ST, SL
+        out.bottomH = in.viewH / s - (H - 16 - 64); // [road ux] the corner buttons / the split controls
         // the status pill
         {
             const float f = 12.5f, ih = 15, padY = 5, padX = 8, gap = 10, itemPad = 7;
@@ -650,7 +675,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             if (T.Tap(R(sl, y, 48, 48), &held)) st.menu = true, st.settings = false, st.menuT = 0, sfx(0.55f);
             P.Glass(sl, y, 48, 48, 24, kPanel, 24, 1.7f, true);
             P.Icon("pause", sl + 24, y + 24, 20, kInk, false);
-            const float rx = W - sl - 48;
+            const float rx = W - 60 - 48; // [safe area] W is the safe right edge
             if (T.Tap(R(rx, y, 48, 48))) {
                 st.open = !st.open, st.openT = 0;
                 if (!st.open) st.cat = -1;
@@ -686,7 +711,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 const int perRow = groups ? 3 : 3;
                 const int rows = (n + perRow - 1) / perRow;
                 const float gw = groups ? 282 : 196, gh = rows * bh + (rows - 1) * gap + 2 * pad;
-                const float gx = 52, gy = H - 74 - gh + 24 * (1 - a);
+                const float gx = 52 + SL, gy = H - 74 - gh + 24 * (1 - a); // [safe area] SL
                 P.alpha = std::clamp(a, 0.0f, 1.0f);
                 P.Glass(gx, gy, gw, gh, 24, kPanel, 24, 1.7f, true);
                 for (int i = 0; i < n; ++i) {
@@ -746,7 +771,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                         P.Text(gr.subs[i].name, x + (bw2 - lw) * 0.5f + 28, ty + 26, 12, kInk, true);
                     }
                 }
-                const float bottom = sg ? 132 : 76, maxH = sg ? 230 : 290, pad = 6, gap = 6, tileH = 100;
+                const float bottom = sg ? 132 : 76, maxH = std::min(sg ? 230.0f : 290.0f, H - bottom - ST - 8), pad = 6, gap = 6, tileH = 100; // [safe area] ST
                 const int rows = ((int)items.size() + 1) / 2;
                 const float contentH = rows * tileH + (rows - 1) * gap;
                 const float boxH = std::min(contentH, maxH - 2 * pad) + 2 * pad;
@@ -777,14 +802,15 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             }
         }
         // the split placement controls: the name pill at the bottom centre, ✕ / undo / option left, ✓ / mode / rotate right
-        if (toolOn) {
+        if (toolOn && m.hidePlaceBar) out.bottomH = in.viewH / s - H; // [road ux] the kit's own controls
+        if (toolOn && !m.hidePlaceBar) {                               // [road ux] hidePlaceBar
             const float a = EaseOut(std::min(st.toolT / 0.25f, 1.0f));
             P.alpha = a;
             const float lift = 24 * (1 - a);
             {
                 std::string sub = m.toolCost + (m.modeName.empty() ? "" : (m.toolCost.empty() ? "" : " - ") + m.modeName);
                 const float w = 14 + 18 + 8 + P.TextW(m.tool, 12.5f, true) + (sub.empty() ? 0 : 8 + P.TextW(sub, 12.5f)) + 14, h = 30;
-                const float x = (W - w) * 0.5f, y = H - 24 - h + lift;
+                const float x = (W + SL - w) * 0.5f, y = H - 24 - h + lift; // [safe area] SL
                 P.Glass(x, y, w, h, 15, kPanel, 18, 1.0f, false);
                 P.Icon(m.toolIcon, x + 14 + 9, y + h * 0.5f, 18);
                 P.Text(m.tool, x + 14 + 18 + 8, y + h * 0.5f, 12.5f, kInk, true);
@@ -801,7 +827,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 return tap;
             };
             float y = H - 16 - 48 + lift;
-            float x = 58;
+            float x = 58 + SL; // [safe area] SL
             if (sb(x, y, 48, 16, "x", false)) out.cancel = true, sfx(0.65f);
             x += 56;
             if (sb(x, y, 48, 16, "undo", false)) out.undo = true, sfx(0.65f);
@@ -857,11 +883,12 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             } else {
                 need = std::max({rowNeed("Graphics", kPreset, 4), rowNeed("Text size", kText, 2), rowNeed("Edge pan", kOnOff, 2)});
             }
-            cardW = std::min(std::max(cardW, need), W - 24);
+            cardW = std::min(std::max(cardW, need), W - SL - 24); // [safe area] SL
         }
+        const float CX = (W + SL) * 0.5f; // [safe area] the card's centre: the safe area's
         const float gap = padSizes ? 8 : 6, bh = (padSizes ? 14 : 11) * 2 + 14 * P.text * 1.25f;
         const float popScale = 0.6f + 0.4f * a; // pop: scale(.6) -> 1
-        auto btnRect = [&](float x, float y, float w, float h) { return R(W * 0.5f + (x - W * 0.5f) * popScale, H * 0.5f + (y - H * 0.5f) * popScale, w * popScale, h * popScale); };
+        auto btnRect = [&](float x, float y, float w, float h) { return R(CX + (x - CX) * popScale, H * 0.5f + (y - H * 0.5f) * popScale, w * popScale, h * popScale); };
         auto drawBtn = [&](float x, float y, float w, float h, const std::string& icon, const std::string& label, int style, bool centre) {
             // style 0 normal, 1 primary, 2 muted (main menu), 3 selected card
             const Rect r = btnRect(x, y, w, h);
@@ -880,13 +907,13 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         auto title = [&](const std::string& t, float y, float size, Color c, bool caps, bool bold) {
             std::string u = t;
             if (caps) for (char& ch : u) ch = (char)std::toupper((unsigned char)ch);
-            P.Text(u, W * 0.5f, H * 0.5f + (y - H * 0.5f) * popScale, size * popScale, c, bold, 0.5f);
+            P.Text(u, CX, H * 0.5f + (y - H * 0.5f) * popScale, size * popScale, c, bold, 0.5f);
         };
-        const float x0 = (W - cardW) * 0.5f;
+        const float x0 = CX - cardW * 0.5f;
         if (!st.settings) {
             const float hTitle = 13 * 1.4f + 6, hCity = (padSizes ? 30 : 22) * 1.3f + 2, hSub = 13 * 1.4f + 2;
             const float total = hTitle + hCity + hSub + bh + gap + 2 * (bh + gap) + bh + gap * 2;
-            float y = (H - total) * 0.5f;
+            float y = ST + (H - ST - total) * 0.5f; // [safe area] ST
             title("Paused", y + 9, 13, kMuted, true, false);
             y += hTitle;
             title(m.city, y + hCity * 0.5f, padSizes ? 30 : 22, kInk, false, true);
@@ -906,11 +933,11 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         } else {
             // Settings: the interface switch (two cards), then the options rows, then Back
             const float cardH = 66;
-            const float rowH = st.gfx ? std::min(bh, (H - 80.0f) / 10.0f - gap) : bh; // the Graphics page has nine rows
+            const float rowH = st.gfx ? std::min(bh, (H - ST - 80.0f) / 10.0f - gap) : bh; // the Graphics page has nine rows
             const float total = st.gfx ? 13 * 1.4f + 6 + 9 * (rowH + gap)
                               : st.snd ? 13 * 1.4f + 6 + 6 * (rowH + gap)
                                        : 13 * 1.4f + 6 + 13 * 1.4f + cardH + gap + 5 * (rowH + gap) + rowH;
-            float y = (H - total) * 0.5f;
+            float y = ST + (H - ST - total) * 0.5f; // [safe area] ST
             title(st.gfx ? "Graphics" : st.snd ? "Sound" : "Settings", y + 9, 13, kMuted, true, false);
             y += 13 * 1.4f + 6;
             if (!st.gfx && !st.snd) { title("Interface", y + 6, 13, kMuted, false, false); y += 13 * 1.4f; }
