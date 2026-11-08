@@ -2,6 +2,7 @@
 // Each "frame" below is what the engine does once per rendered frame: Take() the queued input, BeginFrame, widgets, EndFrame.
 #include "../src/gui/gui.h"
 #include "../src/gui/terrain_toolbar.h"
+#include "../src/gui/news_pill.h"
 
 #ifdef _WINDOWS_
 #error "the GUI core must not pull in windows.h"
@@ -584,8 +585,33 @@ static void Animations() {
     CHECK(Near(knobX, settled, 0.5f));
 }
 
-int main() {
-    Layout();
+// The City News pill: collapsed it counts what came in since the card was last open; open, everything is read.
+static void NewsPillUnread() {
+    tbd::gui::NewsPill p;
+    std::vector<std::string> feed;
+    p.Update(feed, false);
+    CHECK(p.unread == 0); // a fresh map: nothing to read
+    feed.insert(feed.begin(), tbd::gui::NewsPill::Key("Day 1, 08:10", "A road opened."));
+    p.Update(feed, false);
+    CHECK(p.unread == 1);
+    feed.insert(feed.begin(), tbd::gui::NewsPill::Key("Day 1, 09:00", "A pump opened."));
+    p.Update(feed, false);
+    CHECK(p.unread == 2);
+    p.Update(feed, true); // the card is open on screen
+    CHECK(p.unread == 0 && p.seen == feed.front());
+    p.Update(feed, false);
+    CHECK(p.unread == 0); // closed again: still read
+    feed.insert(feed.begin(), tbd::gui::NewsPill::Key("Day 2, 08:00", "Budget news."));
+    p.Update(feed, false);
+    CHECK(p.unread == 1);
+    feed.clear(); // a new map empties the feed
+    p.Update(feed, false);
+    CHECK(p.unread == 0);
+    p.Toggle();
+    CHECK(p.expanded);
+}
+
+int main() {    Layout();
     HitTesting();
     ButtonClick();
     SliderDrag();
@@ -598,6 +624,7 @@ int main() {
     DrawListPrimitives();
     ClassicMatchesSmooth();
     Animations();
+    NewsPillUnread();
     std::printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

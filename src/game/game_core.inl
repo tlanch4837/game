@@ -3245,7 +3245,8 @@ void RenderFrame() {
         if (tbd::platform::TickCountMs() < g_engine.toastUntil) lines.push_back(g_engine.toast);
     }
     float statsBottom = 0.0f; // where the top-left stats text ends: the in-game GUI keeps its panels below it
-    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines);
+    const bool statsOn = g_play.active || gdock::StatsOverlayOn(); // Settings > Graphics > Show stats (off on iOS / Phone UI): toasts only
+    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines, statsOn);
     if (!testShot && g_profiler.Enabled()) // nullptr: the per-pass GPU times are not exposed by the renderers yet
         g_profiler.Draw(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, r.Name(), profSample, g_stream.Snapshot(), nullptr);
     DrawGameGui(r, statsBottom); // in-game GUI last, over every other overlay
