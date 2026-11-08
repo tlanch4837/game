@@ -10,7 +10,8 @@ using tbd::gui::dock::Category;
 using tbd::gui::dock::Group;
 using tbd::gui::dock::Item;
 
-enum Kind : int { kRoad = 1, kZone, kDezone, kUtilDef, kUtilLine, kTransport, kLine, kOutside, kIndustry, kWaste, kTerrain, kOverlay, kBudget };
+enum Kind : int { kRoad = 1, kZone, kDezone, kUtilDef, kUtilLine, kTransport, kLine, kOutside, kIndustry, kWaste, kTerrain, kOverlay, kBudget, kInfo };
+const char* const kInfoPanels[] = {"City Information", "Population Info", "Notifications", "Statistics"}; // gui/city_info_panels.h
 inline int Id(Kind k, int i) { return (int)k << 16 | (i & 0xFFFF); }
 
 tbd::gui::dock::State g_state;
@@ -172,7 +173,8 @@ void BuildCatalogue() {
     }
     {
         Category c{"info", "Info", "info", Rgba(20, 184, 166), {}};
-        c.groups.push_back({"City", "stats", {{"Statistics", "", "stats", Id(kBudget, 3)}}, {}});
+        c.groups.push_back({"City", "stats", {{"City Information", "", "info", Id(kInfo, 0)}, {"Population", "", "ppl", Id(kInfo, 1)},
+                                                 {"Notifications", "", "bell", Id(kInfo, 2)}, {"Statistics", "", "stats", Id(kInfo, 3)}}, {}});
         M.cats.push_back(std::move(c));
     }
     {
@@ -305,7 +307,14 @@ void Pick(int id, tbd::gui::CityHud& hud) {
         g_overlayHud.on = (int)g_overlayHud.on == i ? tbd::gui::Overlay::None : (tbd::gui::Overlay)i;
         return;
     }
-    if (k == kBudget) { hud.budget = true; return; }
+    if (k == kBudget) { hud.Dismiss(), hud.budget = true; return; }
+    if (k == kInfo) { // the info panels (one at a time, over the map; the tool stays)
+        const char* name = kInfoPanels[std::min(i, 3)];
+        const bool was = hud.notDoneName && std::strcmp(hud.notDoneName, name) == 0;
+        hud.Dismiss();
+        if (!was) hud.ShowNotDone(name, "");
+        return;
+    }
     CloseTools();
     switch (k) {
     case kRoad: g_roads.Open(), g_roads.Select(i); break;
@@ -577,6 +586,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     if (!o.menuOpen && g_menuPaused) g_menuPaused = false, g_clock.paused = false;
     NewsCard(hud, o.menuOpen);
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
+    if (tbd::gui::CityInfoPanel(g_gui, hud.notDoneName, hud.stats) == 2) hud.Dismiss();
     return true;
 }
 } // namespace gdock

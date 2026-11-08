@@ -2,7 +2,7 @@
 //   bottom toolbar   one row of icon buttons (zoning, roads, electricity, water, garbage, ...), tooltips on hover;
 //                    working ones open their tool, the rest open a "Not completed yet" panel;
 //   status bar       under it: pause / date and time / speed, temperature and season, the city name, population, money;
-//   right column     city info, citizens, notes, advisor (all "not completed");
+//   right column     city info, population, notifications (city_info_panels.h, from the sim), advisor ("not completed");
 //   Purchase Map Tiles  a dialog opened from the toolbar's map button (the numbers are zero: tiles are not implemented).
 // The tools themselves (src/gui/*_toolbar.h) only draw their options and picker panels; this file launches them.
 #pragma once
@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "city_budget_panel.h" // the Budget panel (taxes, ledger, trend, loans)
+#include "city_info_panels.h"  // City Information, Population, Notifications, Statistics, the city name card
 #include "zone_toolbar.h"
 
 namespace tbd {
@@ -80,6 +81,7 @@ struct CityHud {
     std::string citizensClosedFor; // the title the player closed: the panel stays shut until another building is picked
     int milestone = 1;
     BudgetView bv;                           // the Budget panel's ledger and loans (city_budget_panel.h)
+    HudCityStats stats;                      // the info panels' numbers (city_info_panels.h; filled while one is open)
     long long lockPop[(int)HudTool::Count] = {}; // in: the population a locked tool needs (milestones), 0 = open
     bool notDoneLocked = false;              // the "not completed" panel is showing a locked tool instead
     std::string banner, bannerSub;           // in: a milestone banner (top centre) while bannerAlpha > 0
@@ -222,10 +224,11 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
             const HudItem& it = items[i];
             const bool open = it.tool >= 0 && (it.tool == (int)HudTool::Terrain ? h.terrainOpen : it.tool == h.selected);
             const bool economy = it.tool == -1 && std::strcmp(it.name, "Economy") == 0; // the Budget panel (S4)
+            const bool realPanel = it.tool == -1 && IsCityInfoPanel(it.name);           // Statistics (city_info_panels.h)
             const bool on = open || (it.tool == -1 && h.notDone == i) || (it.tool == -2 && h.tiles) || (economy && h.budget);
             char id[24];
             std::snprintf(id, sizeof(id), "##hudbtn%d", i);
-            if (IconBox(g, tip, id, {x, row.y, size, size}, it.icon, on, it.name, it.tool == -1 && !economy)) {
+            if (IconBox(g, tip, id, {x, row.y, size, size}, it.icon, on, it.name, it.tool == -1 && !economy && !realPanel)) {
                 if (economy) {
                     const bool was = h.budget;
                     h.Dismiss();
@@ -326,7 +329,9 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
     if (h.bannerAlpha > 0.0f) DrawMilestoneBanner(g, h.banner.c_str(), h.bannerSub.c_str(), h.bannerAlpha);
 
     // ------------------------------------------------------------ "not completed" panel, above the toolbar
-    if (h.notDoneName) {
+    const int info = CityInfoPanel(g, h.notDoneName, h.stats); // the real panels where the sim has the numbers
+    if (info == 2) h.Dismiss(), h.notDone = -1;
+    if (h.notDoneName && info == 0) {
         g.BeginPanel("##hud notdone", Anchor::BottomCenter, 0.0f, lift + statusH + toolbarH + 14.0f, 440.0f, 0.0f, 12.0f);
         g.Text(TextStyle::Bright, "%s", h.notDoneName);
         g.Text(TextStyle::Muted, "%s", h.notDoneBlurb ? h.notDoneBlurb : "");

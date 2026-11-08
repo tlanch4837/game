@@ -797,6 +797,59 @@ void SimSync(float realDt) {
     }
 }
 
+// The info panels' numbers (gui/city_info_panels.h): counted only while one of them is open, at most twice a second.
+void SimInfoFill(tbd::gui::CityHud& hud) {
+    using namespace tbd::city;
+    tbd::gui::HudCityStats& st = hud.stats;
+    if (!tbd::gui::IsCityInfoPanel(hud.notDoneName)) return;
+    if (st.notes.size() != g_simNotes.size() || (!g_simNotes.empty() && st.notes.back() != g_simNotes.back())) st.notes = g_simNotes;
+    static uint64_t last = 0;
+    const uint64_t now = tbd::platform::TickCountMs();
+    if (last && now - last < 500) return;
+    last = now;
+    st.cityName = hud.cityName;
+    int nm = 0;
+    const Milestone* ms = Milestones(nm);
+    const int reached = std::clamp(g_simMilestones.reached, 0, nm);
+    st.milestone = reached > 0 ? ms[reached - 1].name : "None yet";
+    st.nextMilestone = reached < nm ? ms[reached].name : "";
+    st.nextPop = reached < nm ? (long long)ms[reached].population : 0;
+    st.treasury = (long long)(g_simEcon.treasury / 100), st.net = (long long)(g_simEcon.LastNet() / 100);
+    st.population = st.kids = st.adults = st.seniors = st.working = st.unemployed = st.homes = st.jobs = st.jobsFilled = 0;
+    for (int k = 0; k < 3; ++k) st.jobsByKind[k] = st.filledByKind[k] = st.edu[k] = 0;
+    for (long long& w : st.wealth) w = 0;
+    double land = 0, cov[6] = {}, power = 0, water = 0, sewage = 0;
+    for (const CellSim& c : g_citySim.sim) {
+        const long long p = c.Population();
+        st.population += p;
+        st.kids += c.residents[kKids], st.adults += c.residents[kAdults], st.seniors += c.residents[kSeniors];
+        st.working += c.working;
+        st.unemployed += c.residents[kAdults] > c.working ? c.residents[kAdults] - c.working : 0;
+        st.homes += c.homeCap;
+        for (int k = 0; k < 3; ++k) st.jobsByKind[k] += c.jobCap[k], st.filledByKind[k] += c.employed[k], st.edu[k] += c.edu[k];
+        for (int w = 0; w < 4; ++w) st.wealth[w] += c.wealth[w];
+        land += (double)p * c.landValue;
+        for (int k = 0; k < 6; ++k) cov[k] += (double)p * c.coverage[k];
+        power += c.powerOk ? (double)p : 0.0, water += c.waterOk ? (double)p : 0.0, sewage += c.sewageOk ? (double)p : 0.0;
+    }
+    st.jobs = st.jobsByKind[0] + st.jobsByKind[1] + st.jobsByKind[2];
+    st.jobsFilled = st.filledByKind[0] + st.filledByKind[1] + st.filledByKind[2];
+    const double P = std::max<double>(1.0, (double)st.population);
+    st.landValue = (float)(land / P);
+    for (int k = 0; k < 6; ++k) st.coverage[k] = (float)(cov[k] / P);
+    st.powerShare = st.population ? (float)(power / P) : 1.0f, st.waterShare = st.population ? (float)(water / P) : 1.0f;
+    st.sewageShare = st.population ? (float)(sewage / P) : 1.0f;
+    for (int c = 0; c < 4; ++c) st.demand[c] = (float)g_simGrowth.demand[c];
+    st.levelUps = (long long)g_simGrowth.levelUps, st.levelDowns = (long long)g_simGrowth.levelDowns, st.abandoned = (long long)g_simGrowth.abandoned;
+    st.trips = st.slowRoads = 0;
+    for (const SegFlow& f : g_segFlow) st.trips += f.flow > 1.0f, st.slowRoads += f.cls >= 2;
+    int64_t h[SimBudget::kHistory], p[SimBudget::kHistory];
+    const int n = g_simBudget.History(h, SimBudget::kHistory);
+    g_simBudget.PopHistory(p, SimBudget::kHistory);
+    st.balance.resize((size_t)n), st.pop.resize((size_t)n);
+    for (int i = 0; i < n; ++i) st.balance[(size_t)i] = (long long)(h[i] / 100), st.pop[(size_t)i] = (long long)p[i];
+}
+
 // The HUD's population (and, from S4, money) cells.
 bool g_simHudPush = true; // the sim's tax rates and funding go into the Budget panel (start, load); afterwards the panel leads
 void SimHudFill(tbd::gui::CityHud& hud) {
@@ -848,6 +901,7 @@ void SimHudFill(tbd::gui::CityHud& hud) {
         if (!g_simMilestones.Unlocked(kUnlockAirport)) tabs |= 1u << (int)TTab::Air;
         g_transportTool.lockedTabs = tabs;
     }
+    SimInfoFill(hud);
     hud.citizenTitle = g_simCitizenTitle;
     hud.citizens = g_simCitizenLines;
     static bool openBudget = sim_host::EnvDouble("TBD_SIM_SHOW_BUDGET", 0.0) > 0.0; // dev: the Budget panel open at start
