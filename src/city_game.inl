@@ -34,11 +34,21 @@ void SimSaveLines(std::ostringstream& o);
 void SimLoadLine(const std::vector<std::string>& f);
 void SimLotsRestored();
 int g_gameAction = 0, g_gameSlot = 0;
+bool g_exampleFounding = false; // [example map] the example map: once its zones exist, found a starter town (city_example.inl)
+void ExampleFound();
+void NewExampleGame(int seed);
+std::vector<std::pair<uint8_t, uint8_t>> g_exampleSegZone; // [example map] street segment -> (zone, cells deep)
 
-std::wstring GameSavePath(int slot, const wchar_t* ext) {
+// [title] The saves folder, and a slot's file in it: Save 1 .. Save 10 are slot_01 .. slot_10 (game/save_slots.h; older
+// builds' city_slotN files move there on start, title_host.inl).
+void SaveSlotMeta(int slot); // title_host.inl: slot_NN.meta after every save
+std::wstring GameSavesDir() {
     const std::wstring dir = tbd::Join(g_engine.projectFolder.empty() ? tbd::ExeDirectory() : g_engine.projectFolder, L"saves");
     { std::error_code ec; std::filesystem::create_directory(tbd::platform::FsPath(dir), ec); }
-    return tbd::Join(dir, std::wstring(L"city_slot") + std::to_wstring(slot + 1) + ext);
+    return dir;
+}
+std::wstring GameSavePath(int slot, const wchar_t* ext) {
+    return tbd::Join(GameSavesDir(), tbd::platform::Utf8ToWide(tbd::saves::SlotStem(slot)) + ext);
 }
 
 uint64_t g_cityGeneration = 0; // bumped when the city is wiped (new map, load): the city sim starts over (city_sim.inl)
@@ -258,7 +268,8 @@ bool SaveCityGame(int slot) {
             fclose(t);
         }
     }
-    Toast(ok ? "GAME SAVED - SLOT " + std::to_string(slot + 1) : "GAME SAVE FAILED");
+    if (ok) SaveSlotMeta(slot); // [title] the slot list's line (title_host.inl)
+    Toast(ok ? "GAME SAVED - SAVE " + std::to_string(slot + 1) : "GAME SAVE FAILED"); // [title]
     return ok;
 }
 
@@ -268,7 +279,7 @@ bool LoadCityGame(int slot) {
     using namespace tbd::scene_io_detail;
     std::ifstream in(tbd::platform::FsPath(GameSavePath(slot, L".tbdgame")), std::ios::binary);
     if (!in) {
-        Toast("NO SAVED GAME IN SLOT " + std::to_string(slot + 1));
+        Toast("NO SAVED GAME IN SAVE " + std::to_string(slot + 1)); // [title]
         return false;
     }
     std::string line;
@@ -484,7 +495,7 @@ bool LoadCityGame(int slot) {
     for (const Placed& b : g_transport.items) // finished buildings that were GLBs respawn through TransportSync
         (void)b;
     TransportRefreshZoning();
-    Toast("GAME LOADED - SLOT " + std::to_string(slot + 1));
+    Toast("GAME LOADED - SAVE " + std::to_string(slot + 1)); // [title]
     tbd::Log("Loaded city slot %d: %zu nodes, %zu segs, %zu transport, %zu zones painted", slot + 1, net.nodes.size(), net.segs.size(), g_transport.items.size(), g_pendingZones.size());
     return true;
 }
@@ -498,7 +509,9 @@ void GameSync() {
         if (a == 1) SaveCityGame(g_gameSlot);
         else if (a == 2) LoadCityGame(g_gameSlot);
         else if (a == 3) NewCityGame((int)(tbd::platform::TickCountMs() % 900000ull) + 100);
+        else if (a == 4) NewExampleGame(2026); // [example map]
     }
+    if (g_exampleFounding && g_zones.builtFrom == g_roads.net.version && !g_zones.cells.empty()) g_exampleFounding = false, ExampleFound(); // [example map]
     if (g_pendingZones.empty() || g_zones.builtFrom != g_roads.net.version || g_zones.cells.empty()) return;
     std::unordered_map<long long, std::vector<int>> grid; // 16 m buckets
     auto key = [](float x, float z) { return ((long long)std::floor(x / 16.0f) << 32) ^ (long long)(unsigned)(int)std::floor(z / 16.0f); };
