@@ -12,6 +12,9 @@
 // Why a lock and not "centre vertical = tilt" at all times: a two-finger pan always has some vertical centre movement, so
 // tilt and pan would fight on every drag. Locking on the first 12 pt decides once and is never ambiguous afterwards; a pure
 // vertical two-finger drag is tilt (as in Apple / Google Maps), pans use one finger, or two fingers off the vertical.
+// Turning a building while it is placed is NOT a gesture: a twist always turns the camera (above), so a twist that turned
+// the ghost instead would change meaning with the tool. The placement bar's two rotate buttons do it, 90 degrees a tap
+// (Rotate / Rotate back; src/game/glass_dock_host.inl, city_industry.inl BuildingRotate). On the PC: R / Shift+R.
 #import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>

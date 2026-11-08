@@ -277,6 +277,7 @@ void Baseline() {
     g.roadSegs = 0;
     for (const auto& s : g_roads.net.segs) g.roadSegs += s.alive ? 1 : 0;
     g.population = g_simTotals.population;
+    g.budget = tbd::city::BudgetMood(g_simEcon, 0, (int)g_simTune.budgetNewsGraceDays); // the city's money as it stands, unannounced
     g.taxSum = -1;
     g.week.clear();
     g.weekStart = g_clock.minutes;
@@ -325,10 +326,7 @@ void Watch() {
         g.unemployment = u;
     }
     // money
-    int budget = g.budget;
-    if (g_simEcon.treasury < 0) budget = -1;
-    else if (g_simEcon.days > 3 && g_simEcon.LastNet() > 0) budget = 1;
-    else if (g_simEcon.treasury > 0 && g_simEcon.LastNet() <= 0) budget = 0;
+    const int budget = BudgetMood(g_simEcon, g.budget, (int)g_simTune.budgetNewsGraceDays); // sim_budget.h: quiet on day 1
     if (budget != g.budget && budget != 0) Post(budget > 0 ? "budget_surplus" : "budget_deficit");
     g.budget = budget;
     // taxes: one story an hour after the player stops moving the sliders

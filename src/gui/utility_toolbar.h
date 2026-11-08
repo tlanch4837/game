@@ -124,15 +124,16 @@ inline bool UtilityToolbar(Context& g, UtilToolState& t, const city::UtilReport&
         const Rect plus = row.Slot(0, 1);
         const Rect val = {plus.x - row.gap - valueW, row.r.y, valueW, row.size};
         const Rect minus = {val.x - row.gap - row.size, row.r.y, row.size, row.size};
-        const bool locked = t.snapRoad && t.def >= 0; // a building snapped to a road faces it
-        if (IconBox(g, tip, "##urot left", minus, Icon::RotateLeft, false, "Rotate left ( , )", locked)) t.Rotate(15.0f);
+        // snapped to a road the building faces it, turned by whole quarter turns (R / Shift+R); free it takes any heading
+        const bool snapped = t.snapRoad && t.def >= 0;
+        if (IconBox(g, tip, "##urot left", minus, Icon::RotateLeft, false, snapped ? "Turn 90 left ( R )" : "Rotate left ( , )")) t.Rotate(snapped ? 90.0f : 15.0f);
         DrawList& dl = g.Draw();
         dl.Rect(val.x, val.y, val.x + val.w, val.y + val.h, th.well, th.well, th.widgetRadius, th.border, th.wellBorder);
         char v[24];
-        if (locked) std::snprintf(v, sizeof(v), "Auto");
+        if (snapped) std::snprintf(v, sizeof(v), "Road %+d", city::QuarterTurns(t.rotation) * 90);
         else std::snprintf(v, sizeof(v), "%.0f deg", t.rotation);
-        g.TextIn(val, v, locked ? th.muted : th.textBright, 0.5f, th.fontSize);
-        if (IconBox(g, tip, "##urot right", plus, Icon::RotateRight, false, "Rotate right ( . )", locked)) t.Rotate(-15.0f);
+        g.TextIn(val, v, th.textBright, 0.5f, th.fontSize);
+        if (IconBox(g, tip, "##urot right", plus, Icon::RotateRight, false, snapped ? "Turn 90 right ( Shift+R )" : "Rotate right ( . )")) t.Rotate(snapped ? -90.0f : -15.0f);
     }
     {
         Row row = BeginRow(g, "Elevation", 430);

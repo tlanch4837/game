@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "placement_rotation.h"
 #include "road_network.h"
 
 namespace tbd {
@@ -193,8 +194,9 @@ struct IndustryWorld {
         Evaluate(s.kind, s.Poly(), s.eff, s.hectares, s.perMonth);
         ++s.version, ++version;
     }
-    // A hub snapped beside the nearest ordinary road to p. False when no road is near.
-    bool Snap(const Network& net, V2 p, IndSite& s) const {
+    // A hub snapped beside the nearest ordinary road to p. False when no road is near. quarter turns it from facing the
+    // road by 90 degree steps (placement_rotation.h RoadSnap: its road-side edge stays half a metre off the kerb).
+    bool Snap(const Network& net, V2 p, IndSite& s, int quarter = 0) const {
         float t, d;
         const int seg = net.SegmentAt(p, 60.0f, t, d);
         if (seg < 0) return false;
@@ -203,8 +205,8 @@ struct IndustryWorld {
         const Cubic cu = net.Curve(seg);
         const V2 rp = cu.At(t), left = LeftOf(cu.Tan(t));
         const V2 out = Dot2(p - rp, left) >= 0 ? left : left * -1.0f;
-        s.c = rp + out * (pr.Half() + kHubD * 0.5f + 0.5f);
-        s.front = out * -1.0f;
+        const SnapResult r = RoadSnap(rp, out, pr.Half(), kHubW, kHubD, quarter, 0.5f);
+        s.c = r.c, s.front = r.front;
         return true;
     }
     // The hub's footprint is off every road and clear of other hubs.

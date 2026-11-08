@@ -98,7 +98,8 @@ inline void DrawOrientationGizmo(Renderer& r, const Mat4& view, int w, int h, in
 //   under the chips: the remaining stats as tiny text with a drop shadow so it reads on any background;
 //   bottom-centre:   any other line (the toast messages) as an accent-blue chip.
 // Returns the y just below the top-left block (chips and stats), so the in-game GUI can keep its panels out of it.
-inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector<std::string>& lines) {
+// showStats false (the game's Show stats off): only the toast chip is drawn, and nothing is reserved at the top (returns 0).
+inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector<std::string>& lines, bool showStats = true) {
     using editor_draw::Chip;
     using editor_draw::ChipHeight;
     using editor_draw::ChipWidth;
@@ -123,6 +124,12 @@ inline float DrawStatsText(Renderer& r, int w, int h, int dpi, const std::vector
 
     std::vector<Vertex> v;
     const float chipH = ChipHeight(cell, s);
+    if (!showStats) {
+        if (toast.empty()) return 0.0f;
+        Chip(v, ((float)w - ChipWidth(toast, cell, s)) * 0.5f, (float)h - margin - chipH, cell, s, toast, accent, white);
+        r.DrawTransient(v.data(), (uint32_t)v.size(), Topology::Triangles, OrthoPixels((float)w, (float)h), Mat4::Identity(), false);
+        return 0.0f;
+    }
     float x = margin;
     if (fly.empty()) x += Chip(v, x, margin, cell, s, "PERSPECTIVE", chipFill, chipText) + gap;
     else x += Chip(v, x, margin, cell, s, "FLY CAMERA -" + fly.substr(3), accent, white) + gap;

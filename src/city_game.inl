@@ -41,10 +41,16 @@ std::wstring GameSavePath(int slot, const wchar_t* ext) {
 }
 
 uint64_t g_cityGeneration = 0; // bumped when the city is wiped (new map, load): the city sim starts over (city_sim.inl)
+// Lane-metres of the map's own corridor (DefaultInfrastructure): the city pays no upkeep for them (sim_budget.h
+// PaidLaneMetres). Saved in the M record (city_sim.inl); a save from before that counts the corridor's profiles.
+double g_cityMapLaneMetres = 0.0;
+bool g_cityMapLaneKnown = false; // a load: the M record had it
+double SimRoadLaneMetres();      // city_sim.inl
 
 // Everything the city owns goes back to empty (the map stays).
 void ClearCityWorld() {
     ++g_cityGeneration;
+    g_cityMapLaneMetres = 0.0, g_cityMapLaneKnown = false;
     for (const tbd::city::Placed& b : g_transport.items) {
         g_transportCache.erase(b.id);
         if (g_transportGlbShown.erase(b.id)) UtilDeleteEntity("transport_" + std::to_string(b.id));
@@ -150,6 +156,7 @@ void DefaultInfrastructure() {
     }
     for (Outside& o : g_transit.outsides) o.name = o.name.empty() ? "" : o.name;
     g_roads.net.version++;
+    g_cityMapLaneMetres = SimRoadLaneMetres(), g_cityMapLaneKnown = true; // the corridor is the map's, not the city's: no upkeep
     tbd::Log("Default infrastructure: %zu nodes, %zu segments, %d outside connections", net.nodes.size(), net.segs.size(), g_transit.OutsideCount());
 }
 
@@ -438,6 +445,18 @@ bool LoadCityGame(int slot) {
         for (const std::string& id : Split(f[7], ','))
             if (!id.empty()) r.stops.push_back(strtoull(id.c_str(), nullptr, 10));
         g_transit.routes.push_back(r);
+    }
+    if (!g_cityMapLaneKnown) { // a save from before the M record had it: the corridor's own profiles count as the map's
+        static const char* const kCorridor[] = {"Three-Lane Two-Way Highway", "Two-Lane Two-Way Highway", "Double Track Railway", "Two-Lane One-Way Highway"};
+        double sum = 0.0;
+        for (size_t i = 0; i < net.segs.size(); ++i) {
+            if (!net.segs[i].alive) continue;
+            const Profile& p = net.Prof((int)i);
+            bool corridor = false;
+            for (const char* n : kCorridor) corridor |= p.name == n;
+            if (corridor) sum += RoadLaneMetres(net.Curve((int)i).Length(8), p.cat == Cat::Rail ? 2 : p.fwd + p.back);
+        }
+        g_cityMapLaneMetres = sum, g_cityMapLaneKnown = true;
     }
     g_transit.SetNextId(std::max<uint64_t>(transitNext, 1));
     g_transit.residents = hv[7], g_transit.commuters = hv[8], g_transit.totalPeople = hv[9], g_transit.totalCargo = hv[10];

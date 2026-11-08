@@ -102,8 +102,10 @@ void SimServices() {
         s.kind = kind;
         s.radius = (float)std::min(g_simTune.serviceRadiusMax, g_simTune.serviceRadiusBase + g_simTune.serviceRadiusPerVehicle * d.vehicles);
         float t, dd;
-        const V2 gate = b.c + b.front * (d.D() * 0.5f + 2.0f);
-        const int seg = g_roads.net.SegmentAt(gate, 14.0f, t, dd);
+        V2 mid[4], out[4]; // the gate: the front edge's road, else whichever edge of a turned lot has one (placement_rotation.h)
+        EdgeMids(b.c, b.front, d.W(), d.D(), mid, out);
+        int seg = -1;
+        for (int e = 0; e < 4 && seg < 0; ++e) seg = g_roads.net.SegmentAt(mid[e] + out[e] * 2.0f, 14.0f, t, dd);
         s.comp = seg >= 0 && seg < (int)segComp.size() ? segComp[(size_t)seg] : -1;
         src.push_back(s);
     }
@@ -113,6 +115,9 @@ void SimServices() {
 
 tbd::city::SimEconomy g_simEcon; // treasury and tax rates (sim_economy.h)
 tbd::city::SimBudget g_simBudget; // itemised expenses, loans, balance history, bankruptcy (sim_budget.h)
+// The sim minute a fresh city (start, new map) began at: its first ledger runs a whole game day later, not on the tick
+// it was made (the scheduler's minute 0 runs every system, so the first ledger used to charge day 1 at once).
+int64_t g_simLedgerFrom = 0;
 tbd::city::SimMilestones g_simMilestones; // population milestones and what they unlock (sim_milestones.h)
 city::NewsFeed g_simNews;          // news_lines.json; sim events post triggers, the radio reads Queue()
 std::string g_simBanner, g_simBannerSub; // the last milestone, for the HUD banner
@@ -165,7 +170,7 @@ tbd::city::DayUpkeep SimDayUpkeep() {
         const int kind = SimServiceKind(d);
         up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale : 1.0);
     }
-    up.roads = RoadUpkeepPerDay(SimRoadLaneMetres(), kRoadUpkeepPerLaneKmDay);
+    up.roads = RoadUpkeepPerDay(PaidLaneMetres(SimRoadLaneMetres(), g_cityMapLaneMetres), kRoadUpkeepPerLaneKmDay); // not the map's corridor
     return up;
 }
 
@@ -195,6 +200,7 @@ void SimConstructionSync(float realDt) {
         const double was = sb::laneMetres, now = SimRoadLaneMetres();
         sb::roadVersion = g_roads.net.version, sb::laneMetres = now;
         if (was >= 0.0 && now > was + 0.5) cost += RoadCost(now - was); // shortened or bulldozed roads: no refund
+        if (now < g_cityMapLaneMetres) g_cityMapLaneMetres = now; // the corridor was bulldozed: what is rebuilt is the city's
     }
     // demolished ones drop out of the sets once in a while (they stay the size of the city)
     if (sb::transport.size() > g_transport.items.size() + 256) {
@@ -211,10 +217,22 @@ void SimConstructionSync(float realDt) {
     SimBudgetEvents(); // the bankruptcy warning, if this build emptied the treasury
 }
 
-// The budget's and the milestones' events into toasts and the news.
+// The budget's and the milestones' events into toasts and the news. The bankrupt story waits out the grace days
+// (sim_budget.h BudgetNewsAllowed): a first day's spending spree is toasted, but the news only runs it if the city is
+// still in the red once a ledger day has gone by.
+bool g_simBankruptNewsPending = false;
 void SimBudgetEvents() {
+    const bool newsOk = tbd::city::BudgetNewsAllowed(g_simEcon, (int)g_simTune.budgetNewsGraceDays);
+    if (g_simBankruptNewsPending && newsOk) {
+        g_simBankruptNewsPending = false;
+        if (g_simBudget.bankrupt) SimNews("bankrupt");
+    }
     for (const std::string& e : g_simBudget.events) {
-        if (e == "bankrupt") Toast("THE CITY IS BANKRUPT: RAISE TAXES, CUT COSTS OR TAKE A LOAN"), SimNews("bankrupt"), SimNote("Bankrupt: the treasury is below zero");
+        if (e == "bankrupt") {
+            Toast("THE CITY IS BANKRUPT: RAISE TAXES, CUT COSTS OR TAKE A LOAN"), SimNote("Bankrupt: the treasury is below zero");
+            if (newsOk) SimNews("bankrupt");
+            else g_simBankruptNewsPending = true;
+        }
         else if (e == "solvent") Toast("THE TREASURY IS BACK IN THE BLACK"), SimNote("The treasury is back above zero");
         else if (e == "loan_taken") SimNews("loan_taken"), SimNote("Loan taken");
         else if (e == "loan_repaid") SimNote("Loan repaid early");
@@ -585,7 +603,8 @@ void SimSaveLines(std::ostringstream& o) {
     o << '|' << g_sim.Minute() << '|';
     for (int c = 0; c < 4; ++c) o << (c ? " " : "") << g_simGrowth.demand[c];
     o << '|' << g_simGrowth.levelUps << ' ' << g_simGrowth.levelDowns << ' ' << g_simGrowth.abandoned;
-    o << '|' << g_simBudget.SaveFields() << '\n'; // field 8: loans, the warning, the history (older builds ignore it)
+    o << '|' << g_simBudget.SaveFields(); // field 8: loans, the warning, the history (older builds ignore it)
+    o << '|' << g_cityMapLaneMetres << '\n'; // field 9: the map corridor's lane-metres, free of upkeep (older builds ignore it)
     for (const tbd::city::Person& p : g_simPeople.people) {
         tbd::city::CellKey jk{0, 0};
         if (p.jobCell >= 0 && p.jobCell < (int)g_citySim.cells.cells.size()) jk = g_citySim.cells.cells[(size_t)p.jobCell].key;
@@ -610,6 +629,7 @@ void SimLoadLine(const std::vector<std::string>& f) {
         sscanf(f[6].c_str(), "%lf %lf %lf %lf", &s.demand[0], &s.demand[1], &s.demand[2], &s.demand[3]);
         sscanf(f[7].c_str(), "%llu %llu %llu", (unsigned long long*)&s.ups, (unsigned long long*)&s.downs, (unsigned long long*)&s.abandoned);
         s.budget = f.size() >= 9 ? f[8] : std::string();
+        if (f.size() >= 10 && !f[9].empty()) g_cityMapLaneMetres = std::max(0.0, atof(f[9].c_str())), g_cityMapLaneKnown = true; // else LoadCityGame counts it
     } else if (f[0] == "Q" && f.size() >= 14) {
         g_simPending.people.push_back(f);
     }
@@ -631,6 +651,8 @@ void SimApplyPending() {
         if (!s.budget.empty() && !g_simBudget.LoadFields(s.budget)) tbd::Log("Sim: the save's budget field is unreadable: no loans restored");
         s.budget.clear();
         g_simBudget.events.clear();
+        g_simLedgerFrom = -(1LL << 60); // a loaded city's days go on: its next ledger runs at the next day boundary
+        g_simEcon.days = std::max<int64_t>(g_simEcon.days, (int64_t)g_simTune.budgetNewsGraceDays); // and it may be talked about
         g_simHudPush = true;
     }
     if (!s.lotsBack) return;
@@ -669,6 +691,7 @@ void SimOnCityReset() {
     g_simGrowth.Clear();
     g_simEcon.Reset(g_simTune);
     g_simBudget.Reset();
+    g_simLedgerFrom = g_sim.Minute(), g_simBankruptNewsPending = false;
     g_simMilestones.Reset();
     g_simNotes.clear();
     g_simMilestoneQuietUntil = g_clock.minutes + 30.0; // a loaded city's population arrives over the next ticks
@@ -737,7 +760,8 @@ void SimInit() {
     g_sim.Register("flow", 5, 1, [](const tbd::city::SimTick& t) { SimFlow(t); });
     // S4: the ledger, once a game day.
     g_simEcon.Reset(g_simTune);
-    g_sim.Register("economy", 1440, 1, [](const tbd::city::SimTick&) {
+    g_sim.Register("economy", 1440, 1, [](const tbd::city::SimTick& t) {
+        if (t.minute < g_simLedgerFrom + 1440) return; // a fresh city's first (partial) day: no ledger yet
         g_simBudget.Day(g_simEcon, g_citySim, g_simTune, SimDayUpkeep(), (int64_t)g_simTotals.population); // SimEconomy::Day inside
         SimBudgetEvents();
     });

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "gui.h"
+#include "news_pill.h"       // the City News card's collapsed / unread state (the host draws the card)
 #include "../gfx_settings.h" // the player's graphics options (the Graphics page edits Model::gfx)
 
 namespace tbd {
@@ -112,6 +113,7 @@ struct Model {
     tbd::gfx::Settings gfx; // the preset and the individual graphics options (src/gfx_settings.h)
     int textSize = 0; // 0 normal, 1 large
     bool edgePan = true;
+    bool showStats = false; // Graphics > Show stats: the FPS / draws / polys / camera text (the host keeps it, settings.ini stats=)
     void Resolve(const Atlas& a) { // preview cells by slug, as the mockup's pvImg(): name, name_road, name_highway
         for (Category& c : cats)
             for (Group& g : c.groups) {
@@ -205,15 +207,18 @@ struct Painter {
     void BoxV(float x, float y, float w, float h, float r, Color top, Color bottom, float border = 0, Color bc = 0) {
         dl.Rect(x * s, y * s, (x + w) * s, (y + h) * s, F(top), F(bottom), r * s, border * s, F(bc));
     }
-    // an icon: `size` points across; native = its own colours (the "n:" cell) when it has them
-    void Icon(const std::string& name, float cx, float cy, float size, Color tint = kInk, bool native = true) {
+    // an icon: `size` points across; native = its own colours (the "n:" cell) when it has them. A trailing '~' mirrors
+    // it left to right ("rotate~": the rotate-back button).
+    void Icon(const std::string& name0, float cx, float cy, float size, Color tint = kInk, bool native = true) {
+        const bool flip = !name0.empty() && name0.back() == '~';
+        const std::string name = flip ? name0.substr(0, name0.size() - 1) : name0;
         int c = native ? atlas.Find("n:" + name) : -1;
         if (c < 0) c = atlas.Find("i:" + name);
         if (c < 0) c = atlas.Find("i:info");
         if (c < 0) return;
         const Sprite& sp = atlas.cells[c];
         const float h = size * 0.5f;
-        dl.Image((cx - h) * s, (cy - h) * s, (cx + h) * s, (cy + h) * s, sp.u0, sp.v0, sp.u1, sp.v1, native && atlas.Find("n:" + name) >= 0 ? F(kInk) : F(tint));
+        dl.Image((cx - h) * s, (cy - h) * s, (cx + h) * s, (cy + h) * s, flip ? sp.u1 : sp.u0, sp.v0, flip ? sp.u0 : sp.u1, sp.v1, native && atlas.Find("n:" + name) >= 0 ? F(kInk) : F(tint));
     }
     void Glow(const std::string& name, float cx, float cy, float size, Color col) { // drop-shadow(0 0 6px cc 50%)
         const int c = atlas.Find("g:" + name);
@@ -840,7 +845,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             float need = 0;
             if (st.gfx) {
                 need = std::max({rowNeed("Preset", kPresetC, 5), rowNeed("Resolution", kRes, 5), rowNeed("Effects", kTier, 5), rowNeed("Buildings", kTier, 5),
-                                 rowNeed("Draw distance", kDist, 3), rowNeed("Sun shadows", kOnOff, 2), rowNeed("Lighting mode", kLight, 3)});
+                                 rowNeed("Draw distance", kDist, 3), rowNeed("Sun shadows", kOnOff, 2), rowNeed("Lighting mode", kLight, 3),
+                                 rowNeed("Show stats", kOnOff, 2)});
             } else {
                 need = std::max({rowNeed("Sound effects", kOnOff, 2), rowNeed("Graphics", kPreset, 4), rowNeed("Text size", kText, 2), rowNeed("Edge pan", kOnOff, 2)});
             }
@@ -893,8 +899,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         } else {
             // Settings: the interface switch (two cards), then the options rows, then Back
             const float cardH = 66;
-            const float rowH = st.gfx ? std::min(bh, (H - 80.0f) / 9.0f - gap) : bh; // the Graphics page has eight rows
-            const float total = st.gfx ? 13 * 1.4f + 6 + 8 * (rowH + gap)
+            const float rowH = st.gfx ? std::min(bh, (H - 80.0f) / 10.0f - gap) : bh; // the Graphics page has nine rows
+            const float total = st.gfx ? 13 * 1.4f + 6 + 9 * (rowH + gap)
                                        : 13 * 1.4f + 6 + 13 * 1.4f + cardH + gap + 5 * (rowH + gap) + rowH;
             float y = (H - total) * 0.5f;
             title(st.gfx ? "Graphics" : "Settings", y + 9, 13, kMuted, true, false);
@@ -954,6 +960,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 if ((v = row("srch", "Draw distance", kDist, 3, G.distance)) >= 0) custom(G.distance, v);
                 if ((v = row("play", "Sun shadows", kOnOff, 2, G.shadows)) >= 0) custom(G.shadows, v);
                 if ((v = row("gear", "Lighting mode", kLight, 3, G.lighting)) >= 0) custom(G.lighting, v);
+                // developer: the stats text (off by default on iOS and the Phone UI); not a graphics option, so the preset stays
+                if ((v = row("stats", "Show stats", kOnOff, 2, m.showStats ? 1 : 0)) >= 0) m.showStats = v == 1, out.settingsChanged = true, sfx(1.3f);
                 if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.gfx = false, sfx(0.65f);
             } else {
                 if ((v = row("star", "Sound effects", kOnOff, 2, m.sound ? 1 : 0)) >= 0) m.sound = v == 1, out.settingsChanged = true, sfx(1.3f);

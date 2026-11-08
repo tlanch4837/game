@@ -212,7 +212,7 @@ void LoadAtlas(tbd::Renderer& r) {
 // The sim's numbers into the model.
 void FillStatus(tbd::gui::CityHud& hud) {
     auto& M = g_model;
-    M.money = hud.money >= 0 ? Money(hud.money) : "$0";
+    M.money = Money(hud.money); // in the red it reads "-$12k", not "$0"
     M.pop = hud.population >= 0 ? Thousands(hud.population) : "0";
     long long income = 0;
     for (long long v : hud.incomeDay) income += v;
@@ -269,13 +269,15 @@ void FillTool() {
     } else if (g_utilTool.active && (g_utilTool.def >= 0 || g_utilTool.line >= 0)) {
         if (g_utilTool.def >= 0) M.tool = UtilDefs()[g_utilTool.def].name, M.toolCost = Money(UtilDefs()[g_utilTool.def].cost), M.toolIcon = "power";
         else M.tool = tbd::gui::util_ui::LineShort(g_utilTool.line), M.toolIcon = g_utilTool.line == 0 ? "pylon" : "pipe";
-        M.toolOpts = {{"Rotate", "rotate"}, {"Elevation", "elev"}};
+        if (g_utilTool.def >= 0) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}}; // 90 degrees a tap (city_industry.inl BuildingRotate)
+        else M.toolOpts = {{"Elevation", "elev"}};
     } else if (g_transportTool.active && (g_transportTool.def >= 0 || g_transportTool.lines)) {
         if (g_transportTool.def >= 0) M.tool = Defs()[g_transportTool.def].name, M.toolCost = Money(Defs()[g_transportTool.def].cost), M.toolIcon = "bus";
         else M.tool = std::string(TModeName(g_transportTool.lmode)) + " Line", M.toolIcon = "line";
-        M.toolOpts = {{"Rotate", "rotate"}};
+        if (g_transportTool.def >= 0 && !g_transportTool.lines) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}};
     } else if (g_indTool.active) {
         M.tool = g_indTool.waste && g_indTool.point > 0 ? kWasteTypes[g_indTool.point - 1].name : IndTypeOf((IndKind)g_indTool.kind).name, M.toolIcon = "factory";
+        if (g_indTool.mode == IndustryTool::Place) M.toolOpts = {{"Rotate", "rotate"}, {"Rotate back", "rotate~"}};
     } else if (g_terrainEdit.on) {
         static const char* const tn[] = {"Raise", "Dig", "Flatten"};
         static const char* const ti[] = {"raise", "dig", "flatten"};
@@ -352,7 +354,7 @@ void ToolButton(const tbd::gui::dock::Out& o) {
     }
     if (o.opt >= 0) {
         const std::string& n = g_model.toolOpts[o.opt].first;
-        if (n == "Rotate") g_utilTool.Rotate(90), g_transportTool.Rotate(90);
+        if (n == "Rotate" || n == "Rotate back") BuildingRotate(n == "Rotate" ? 90.0f : -90.0f); // the held ghost, 90 degrees a tap
         else if (n == "Elevation") { if (g_roads.active) g_roads.Raise(1); else g_utilTool.Raise(1); }
         else if (n == "Lower") g_roads.Raise(-1);
         else if (n == "Raise") g_roads.Raise(1); // [road toolkit]
@@ -361,6 +363,8 @@ void ToolButton(const tbd::gui::dock::Out& o) {
         else if (n == "Bulldoze") g_roads.SetMode(ToolMode::Bulldoze);
     }
 }
+
+#include "dock_news_stats.inl" // the Show stats switch and the City News pill / card (NewsCard, Load / SaveGuiPrefs)
 
 // The player's settings file (saves\settings.ini beside the game saves): the Graphics page's options, sound, text size, edge pan.
 // Until the file exists or the player touches a setting, the TBD_* environment switches rule the graphics as before.
@@ -395,6 +399,8 @@ void SaveSettingsFile() {
                              "\nedgepan=" + (g_model.edgePan ? "1" : "0") + "\n";
     fwrite(text.data(), 1, text.size(), f);
     fclose(f);
+
+    SaveGuiPrefs(); // dock_news_stats.inl adds its keys (stats=, news=)
 }
 
 void ApplySettings(tbd::Renderer& r) {
@@ -439,87 +445,6 @@ void DeviceAndScale(float& scale) {
 }
 
 // One frame of the dock: replaces the CS2 HUD and the tools' own panels. Returns true when it ran.
-// The City News card (city_radio.inl fills hud.news): a glass card at the top right, the newest headline first.
-// Collapsed it shows only the latest; its two chips toggle that and cycle the radio (on / host only / off).
-void NewsCard(tbd::gui::CityHud& h, bool menuOpen) {
-    using namespace tbd::gui;
-    using namespace tbd::gui::dock;
-    if (menuOpen || h.options) return;
-    Context& g = g_gui;
-    const float s = g.Scale();
-    Painter P(g, g_atlas, s);
-    Tapper T{g, g_state};
-    const Input& in = g.In();
-    auto R = [&](float rx, float ry, float rw, float rh) { return Rect{rx * s, ry * s, rw * s, rh * s}; };
-    const float W = in.viewW / s;
-    const float w = std::min(320.0f, W - 32.0f), pad = 14.0f, x = W - 16.0f - w, y = 16.0f;
-    const float textSize = 13.0f, metaSize = 10.5f, lineH = 17.0f, innerW = w - 2 * pad;
-    auto wrap = [&](const std::string& text) {
-        std::vector<std::string> out;
-        std::string line, word;
-        auto flush = [&] {
-            if (word.empty()) return;
-            const std::string t = line.empty() ? word : line + " " + word;
-            if (!line.empty() && P.TextW(t, textSize) > innerW) out.push_back(line), line = word;
-            else line = t;
-            word.clear();
-        };
-        for (char c : text) { if (c == ' ') flush(); else word += c; }
-        flush();
-        if (!line.empty()) out.push_back(line);
-        return out;
-    };
-    const size_t shown = h.newsOpen ? std::min<size_t>(h.news.size(), 5) : std::min<size_t>(h.news.size(), 1);
-    std::vector<std::vector<std::string>> lines;
-    float hgt = pad + 18.0f + 8.0f; // title row
-    if (h.news.empty()) lines.push_back(wrap("Quiet day. Build something and the city will talk about it.")), hgt += lineH * lines[0].size() + 4;
-    for (size_t i = 0; i < shown; ++i) {
-        lines.push_back(wrap(h.news[i].text));
-        hgt += 15.0f + lineH * lines.back().size() + (i + 1 < shown ? 10.0f : 4.0f);
-    }
-    const float chipH = 28.0f;
-    hgt += 8.0f + chipH + pad;
-    P.Glass(x, y, w, hgt, 18, kPanel, 22, 1.6f, true);
-    float cy = y + pad + 9.0f;
-    P.Text("CITY NEWS", x + pad, cy, 12.0f, kInk, true);
-    if (h.onAir && h.radioMode > 0) {
-        const float tw = P.TextW("ON AIR", 10.5f, true);
-        P.dl.Circle((x + w - pad - tw - 9) * s, cy * s, 3.5f * s, P.F(Rgba(255, 69, 58)));
-        P.Text("ON AIR", x + w - pad, cy, 10.5f, Rgba(255, 105, 97), true, 1.0f);
-    }
-    cy += 9.0f + 8.0f;
-    P.Box(x + pad, cy - 4.0f, innerW, 1.0f, 0, kBorder);
-    if (h.news.empty()) {
-        for (const std::string& l : lines[0]) P.Text(l, x + pad, cy + lineH * 0.5f, textSize, kMuted), cy += lineH;
-        cy += 4;
-    }
-    for (size_t i = 0; i < shown; ++i) {
-        const CityHud::NewsItem& it = h.news[i];
-        const Color dot = it.tone > 0 ? Rgba(48, 209, 88) : it.tone < 0 ? Rgba(255, 159, 10) : Rgba(255, 255, 255, 120);
-        P.dl.Circle((x + pad + 3) * s, (cy + 7.5f) * s, 3.0f * s, P.F(dot));
-        P.Text(it.when + (it.aired ? "   ON THE RADIO" : ""), x + pad + 12, cy + 7.5f, metaSize, kMuted, it.aired);
-        cy += 15.0f;
-        for (const std::string& l : lines[h.news.empty() ? i + 1 : i]) P.Text(l, x + pad, cy + lineH * 0.5f, textSize, i == 0 ? kInk : kBarInk), cy += lineH;
-        cy += i + 1 < shown ? 10.0f : 4.0f;
-    }
-    cy += 4.0f;
-    // the chips
-    auto chip = [&](float cx, const char* label, bool on) {
-        const float cw = P.TextW(label, 11.5f, true) + 24.0f;
-        bool held = false;
-        const bool tap = T.Tap(R(cx, cy, cw, chipH), &held);
-        P.Box(cx, cy, cw, chipH, chipH * 0.5f, on ? Fade(kAccent, 0.85f) : held ? Rgba(255, 255, 255, 60) : kChip);
-        P.Text(label, cx + cw * 0.5f, cy + chipH * 0.5f, 11.5f, kInk, true, 0.5f);
-        return std::pair<bool, float>{tap, cw};
-    };
-    auto [moreTap, mw] = chip(x + pad, h.newsOpen ? "Less" : "More", false);
-    if (moreTap) h.newsOpen = !h.newsOpen, tbd::audio::PlayUi("sfx/ui_category_select", 0.5f, 0.8f);
-    static const char* const kMode[] = {"Radio off", "Host only", "Radio on"};
-    auto [modeTap, rw] = chip(x + pad + mw + 8.0f, kMode[std::clamp(h.radioMode, 0, 2)], h.radioMode == 2);
-    if (modeTap) h.radioMode = (h.radioMode + 2) % 3, tbd::audio::PlayUi("sfx/ui_category_select", 0.5f, 1.0f);
-    (void)rw;
-}
-
 // [road toolkit] The road / rail tool's CS2 panel (tool modes, elevation down / readout / up / step / ground level,
 // parallel, snapping) and its road-type palette, above the placement controls (gui/road_toolkit.h). Hidden while a
 // catalogue panel or the pause menu is open.
@@ -540,6 +465,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
         built = true;
         BuildCatalogue();
         LoadSettingsFile();
+        LoadGuiPrefs(); // dock_news_stats.inl: stats=, news=
         g_gfxPrev = tbd::gfx::Serialize(g_model.gfx);
         ApplySettings(r);
     }

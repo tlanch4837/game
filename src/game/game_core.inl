@@ -3245,7 +3245,8 @@ void RenderFrame() {
         if (tbd::platform::TickCountMs() < g_engine.toastUntil) lines.push_back(g_engine.toast);
     }
     float statsBottom = 0.0f; // where the top-left stats text ends: the in-game GUI keeps its panels below it
-    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines);
+    const bool statsOn = g_play.active || gdock::StatsOverlayOn(); // Settings > Graphics > Show stats (off on iOS / Phone UI): toasts only
+    if (!testShot && !g_maxGraphics && !g_playtest.Active()) statsBottom = tbd::DrawStatsText(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, lines, statsOn);
     if (!testShot && g_profiler.Enabled()) // nullptr: the per-pass GPU times are not exposed by the renderers yet
         g_profiler.Draw(r, g_engine.vpW, g_engine.vpH, g_engine.dpi, r.Name(), profSample, g_stream.Snapshot(), nullptr);
     DrawGameGui(r, statsBottom); // in-game GUI last, over every other overlay
@@ -3521,6 +3522,8 @@ bool HandleKey(int key, bool repeat) {
         g_clock.paused = !g_clock.paused;
         return true;
     }
+    if (key == 'R' && !ctrl && !alt && BuildingRotate(tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? -90.0f : 90.0f)) return true; // R / Shift+R turn the building being placed (city_industry.inl)
+
     if (g_indTool.active && IndustryKey(key)) return true;
     if (g_utilTool.active) { // the utilities tool's keys: Esc ends the line / drops the item / closes, Page Up / Down elevation, , . rotate
         switch (key) {
@@ -3865,6 +3868,8 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         return true;
     case VpEv::Wheel: {
         const float notches = e.wheel;
+        if (notches != 0.0f && tbd::platform::KeyDownSync(tbd::platform::Key::Control) && BuildingRotate(notches > 0 ? 15.0f : -15.0f)) return true; // Ctrl + wheel turns the building being placed
+
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
             const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();

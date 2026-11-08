@@ -56,7 +56,11 @@ struct SimTuning {
     X(taxCommercialPerJobDay, 60.0)                                                                                         \
     X(taxIndustrialPerJobDay, 50.0)                                                                                         \
     X(taxOfficePerJobDay, 80.0)                                                                                             \
-    X(startingMoney, 50000000.0)       /* cents: 500,000 (a small coal plant is 300,000) */                                 \
+    X(startingMoney, 150000000.0)      /* cents: 1,500,000, a CS2-sized start: a first neighbourhood's roads, power, water,  \
+                                          sewage and a service or two before taxes come in (a small coal plant is 300,000;  \
+                                          construction is charged on placement) */                                          \
+    X(budgetNewsGraceDays, 1.0)        /* ledger days before the budget news / radio (deficit, bankrupt) may speak: a fresh \
+                                          city is never "in deficit" on its first day */                                    \
     X(serviceUpkeepScale, 1.0)                                                                                              \
     X(taxDemandPerPoint, 0.04)         /* demand change per tax point away from 10 % (higher tax, lower demand) */
 
