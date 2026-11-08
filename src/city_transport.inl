@@ -48,8 +48,41 @@ void TransportCursor() {
     if (g_transportTool.lines) { TransitCursor(); return; } // the Lines page plans checkpoints, not buildings
     const tbd::city::V2 p{hit.x, hit.z};
     if (g_transportTool.bulldoze) g_transportIn.hover = g_transport.HitTest(p);
-    else if (g_transportTool.def >= 0) g_transportIn.plan = g_transport.Plan(TransportContext(), g_transportTool.def, p, g_transportTool.rotation, g_transportTool.Options());
+    else if (g_transportTool.def >= 0) {
+        tbd::city::PlanOptions o = g_transportTool.Options();
+        if (BuildingFreePlace()) o.snapRoad = false; // [snap] the Rotate dial is out: free position and heading
+        g_transportIn.plan = g_transport.Plan(TransportContext(), g_transportTool.def, p, g_transportTool.rotation, o);
+    }
 }
+
+// ------------------------------------------------------------------- rail yards (src/city/rail_yard.h): track ends, trains
+tbd::city::RailYardWorld g_railYards;
+std::unordered_map<uint64_t, std::string> g_railYardNote; // the last status message shown per yard
+// Every yard's track ends go to the rail tool (its "yard" connection snaps); the trains run; a yard that loses its road or
+// rail (or never had one) says so once.
+void RailYardSync(float realDt) {
+    using namespace tbd::city;
+    static uint64_t netV = 0, twV = 0;
+    if (netV != g_roads.net.version || twV != g_transport.version) { // the ends move only with the roads (the entrance) or the yards
+        netV = g_roads.net.version, twV = g_transport.version;
+        g_roads.ports.clear();
+        for (const Placed& b : g_transport.items)
+            if (b.alive) {
+                const std::vector<RailPort> v = TransportWorld::PortsOf(&g_roads.net, b);
+                g_roads.ports.insert(g_roads.ports.end(), v.begin(), v.end());
+            }
+    }
+    if (g_clock.Rate() > 0) g_railYards.Tick(g_roads.net, g_transport, realDt);
+    for (const YardStatus& st : g_railYards.status) {
+        const std::string m = st.Message();
+        std::string& last = g_railYardNote[st.yard];
+        if (m != last && !m.empty()) Toast(RoadsUpper(m));
+        last = m;
+    }
+}
+
+// The placeholder trains: a loco and three cars as boxes (no train model in assets), each car on the curve it is on.
+void RailYardDraw(std::vector<tbd::Vertex>& tris);
 
 // Levels the terrain under a new building's land (a coast's quay level is just over the sea; a station sits on its track).
 void TransportLevel(const tbd::city::Placed& b) {
@@ -133,6 +166,7 @@ void TransportSync(float realDt) {
     const float minutes = realDt * g_clock.Rate();
     if (minutes > 0) g_transport.Tick(minutes);
     TransitSync(realDt);
+    RailYardSync(realDt);
     CitizensSync();
     for (uint64_t id : g_transport.removed) {
         g_transportCache.erase(id);
@@ -493,7 +527,21 @@ void TransitDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
         default: break;
         }
     }
+    RailYardDraw(tris); // the rail yards' trains
     if (!tris.empty()) r.DrawTransient(tris.data(), (uint32_t)tris.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
+}
+
+void RailYardDraw(std::vector<tbd::Vertex>& tris) {
+    namespace td = transit_draw;
+    for (const tbd::city::YardTrain& t : g_railYards.trains) {
+        if (!t.alive || t.phase == 3) continue; // stabled in the shed
+        for (int k = 0; k < tbd::city::kTrainCars; ++k) {
+            const tbd::Vec3 col = k == 0 ? tbd::Vec3{0.62f, 0.18f, 0.14f} : tbd::Vec3{0.78f, 0.80f, 0.84f};
+            const float y = t.carY[k];
+            td::Box(tris, t.car[k], t.carDir[k], tbd::city::kTrainCarLen * 0.5f - 0.6f, 1.45f, y + 0.9f, y + 4.3f, col);
+            td::Box(tris, t.car[k], t.carDir[k], tbd::city::kTrainCarLen * 0.5f - 0.4f, 1.0f, y + 0.25f, y + 0.9f, {0.16f, 0.16f, 0.18f}); // bogies
+        }
+    }
 }
 
 // The buildings, the hologram of the one being placed, and the lot markers.
@@ -544,7 +592,8 @@ void TransportDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
             tmodel::BuildPlaced(pv, time, tmp, &tmpEdges);
             tmodel::Holographic(tmp, holoTris, time, p.valid);
             tmodel::HolographicEdges(tmpEdges, holoLines, time, p.valid);
-            if (g_transportTool.marker) MarkerLines(d, p, RoadsGround, holoLines, p.valid ? tbd::Vec3{0.5f, 0.9f, 1.4f} : tbd::Vec3{1.5f, 0.5f, 0.4f});
+            if (g_transportTool.marker) // [snap] green outline: stood beside a road
+                MarkerLines(d, p, RoadsGround, holoLines, !p.valid ? tbd::Vec3{1.5f, 0.5f, 0.4f} : p.roadSnapped ? tbd::Vec3{0.45f, 1.4f, 0.6f} : tbd::Vec3{0.5f, 0.9f, 1.4f});
         }
     }
     // SPOM pieces are drawn apart, each with its relief texture bound: track (alpha 0.83, Mesher::Track) and building slabs (kSlabTex
@@ -623,5 +672,12 @@ void TransportWorldLabels() {
         if (b.state == tbd::city::BState::Planned) std::snprintf(t, sizeof(t), "PLANNED  %.0f%%", b.timer / tbd::city::kPlanMinutes * 100.0f);
         else std::snprintf(t, sizeof(t), "BUILDING  %.0f%%", b.progress * 100.0f);
         g_gui.Chip(x, y, t);
+    }
+    for (const tbd::city::YardStatus& st : g_railYards.status) { // a rail yard that runs no trains says why
+        const std::string m = st.Message();
+        if (m.empty()) continue;
+        for (const tbd::city::Placed& b : g_transport.items)
+            if (b.alive && b.id == st.yard && project({b.c.x, b.y + tbd::city::Defs()[b.def].height + 6.0f, b.c.z}, x, y))
+                g_gui.Chip(x, y, RoadsUpper(m).c_str(), tbd::gui::Rgba(170, 40, 34, 230));
     }
 }

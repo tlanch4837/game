@@ -119,11 +119,15 @@ struct DialState {
     float y = 0;
 } g_dial;
 bool g_dialSnap = true; // the Snap switch: remembered every time the dial comes up
+float g_dialRelWas = 0;  // [snap] the tool's rotation before the dial (road-relative quarter turns when road-snapped)
+bool g_dialWasSnapped = false; // [snap] the ghost stood beside a road when the dial came up
 
+// [snap] While the Rotate dial is out every placement tool's road snap is off (building_snap.h): the ghost stays where it
+// stood and turns freely (the Snap switch: 15 degree steps); closing the dial (Rotate again) returns to the road snap.
+bool BuildingFreePlace() { return g_dial.d.on; }
 bool DialCanLeaveRoad() { return g_utilTool.active && g_utilTool.def >= 0; } // only the utilities' snap is a tool option
-float DialStepNow() { return tbd::city::DialStep(g_dialSnap, g_dial.kind == 2, DialCanLeaveRoad()); }
-void DialApplySnap() { // the utility's road snap follows Snap (off: free angle, off the road), the angle its steps
-    if (g_dial.kind == 2 && DialCanLeaveRoad()) g_utilTool.snapRoad = g_dialSnap ? g_dial.snapRoadWas : false;
+float DialStepNow() { return tbd::city::DialStep(g_dialSnap, false, true); }    // [snap] free: 15 degree steps or none
+void DialApplySnap() { // the angle follows the Snap switch's steps
     if (float* rot = GhostRotation()) *rot = g_dial.d.deg = tbd::city::Norm360(tbd::city::SnapDeg(*rot, DialStepNow()));
 }
 void DialBegin() {
@@ -140,17 +144,23 @@ void DialBegin() {
     float W = 0, D = 0, y = hit.y;
     g_dial.origPending = !GhostNow(c, f, W, D, y); // not planned this frame: the first frame that plans it gives the facing
     g_dial.pinWas = g_placePin.on && g_placePin.key == PlaceGhostKey();
-    g_placePin.on = true, g_placePin.at = hit, g_placePin.key = PlaceGhostKey(); // it locks in place
+    // [snap] free from here on: the ghost locks where it stands (a road-snapped one at its snapped middle, not the cursor)
+    // and its rotation becomes the absolute heading it has now
+    g_placePin.on = true, g_placePin.at = g_dial.origPending ? hit : tbd::Vec3{c.x, y, c.z}, g_placePin.key = PlaceGhostKey();
     g_dial.kind = kind, g_dial.origFront = f, g_dial.y = y, g_dial.snapRoadWas = g_utilTool.snapRoad;
+    g_dialRelWas = *GhostRotation();
+    g_dialWasSnapped = !g_dial.origPending && Dot2(f, FrontFromDeg(g_dialRelWas)) < 0.999f; // its facing came from a road
+    if (!g_dial.origPending) *GhostRotation() = DegOfFront(f);
     g_dial.d.Begin(*GhostRotation(), c);
+    g_dial.d.origDeg = g_dialRelWas; // Cancel goes back to the road-relative rotation
     DialApplySnap();
 }
 void DialEnd(bool keep) {
     if (!g_dial.d.on) return;
-    if (!keep) {
-        if (float* rot = GhostRotation()) *rot = g_dial.d.origDeg;
-        if (DialCanLeaveRoad()) g_utilTool.snapRoad = g_dial.snapRoadWas;
-    }
+    // [snap] closing the dial returns to the road snap: the road-relative rotation from before (the dialled heading only
+    // lasts while the dial is out; the check builds the building as dialled, InteractBarAction)
+    if (float* rot = GhostRotation()) *rot = !keep ? g_dial.d.origDeg : g_dialWasSnapped ? g_dialRelWas : *rot; // free-standing: keeps the dialled heading
+    if (DialCanLeaveRoad()) g_utilTool.snapRoad = g_dial.snapRoadWas;
     g_dial.d.on = false, g_dial.d.dragging = false;
     if (!g_dial.pinWas && !g_touchInput) g_placePin.on = false; // the mouse: the ghost follows the cursor again
 }
@@ -793,12 +803,13 @@ bool InteractToolButton(const tbd::gui::dock::Out& o, const std::string& optName
         return o.cancel || o.confirm || o.undo || o.mode;
     }
     if (g_dial.d.on) {
-        if (o.confirm || (o.opt >= 0 && optName == "Rotate")) DialEnd(true);
+        if (o.confirm) { PlaceGhostNow(); DialEnd(true); } // [snap] the check builds it as dialled, then the road snap is back
+        else if (o.opt >= 0 && optName == "Rotate") DialEnd(true);
         else if (o.cancel) DialEnd(false);
         else if (o.opt >= 0 && optName == "Snap") {
             g_dialSnap = !g_dialSnap;
             DialApplySnap();
-            Toast(g_dialSnap ? (g_dial.kind == 2 ? "SNAP ON: QUARTER TURNS" : "SNAP ON: 15 DEGREE STEPS") : "SNAP OFF: FREE ANGLE");
+            Toast(g_dialSnap ? "SNAP ON: 15 DEGREE STEPS" : "SNAP OFF: FREE ANGLE"); // [snap] the dial is free of the road
         }
         return o.confirm || o.cancel || o.undo || o.opt >= 0;
     }

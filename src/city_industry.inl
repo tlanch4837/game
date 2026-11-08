@@ -1174,17 +1174,14 @@ bool WasteContains(const WasteBuilding& b, tbd::city::V2 q, float pad = 0) {
     return std::fabs(tbd::city::Dot2(d, WasteSide(b))) < t.w * 0.5f + pad && std::fabs(tbd::city::Dot2(d, b.front)) < t.d * 0.5f + pad;
 }
 bool WasteSnap(tbd::city::V2 p, WasteBuilding& b, int quarter = 0) { // quarter: turned from facing the road (R)
-    float t, d;
-    const int seg = g_roads.net.SegmentAt(p, 90.0f, t, d);
-    if (seg < 0) return false;
-    const tbd::city::Profile& pr = g_roads.net.Prof(seg);
-    if (pr.cat == tbd::city::Cat::Highway || pr.cat == tbd::city::Cat::Path) return false;
-    const tbd::city::Cubic cu = g_roads.net.Curve(seg);
-    const tbd::city::V2 rp = cu.At(t), left = tbd::city::LeftOf(cu.Tan(t));
-    const tbd::city::V2 out = tbd::city::Dot2(p - rp, left) >= 0 ? left : left * -1.0f;
-    const tbd::city::SnapResult r = tbd::city::RoadSnap(rp, out, pr.Half(), kWasteTypes[b.type].w, kWasteTypes[b.type].d, quarter, 1.0f);
+    if (BuildingFreePlace()) { // [snap] the Rotate dial is out: where it is pinned, the dialled heading
+        b.c = p, b.front = tbd::city::FrontFromDeg(g_indTool.rotation), b.y = RoadsGround(p.x, p.z);
+        return true;
+    }
+    const tbd::city::BuildingSnap r = tbd::city::SnapBesideRoad(g_roads.net, p, kWasteTypes[b.type].w, kWasteTypes[b.type].d, quarter, 0, 1.0f, 90.0f); // [snap] building_snap.h
+    if (!r.snapped) return false;
     b.c = r.c, b.front = r.front;
-    b.y = RoadsGround(rp.x, rp.z);
+    b.y = RoadsGround(r.roadPt.x, r.roadPt.z);
     return true;
 }
 bool WasteFree(const WasteBuilding& b) {
@@ -1277,7 +1274,8 @@ void IndustryCursor() {
     if (T.mode == IndustryTool::Place) {
         T.ghost.kind = (tbd::city::IndKind)T.kind;
         T.ghost.id = 0;
-        T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost, tbd::city::QuarterTurns(T.rotation));
+        if (BuildingFreePlace()) T.ghost.c = T.cur, T.ghost.front = tbd::city::FrontFromDeg(T.rotation), T.ghostShown = true; // [snap] dial out: free
+        else T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost, tbd::city::QuarterTurns(T.rotation));
         if (T.ghostShown) {
             T.ghost.y = HubHeight(T.ghost);
             T.ghostOk = g_ind.Free(g_roads.net, T.ghost);
@@ -1894,8 +1892,8 @@ bool IndustryToolbar(float lift) {
 int BuildingGhostKind() {
     using namespace tbd::city;
     if (g_utilTool.active && g_utilTool.def >= 0 && !g_utilTool.bulldoze) return g_utilTool.snapRoad ? 2 : 1;
-    if (g_transportTool.active && g_transportTool.def >= 0 && !g_transportTool.lines && !g_transportTool.bulldoze)
-        return Defs()[g_transportTool.def].site == Site::Flat ? 1 : 3; // 3: the coast / the track sets it
+    if (g_transportTool.active && g_transportTool.def >= 0 && !g_transportTool.lines && !g_transportTool.bulldoze) // [snap] flat sites snap beside a road
+        return Defs()[g_transportTool.def].site == Site::Flat ? (g_transportTool.Options().snapRoad ? 2 : 1) : 3; // 3: the coast / the track sets it
     if (g_indTool.active && g_indTool.mode == IndustryTool::Place) return 2;
     return 0;
 }

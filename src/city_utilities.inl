@@ -27,6 +27,7 @@ int g_utilGhostDef = -1;
 
 void TransportRefreshZoning(); // city_transport.inl: sets the zone grid's blockers (it adds ours)
 bool PlaceCursorHit(tbd::Vec3& hit); // [interact] city_interact.inl: the ghost's ground point (the touch pin, the dial, else the cursor)
+bool BuildingFreePlace();            // [snap] city_interact.inl: the Rotate dial is out, every placement tool's road snap is off
 
 void UtilAppendBlockers(std::vector<tbd::city::BlockRect>& out) {
     const auto b = g_util.Blockers();
@@ -131,7 +132,7 @@ void UtilCursor() {
         g_utilIn.hover = g_util.HitTest(p);
         if (g_utilIn.hover < 0) g_utilIn.hoverLine = g_util.LineAt(p, 6.0f, !g_utilTool.underground);
     } else if (g_utilTool.def >= 0) {
-        g_utilIn.plan = g_util.Plan(UtilContext(), g_utilTool.def, p, g_utilTool.rotation, g_utilTool.snapRoad);
+        g_utilIn.plan = g_util.Plan(UtilContext(), g_utilTool.def, p, g_utilTool.rotation, g_utilTool.snapRoad && !BuildingFreePlace());
     } else if (g_utilTool.Laying()) {
         tbd::city::V2 e = p;
         g_utilIn.endSnapped = g_util.SnapEnd(p, (tbd::city::Util)g_utilTool.line, 10.0f, e);
