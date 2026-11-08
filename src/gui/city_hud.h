@@ -84,6 +84,12 @@ struct CityHud {
     bool notDoneLocked = false;              // the "not completed" panel is showing a locked tool instead
     std::string banner, bannerSub;           // in: a milestone banner (top centre) while bannerAlpha > 0
     float bannerAlpha = 0;
+    // the City News feed (city_radio.inl RadioHudFill): newest first; tone 1 good, -1 bad, 0 neutral
+    struct NewsItem { std::string when, text; int tone = 0; bool aired = false; };
+    std::vector<NewsItem> news;
+    bool newsOpen = true;  // the feed panel; collapsed it is a one-line bar with the latest headline
+    bool onAir = false;    // the radio is playing a clip now
+    int radioMode = 2;     // in/out: 0 off, 1 host only, 2 everything (the feed's radio button cycles it)
     bool Pending() const { return notDoneName != nullptr; }
     void ShowNotDone(const char* name, const char* blurb, bool locked = false) { notDoneName = name, notDoneBlurb = blurb, tiles = false, notDoneLocked = locked; }
     void Dismiss() { notDoneName = notDoneBlurb = nullptr, tiles = false, budget = false; }
@@ -371,6 +377,53 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
 
     if (tip.on) g.Chip(tip.x, tip.y, tip.text);
     return statusH + toolbarH + 8.0f;
+}
+
+// The City News feed, top right: the latest headlines (what the radio is talking about), newest first.
+inline void CityNewsPanel(Context& g, CityHud& h) {
+    if (h.options) return; // the Options panel sits in the same spot
+    const Theme& th = g.Style();
+    const float w = 400.0f;
+    g.BeginPanel("##hud news", Anchor::TopRight, 76.0f, 8.0f, w, 0.0f, 10.0f); // left of the right column icons
+    {
+        const Rect r = g.Reserve(std::round(24.0f * g.Scale()), 0.0f);
+        g.TextIn(r, "CITY NEWS", th.textBright, 0.0f, th.fontSize, true);
+        if (h.onAir && h.radioMode > 0) g.TextIn(r, "ON AIR", Rgba(255, 80, 70), 1.0f, th.smallSize, true);
+    }
+    // word-wrapped lines, measured with the panel's font
+    const float wrapW = (w - 24.0f) * g.Scale();
+    auto wrap = [&](const std::string& text) {
+        std::vector<std::string> out;
+        std::string line, word;
+        auto flush = [&] {
+            if (word.empty()) return;
+            const std::string tryLine = line.empty() ? word : line + " " + word;
+            if (!line.empty() && g.Draw().TextWidth(tryLine.c_str(), tryLine.size(), th.fontSize) > wrapW) out.push_back(line), line = word;
+            else line = tryLine;
+            word.clear();
+        };
+        for (char c : text) { if (c == ' ') flush(); else word += c; }
+        flush();
+        if (!line.empty()) out.push_back(line);
+        return out;
+    };
+    if (h.news.empty()) g.Text(TextStyle::Muted, "Quiet day. Build something and the city will talk about it.");
+    const size_t shown = h.newsOpen ? std::min<size_t>(h.news.size(), 6) : std::min<size_t>(h.news.size(), 1);
+    for (size_t i = 0; i < shown; ++i) {
+        const CityHud::NewsItem& it = h.news[i];
+        char head[96];
+        snprintf(head, sizeof(head), "%s%s", it.when.c_str(), it.aired ? "   on the radio" : "");
+        g.Label(head, TextStyle::Small);
+        for (const std::string& l : wrap(it.text)) g.Label(l.c_str(), i == 0 ? TextStyle::Bright : TextStyle::Normal);
+        if (i + 1 < shown) g.Spacing(4.0f);
+    }
+    g.Spacing(4.0f);
+    g.NextWidth(120.0f);
+    if (g.Button(h.newsOpen ? "Less" : "More")) h.newsOpen = !h.newsOpen;
+    static const char* const kMode[] = {"Radio: off", "Radio: host only", "Radio: on"};
+    g.NextWidth(170.0f);
+    if (g.Button(kMode[std::clamp(h.radioMode, 0, 2)])) h.radioMode = (h.radioMode + 2) % 3;
+    g.EndPanel();
 }
 
 } // namespace gui

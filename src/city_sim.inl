@@ -121,7 +121,9 @@ double g_simMilestoneQuietUntil = 0; // game minutes: a load re-reaches its mile
 constexpr double kRoadUpkeepPerKmDay = 40.0; // whole currency per km of road per day
 
 // A sim event for the radio anchor: event driven only, one headline per event, nothing on a timer.
+void RadioSimEvent(const char* trigger); // city_radio.inl
 void SimNews(const char* trigger) {
+    RadioSimEvent(trigger);
     std::string text, tone;
     if (g_simNews.Post(trigger, text, tone)) tbd::Log("News [%s]: %s", trigger, text.c_str());
 }

@@ -17,12 +17,13 @@
 // (the `playing` argument of UpdateFrame); music is "music/theme" if the file exists.
 #pragma once
 #include <string>
+#include <vector>
 
 #include "vecmath.h"
 
 namespace tbd::audio {
 
-enum class Bus { Master = 0, Music = 1, Sfx = 2, Ambience = 3 };
+enum class Bus { Master = 0, Music = 1, Sfx = 2, Ambience = 3, Radio = 4 };
 
 // Spawns the audio thread (engine and device are opened on it). False when audio is off for this run or there is no
 // Assets\audio folder; every other call then does nothing. Call once, after the assets folder is known.
@@ -48,5 +49,14 @@ void StopSound(unsigned id, float fadeSeconds = 0.2f);
 // Streamed from disk, not decoded up front. Replaces the current track with a cross-fade.
 void PlayMusic(const char* name, float volume = 1.0f, bool loop = true, float fadeSeconds = 1.5f);
 void StopMusic(float fadeSeconds = 1.5f);
+
+// The city radio: clips heard everywhere (not positioned), on the Radio bus, one at a time. Each call appends its names to
+// the radio queue; they play in order with `gapSeconds` of silence between them. A missing name is skipped. Names resolve
+// like any sound, so "radio/park_built" picks one of park_built_1 ... park_built_24 at random (not the last one again).
+void PlayRadio(const std::vector<std::string>& names, float gapSeconds = 0.45f);
+// Empties the queue and fades the clip that is playing.
+void StopRadio(float fadeSeconds = 0.4f);
+// True while a radio clip plays or waits in the queue (as of the audio thread's last tick).
+bool RadioBusy();
 
 } // namespace tbd::audio

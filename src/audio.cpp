@@ -11,6 +11,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -49,7 +50,8 @@ constexpr size_t kMaxOneShots = 48;
 constexpr float kFootstepStride = 2.1f; // metres of walking per step
 
 struct Cmd {
-    enum Type { Play, Loop, Move, Stop, Music, StopMusic, BusVolume, Playing } type = Play;
+    enum Type { Play, Loop, Move, Stop, Music, StopMusic, BusVolume, Playing, Radio, StopRadio } type = Play;
+    std::vector<std::string> names; // Radio
     unsigned id = 0;
     std::string name;
     Vec3 pos = {0, 0, 0};
@@ -68,7 +70,7 @@ std::condition_variable g_cv;
 std::vector<Cmd> g_queue;       // under g_mutex
 Listener g_listener;            // under g_mutex
 std::thread g_thread;
-std::atomic<bool> g_started{false}, g_failed{false}, g_quit{false};
+std::atomic<bool> g_started{false}, g_failed{false}, g_quit{false}, g_radioBusy{false};
 std::atomic<unsigned> g_nextId{1};
 
 // Game-thread-only state (UpdateFrame, footsteps, music edge).
@@ -137,7 +139,7 @@ public:
 
     void Run() {
         if (ma_engine_init(nullptr, &engine_) != MA_SUCCESS) { g_failed = true; return; }
-        for (int i = 1; i <= 3; ++i) ma_sound_group_init(&engine_, 0, nullptr, &groups_[i]);
+        for (int i = 1; i <= 4; ++i) ma_sound_group_init(&engine_, 0, nullptr, &groups_[i]);
         LoadZones();
         auto last = std::chrono::steady_clock::now();
         while (!g_quit.load()) {
@@ -157,8 +159,9 @@ public:
         }
         voices_.clear();
         music_ = Voice();
+        radio_ = Voice();
         beds_.clear(); // every ma_sound is uninitialised by ~Voice, before the groups and the engine go
-        for (int i = 1; i <= 3; ++i) ma_sound_group_uninit(&groups_[i]);
+        for (int i = 1; i <= 4; ++i) ma_sound_group_uninit(&groups_[i]);
         ma_engine_uninit(&engine_);
     }
 
@@ -180,7 +183,7 @@ private:
                 if (FileExists(s + e)) { out.push_back(s + e); return; }
         };
         probe(stem);
-        for (int i = 1; i <= 8; ++i) probe(stem + L"_" + std::to_wstring(i));
+        for (int i = 1; i <= 24; ++i) probe(stem + L"_" + std::to_wstring(i));
         if (out.empty() && FileExists(stem)) out.push_back(stem); // the name already carries its extension
         return out;
     }
@@ -208,7 +211,7 @@ private:
     // ---------------------------------------------------------------- voices
     bool Open(Voice& v, const std::wstring& path, bool stream, int bus, bool spatial, const Vec3& pos, float volume, float pitch, bool loop) {
         const ma_uint32 flags = stream ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
-        ma_sound_group* group = bus >= 1 && bus <= 3 ? &groups_[bus] : nullptr;
+        ma_sound_group* group = bus >= 1 && bus <= 4 ? &groups_[bus] : nullptr;
         std::unique_ptr<ma_sound> raw = std::make_unique<ma_sound>();
         if (ma_sound_init_from_file_w(&engine_, path.c_str(), flags, group, nullptr, raw.get()) != MA_SUCCESS)
             return false; // an unreadable file is as silent as a missing one; nothing was initialised
@@ -284,10 +287,17 @@ private:
             break;
         case Cmd::BusVolume:
             if (c.bus == 0) ma_engine_set_volume(&engine_, c.volume);
-            else if (c.bus >= 1 && c.bus <= 3) ma_sound_group_set_volume(&groups_[c.bus], c.volume);
+            else if (c.bus >= 1 && c.bus <= 4) ma_sound_group_set_volume(&groups_[c.bus], c.volume);
             break;
         case Cmd::Playing:
             playing_ = c.loop;
+            break;
+        case Cmd::Radio:
+            for (const std::string& n : c.names) radioQueue_.push_back({n, c.seconds});
+            break;
+        case Cmd::StopRadio:
+            radioQueue_.clear();
+            if (radio_.snd) { dying_.push_back(std::move(radio_)); FadeOut(dying_.back(), c.seconds); radio_ = Voice(); }
             break;
         }
     }
@@ -334,12 +344,32 @@ private:
             ++it;
         }
         Advance(music_, dt);
+        TickRadio(dt);
         for (size_t i = 0; i < dying_.size();) {
             Advance(dying_[i], dt);
             if (dying_[i].gain <= 0.0f || !dying_[i].snd) dying_.erase(dying_.begin() + (std::ptrdiff_t)i);
             else ++i;
         }
         TickBeds(dt);
+    }
+
+    // ---------------------------------------------------------------- radio
+    void TickRadio(float dt) {
+        if (radio_.snd && ma_sound_at_end(radio_.snd.get())) radio_ = Voice();
+        if (!radio_.snd) {
+            radioWait_ -= dt;
+            while (radioWait_ <= 0.0f && !radioQueue_.empty()) {
+                const RadioItem item = radioQueue_.front();
+                radioQueue_.pop_front();
+                const std::wstring* path = Pick(item.name);
+                if (!path || !Open(radio_, *path, true, 4, false, {0, 0, 0}, 1.0f, 1.0f, false)) continue; // missing: next
+                radio_.gain = radio_.gainTarget = 1.0f;
+                radioWait_ = item.gap; // the silence after this clip
+                break;
+            }
+        }
+        Advance(radio_, dt);
+        g_radioBusy = radio_.snd != nullptr || !radioQueue_.empty();
     }
 
     // ---------------------------------------------------------------- zone ambience
@@ -409,10 +439,14 @@ private:
 
     std::wstring root_;
     ma_engine engine_ = {};
-    ma_sound_group groups_[4] = {};
+    ma_sound_group groups_[5] = {};
     Listener listener_;
     std::unordered_map<unsigned, Voice> voices_;
     Voice music_;
+    struct RadioItem { std::string name; float gap; };
+    Voice radio_;
+    std::deque<RadioItem> radioQueue_;
+    float radioWait_ = 0.0f;
     std::vector<Voice> dying_;
     std::map<std::string, Bed> beds_;
     std::vector<Zone> zones_;
@@ -548,6 +582,26 @@ void StopMusic(float fadeSeconds) {
     c.seconds = fadeSeconds;
     Push(std::move(c));
 }
+
+void PlayRadio(const std::vector<std::string>& names, float gapSeconds) {
+    if (!Running() || names.empty()) return;
+    Cmd c;
+    c.type = Cmd::Radio;
+    c.names = names;
+    c.seconds = std::max(gapSeconds, 0.0f);
+    g_radioBusy = true; // until the thread has looked at it
+    Push(std::move(c));
+}
+
+void StopRadio(float fadeSeconds) {
+    if (!Running()) return;
+    Cmd c;
+    c.type = Cmd::StopRadio;
+    c.seconds = fadeSeconds;
+    Push(std::move(c));
+}
+
+bool RadioBusy() { return Running() && g_radioBusy.load(); }
 
 void UpdateFrame(const Vec3& eye, const Vec3& forward, const Vec3& up, bool playing, bool onFoot, float eyeHeight) {
     if (!Running()) return;

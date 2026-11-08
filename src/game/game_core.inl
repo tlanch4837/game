@@ -1925,6 +1925,7 @@ void RoadsWorldLabels() {
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_radio.inl"    // the city radio: Elton reacts to what the player did, plus The Weekly Rundown
 #include "city_herds.inl"    // neighbourhoods, herds over the day and the visible cars made from them (src/city/sim_hoods.h ...)
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint
 #include "city_stress.inl"   // TBD_CITY_STRESS=<n>: a road grid with n zoned lots and the bad cases, for render baselines
@@ -2066,9 +2067,12 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
                    : g_indTool.active ? (g_indTool.waste ? (int)tbd::gui::HudTool::Garbage : (int)tbd::gui::HudTool::Industry) : -1;
     hud.terrainOpen = terrainPanelOpen;
     SimHudFill(hud);
+    RadioHudFill(hud); // the City News feed
     if (g_simRemoteBudget >= 0) hud.budget = g_simRemoteBudget == 1, g_simRemoteBudget = -1;
     if (!gdock::Legacy()) { // Glass Dock+: its bar, panels and placement bar replace the HUD and the tools' panels
         gdock::Frame(r, hud);
+        tbd::gui::CityNewsPanel(g_gui, hud); // top right: the headlines the radio is talking about
+        RadioHudRead(hud);
         SimHudRead(hud);
         g_gui.EndFrame();
         const tbd::Mat4 ortho = tbd::OrthoPixels((float)g_engine.vpW, (float)g_engine.vpH);
@@ -2082,6 +2086,8 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
     }
     g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
     const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
+    tbd::gui::CityNewsPanel(g_gui, hud);
+    RadioHudRead(hud);
     SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim
     OverlaysHud(); // the info view toggles and legend, right column under the side icons
     g_gameSlot = hud.slot;
@@ -2184,6 +2190,7 @@ void RenderFrame() {
     SimSync(dt);      // the city sim: fixed game-minute ticks under a per-frame budget (reads the clock ZonesSync advanced)
     HerdsSync(dt);    // the cars near the camera made from the herds (city_herds.inl)
     OverlaysSync();   // the info overlay mesh, rebuilt only when its colours changed
+    RadioSync(dt);    // the city radio reacts to what changed this frame
     FrameMark("sim-sync");
     CityStressSync(); // TBD_CITY_STRESS only
     CityChunkCheckSync(); // TBD_CHUNK_CHECK only
