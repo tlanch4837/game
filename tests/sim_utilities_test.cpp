@@ -124,20 +124,21 @@ int main() {
         s.Sync(z.lots, 1);
         SimGrowth g;
         SimTuning tune;
-        std::vector<uint8_t> util(z.lots.size(), kLotAll), flags;
+        std::vector<uint8_t> util(z.lots.size(), kLotAll);
+        std::vector<SimFlags> flags;
         UtilWorld none;
         none.Solve(t.net, z, r);
         for (size_t i = 0; i < z.lots.size(); ++i)
             util[i] = (uint8_t)((r.lots[i].elec ? kLotPower : 0) | (r.lots[i].water ? kLotWater : 0) | (r.lots[i].sewage ? kLotSewage : 0) | kLotRoad);
         ComputeSimFlags(z, s, g, tune, util, flags);
-        const uint8_t all3 = kFlagNoPower | kFlagNoWater | kFlagNoSewage;
+        const SimFlags all3 = kFlagNoPower | kFlagNoWater | kFlagNoSewage;
         int flagged = 0;
         for (size_t i = 0; i < z.lots.size(); ++i)
             if (z.lots[i].alive && z.lots[i].Built()) flagged += (flags[i] & all3) == all3;
         CHECK(flagged == lots);
         std::fill(util.begin(), util.end(), (uint8_t)kLotAll);
         ComputeSimFlags(z, s, g, tune, util, flags);
-        for (uint8_t f : flags) CHECK(!(f & (all3 | kFlagAbandoned)));
+        for (SimFlags f : flags) CHECK(!(f & (all3 | kFlagAbandoned)));
     }
 
     // ------------------------------------------------------------------ dirty flag: solve only on change
@@ -199,6 +200,57 @@ int main() {
         CHECK(CellEfficiencyPermille(c) == 500);
         c.waterOk = 0;
         CHECK(CellEfficiencyPermille(c) == 350);
+    }
+
+    // ------------------------------------------------------------------ flags: 32 bits, owners, BuildingId table
+    {
+        static_assert(sizeof(SimFlags) == 4, "sim flags are 32 bits");
+        static_assert(kFlagNoPower == 1u && kFlagAbandoned == 32u, "the current bits did not move");
+        static_assert(kFlagCount <= 32, "32 bits");
+        SimFlags all = 0;
+        for (int b = 0; b < kFlagCount; ++b) {
+            CHECK(SimFlagText(b)[0] != 0);
+            CHECK(SimFlagOwner(b) >= 0 && SimFlagOwner(b) <= 7);
+            all |= 1u << b;
+        }
+        CHECK(SimFlagText(kFlagCount)[0] == 0 && SimFlagOwner(31) == -1);
+        SimFlags owned = 0; // every named bit has exactly one owning phase
+        for (int p = 0; p <= 7; ++p) {
+            CHECK((owned & SimFlagPhaseMask(p)) == 0);
+            owned |= SimFlagPhaseMask(p);
+        }
+        CHECK(owned == all);
+        CHECK((SimFlagPhaseMask(4) & (kFlagSick | kFlagCrime | kFlagFire | kFlagGarbage | kFlagNoSchool)) ==
+              (kFlagSick | kFlagCrime | kFlagFire | kFlagGarbage | kFlagNoSchool));
+        CHECK(SimFlagPhaseMask(2) == (kFlagHighRent | kFlagAbandoned));
+
+        BuildingRegistry reg;
+        std::vector<Lot> lots(3);
+        for (int i = 0; i < 3; ++i) lots[(size_t)i].id = 100 + i, lots[(size_t)i].alive = true;
+        reg.BeginSync();
+        for (const Lot& l : lots) reg.Upsert(BOrigin::Lot, l.id, BuildingRow());
+        reg.EndSync();
+        SimFlagTable t;
+        t.FromLots(lots, reg, {kFlagNoPower, 0u, kFlagNoWater | kFlagSick}, kFlagCurrentMask);
+        const BuildingId b0 = reg.Find(BOrigin::Lot, 100), b2 = reg.Find(BOrigin::Lot, 102);
+        CHECK(t.Get(b0) == kFlagNoPower);
+        CHECK(t.Get(b2) == kFlagNoWater); // the sick bit is not the current pass's: masked out
+        CHECK(t.Write(b2, SimFlagPhaseMask(4), kFlagSick | kFlagNoPower)); // a phase writes only its own bits
+        CHECK(t.Get(b2) == (kFlagNoWater | kFlagSick));
+        CHECK(!t.Write(b2, SimFlagPhaseMask(4), kFlagSick)); // no change
+        CHECK(t.Any() == (kFlagNoPower | kFlagNoWater | kFlagSick));
+        t.ClearAll(SimFlagPhaseMask(4));
+        CHECK(t.Get(b2) == kFlagNoWater);
+        // a compaction (lot 101 gone, 102 moves to position 1) keeps 102's flags on its id; 100's row is freed
+        lots.erase(lots.begin());
+        lots.erase(lots.begin());
+        reg.BeginSync();
+        for (const Lot& l : lots) reg.Upsert(BOrigin::Lot, l.id, BuildingRow());
+        reg.EndSync();
+        t.Prune(reg);
+        CHECK(t.Get(reg.Find(BOrigin::Lot, 102)) == kFlagNoWater);
+        CHECK(t.Get(b0) == 0); // stale id reads clean
+        CHECK(!t.Write(BuildingId(), ~0u, ~0u));
     }
 
     if (failures) std::printf("%d FAILED\n", failures);

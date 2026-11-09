@@ -40,7 +40,7 @@ inline double EnvDouble(const char* name, double fallback) {
 } // namespace sim_host
 
 std::vector<uint8_t> g_simLotUtil; // per lot (zones.lots order): LotUtil flags from the last utilities solve
-std::vector<uint8_t> g_simFlags;   // per lot (zones.lots order): SimFlag bits (sim_flags.h), for the icons, overlays and info card
+std::vector<uint32_t> g_simFlags;  // per lot (zones.lots order): SimFlag bits (sim_flags.h, uint32), for the icons, overlays and info card
 uint64_t g_simFlagsVersion = 0;    // bumped when g_simFlags changed
 float g_simFunding[tbd::city::kServices] = {1, 1, 1, 1, 1, 1}; // S4's budget sliders scale the service radii
 uint64_t g_simCoverageRuns = 0;
@@ -73,7 +73,7 @@ void SimServices() {
         ApplyUtilities(g_citySim, g_zones, g_simLotUtil);
     }
     { // the per-building flags: O(lots), every 10 game minutes (abandonment creeps up with time, so no cheaper key)
-        static std::vector<uint8_t> fresh;
+        static std::vector<tbd::city::SimFlags> fresh;
         ComputeSimFlags(g_zones, g_citySim, g_simGrowth, g_simTune, g_simLotUtil, fresh);
         if (fresh != g_simFlags) g_simFlags.swap(fresh), ++g_simFlagsVersion;
     }
@@ -557,7 +557,7 @@ void SimShowLot(uint64_t lot) {
         if (g_zones.lots[i].id == lot && g_simFlags[i]) {
             std::string line = "Problems:";
             for (int b = 0; b < tbd::city::kFlagCount; ++b)
-                if (g_simFlags[i] & (1 << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
+                if (g_simFlags[i] & (1u << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
             g_simCitizenLines.push_back(line);
         }
     if (!tbd::city::SimPeople::LotSlots(g_citySim, lot, cell, first, count) || count == 0) {
