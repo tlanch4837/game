@@ -112,13 +112,16 @@ inline int LifeMakeImmigrants(LifeWorld& w, uint32_t b, uint64_t r) {
         w.AddMember(h, born(age), LifeKidEdu(age), (s.Next() & 1) != 0, (uint32_t)s.Next());
     }
     w.Place(h, b);
+    for (uint32_t c = w.hh.firstMember[h.Index()]; c; c = w.cit.nextInHousehold[LifeWorld::Ix(c)]) // they arrive as the place makes them
+        w.cit.happy[LifeWorld::Ix(c)] = (uint8_t)LifeHappyTarget(w, LifeWorld::Ix(c));
     w.Event(SimEventType::Immigrated, b, w.hh.firstMember[h.Index()], size);
     return size;
 }
 
 // Admits up to `people` of the month's quota now (a slice's share).
 inline void LifeImmigrate(LifeWorld& w, LifeMigrationState& m, int people) {
-    for (int guard = 0; people > 0 && guard < 4 * people + 8 && !m.freeList.empty(); ++guard) {
+    const int tries = 4 * people + 8;
+    for (int guard = 0; people > 0 && guard < tries && !m.freeList.empty(); ++guard) {
         const uint64_t r = w.Rng((uint32_t)(m.admitted + 1) * 2654435761u, 11 + (uint64_t)guard);
         const uint32_t b = LifePickHome(w, m, 1, r);
         if (!b) continue;

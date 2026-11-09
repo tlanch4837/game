@@ -182,14 +182,21 @@ static void Bench(uint32_t homesPerCell, int side, int days) {
     t.RunDays(minute, 1);
     const uint32_t pop = t.sim.w.Population();
     double total = 0, worst = 0;
+    int64_t worstAt = 0;
+    double byKind[4] = {}; // month start, move pass, slices, job passes
     const int64_t ticks = (int64_t)days * 1440;
     for (int64_t m = minute; m < minute + ticks; ++m) {
         const auto a = std::chrono::steady_clock::now();
         t.sim.Tick(m);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
-        total += ms, worst = std::max(worst, ms);
+        total += ms;
+        if (ms > worst) worst = ms, worstAt = m;
+        const int64_t in = m % 1440;
+        byKind[in == 0 ? 0 : in == 3 ? 1 : in % 15 == 7 ? 2 : 3] = std::max(byKind[in == 0 ? 0 : in == 3 ? 1 : in % 15 == 7 ? 2 : 3], ms);
     }
     const double avg = total / (double)ticks;
+    std::printf("  bench worst by step: month start %.3f, move pass %.3f, slice %.3f, job pass %.3f ms (worst at minute %lld of its day)\n", byKind[0],
+                byKind[1], byKind[2], byKind[3], (long long)(worstAt % 1440));
     std::printf("  bench: %u residents (%u at end), %u households, %d game days: %.4f ms/tick avg, worst %.3f ms (target 0.25 avg)\n", pop,
                 t.sim.w.Population(), t.sim.w.hh.Live(), days, avg, worst);
     const size_t bytes = t.sim.w.cit.Capacity() * (size_t)(6 * 4 + 6 + 2 + 2) + t.sim.w.hh.Capacity() * (size_t)(3 * 4 + 5 * 4 + 7 + 2);

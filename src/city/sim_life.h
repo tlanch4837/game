@@ -3,8 +3,9 @@
 //
 //   SyncBuildings  after the BuildingRegistry changed (BuildingRegistry::version).
 //   Tick(minute)   every sim tick (1 game minute). Due work only:
-//                    month start   close the month's stats, migration numbers and quota, the moving pass
-//                    every 15 min  one slice of the month: citizens and households with index % slices == slice get
+//                    month start   close the month's stats, migration numbers and quota
+//                    minute 3      the moving pass (adult children, partners, looking households)
+//                    every 15 min  (at minute 7 of each quarter hour) one slice of the month: citizens and households with index % slices == slice get
 //                                  their monthly visit (96 slices per game day = per life month), and the slice's share
 //                                  of the immigration quota arrives
 //                    every 10 min  job matching (seekers only)
@@ -49,7 +50,9 @@ public:
         w.minute = minute;
         w.month = w.cal.LifeMonth(minute);
         if (w.month != lastMonth) MonthStart();
-        if (minute % 15 == 0) Slice((int)((minute - w.cal.MonthStartMinute(w.month)) / 15));
+        const int64_t inMonth = minute - w.cal.MonthStartMinute(w.month);
+        if (inMonth == 3) LifeMovePass(w, mig);                   // never in the same tick as another heavy step
+        if (inMonth % 15 == 7) Slice((int)(inMonth / 15));         // minutes 7, 22, 37, 52: off the job ticks
         if (minute % 10 == 0) LifeMatchJobs(w);
     }
 
@@ -64,7 +67,6 @@ public:
         w.cur = LifeMonthStats();
         lastMonth = w.month;
         LifeMigrationMonth(w, mig);
-        LifeMovePass(w, mig);
         if (w.tune.instantFill) LifeImmigrate(w, mig, mig.quota);
     }
 
