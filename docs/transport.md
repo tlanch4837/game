@@ -69,6 +69,22 @@ Single and Double Track Railway live in the road network with their own rules: r
 (a crossing at the same level is a level crossing), grade at most 6 %, curve radius at least 45 m, rails and roads cannot
 be swapped (Replace / Swap). Track meshes have sleepers and steel rails. Zoning ignores rails.
 
+## Rail junctions (`src/city/rail_junction.h`, `rail_junction_mesh.h`)
+
+A junction is a rail node of the shared graph; `ClassifyArms` reads its type from the arms' directions alone (no stored
+state): Plain, Turnout left / right (one route straight, one diverging 4..35 deg), Wye, 3-way, Diamond (two straight
+lines crossing at 10 deg or more). `RailJunctions::slips` turns a diamond of 20 deg or less into a single slip.
+`RailCanPass` is the routing rule (`RailPathTo` uses it): either route of a switch, straight over a diamond, never
+reversing through the points. `PlanJoin` is the snap: a new track's end onto a free yard track end, a rail node or the
+middle of a rail segment, the junction it makes, and the leaving direction auto-adjusted up to 15 deg past the limits;
+switches keep 10 m apart. `CheckCrossings` vets a new curve's same-level crossings (diamond at least 10 deg, level
+crossing at least 30 deg and 8 m from road junctions), `FindLevelCrossings` lists rail x road crossings,
+`BuildCrossover` adds a crossover or scissors between parallel single tracks 3.8..12 m apart.
+
+Models: `BuildJunctionMesh(JunctionParams)` (gauge, angle, radius, stem / tail, spacing, road width, LOD 0 / 1), five
+materials (Ballast, Tie, Steel, Prop atlas, Paint), at most five draws. Preview: `docs/rail_junction_preview.html`
+(three.js port, `rail_junction_gen.js`). Not drawn in the game yet. Tests: `tests\rail_junction_test.bat`.
+
 ## Captures
 
 `TBD_TRANSPORT=<building index>` opens the tool with that building; `TBD_TRANSPORT_DEMO="def x z progress;..."` places
