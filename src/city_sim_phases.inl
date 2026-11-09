@@ -82,7 +82,7 @@ void SimPhasesInit() {
     SimSaveRegisterP0();
     for (int i = 0; i < (int)(sizeof(kSimPhases) / sizeof(kSimPhases[0])); ++i) // the table's bits of the phases that are on
         if (SimPhaseOn(kSimPhases[i])) sim_hub::tableMask |= tbd::city::SimFlagPhaseMask(i + 1);
-    sim_hub::tableMask &= ~(tbd::city::kFlagCurrentMask & ~tbd::city::SimFlagPhaseMask(6)); // ComputeSimFlags keeps its own (P6 takes no customers)
+    sim_hub::tableMask &= ~(tbd::city::kFlagCurrentMask & ~tbd::city::SimFlagPhaseMask(6) & ~(SimPhaseOn(kSimPhases[1]) ? tbd::city::SimFlagPhaseMask(2) : 0u)); // ComputeSimFlags keeps its own (P6 takes no customers, P2 abandoned)
     for (const SimPhaseHooks& p : kSimPhases) {
         if (SimPhaseOn(p)) p.init();
         else tbd::Log("Sim: phase %s switched off (tuning enabled = 0)", p.name);

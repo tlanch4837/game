@@ -117,8 +117,28 @@ struct SimTuningTable {
 TBD_SIM_TUNING_TABLE(LifePhaseTuning, "life.", TBD_SIM_TUNING_LIFE) // not LifeTuning: that is sim_life_tuning.h's full set
 
 // ---- P2 growth, land value, rent, demand (land.) ----------------------------------------------------------------------
+// Defaults are sim_land*.h / sim_demand.h compiled values; city_sim_p2.inl copies them in (SimP2ApplyTuning).
 #define TBD_SIM_TUNING_LAND(X)                                                                                              \
-    X(enabled, 1.0)
+    X(enabled, 1.0)                                                                                                         \
+    X(upDays, 3.0)                     /* good days in a row (x 1..1.5 per lot) to level up */                              \
+    X(downDays, 4.0)                   /* bad days in a row (x 1..2) to level down, or be abandoned at level 1 */           \
+    X(abandonDays, 3.0)                /* abandoned and still bad: demolished after this */                                 \
+    X(recoverDays, 1.0)                /* abandoned and no longer bad: recovers after this */                               \
+    X(upLand, 70.0)                    /* land value to level up from L1; each level more by upLandStep */                  \
+    X(upLandStep, 30.0)                                                                                                     \
+    X(hysteresis, 20.0)                /* down threshold = the level below's up threshold minus this */                     \
+    X(abandonLand, 12.0)                                                                                                    \
+    X(badDemand, -0.35)                                                                                                     \
+    X(maxActionsPerHour, 3.0)          /* level changes a game hour at least allowed (more for big cities) */               \
+    X(actionsPerLots, 150.0)           /* one more allowed an hour per this many lots */                                    \
+    X(affordPct, 40.0)                 /* rent over this share of income: burdened */                                       \
+    X(referenceLand, 110.0)            /* land value where rent is the flat rent */                                         \
+    X(rentFloorPct, 45.0)                                                                                                   \
+    X(demandRent, 0.8)                 /* residential demand lost per weighted burdened share */                            \
+    X(demandMigration, 0.35)                                                                                                \
+    X(demandWorkers, 1.6)                                                                                                   \
+    X(demandShortfall, 0.5)                                                                                                 \
+    X(checkHours, 24.0)                /* full recompute vs the incremental state every this many game hours (0 off) */
 TBD_SIM_TUNING_TABLE(LandTuning, "land.", TBD_SIM_TUNING_LAND)
 
 // ---- P3 pollution, weather, water (env.) ------------------------------------------------------------------------------

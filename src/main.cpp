@@ -89,6 +89,7 @@
 #include "city/sim_env_save.h"       // Phase 3 environment and its .tbdsim chunks (city_sim_p3.inl)
 #include "city/sim_goods_save.h"     // Phase 6 goods, companies, trade and their .tbdsim chunks (city_sim_p6.inl)
 #include "city/sim_gov_save.h"       // Phase 7 budget, policies, districts, progression and their .tbdsim chunks (city_sim_p7.inl)
+#include "city/sim_land_save.h"      // Phase 2 demand, land value, rent, levelling and their .tbdsim chunks (city_sim_p2.inl)
 #include "city/sim_preset.h"         // the sim's per-preset and thermal scaling (city_sim.inl SimApplyPreset)
 #include "gfx_settings.h"             // the player's graphics preset (the sim scales with it)
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building

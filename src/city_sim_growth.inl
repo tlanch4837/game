@@ -3,7 +3,10 @@
 // logic is city/sim_growth.h; g_simGrowth itself stays in city_sim.inl.
 
 // SimInit's registration (same place in the order as before the move: after cells and SimLoadTuning, before people).
+// With Phase 2 on ("land.enabled", the default) its systems (city_sim_p2.inl: demand from causes, the land field,
+// rent, LotLevels) replace these; the old S2 model stays for "land.enabled": 0 (a dev switch for bisecting).
 void SimRegisterGrowth() {
+    if (g_simPhaseTune.land.enabled != 0.0) return;
     // S2: demand every 10 game minutes (smoothed over a day), and the spawn gate it drives.
     g_sim.Register("demand", 10, 1, [](const tbd::city::SimTick&) {
         g_simGrowth.UpdateDemand(g_citySim, g_simTune, 10.0, &g_zones);
