@@ -1,6 +1,7 @@
 // The city sim's cost bench (CS2 sim roadmap Phase 0): a synthetic city of N lots on a road grid runs one game day (1440
 // ticks) through the real scheduler with the systems SimInit registers (cells, demand, growth, economy, services) plus the
-// Phase 0 hub's own work (the building registry sync and the .tbdsim image the autosave copies), and the flow solve the
+// Phase 0 hub's own work (the building registry sync and the .tbdsim image the autosave copies), Phase 1's citizen records
+// (bootstrapped from the lots, CitySim::externalPeople; the "life" systems and their save image), and the flow solve the
 // game runs on a worker. Prints ms per system: the total over the day, per tick, and per frame at 30 fps and speed 3
 // (18 game minutes a real second). The roadmap's iPad gate is these numbers x 2 until calibrated on the device.
 // Build and run: tests\sim_bench.bat [lots]   (default 5000)
@@ -20,6 +21,8 @@
 #include "city/sim_flow.h"
 #include "city/sim_growth.h"
 #include "city/sim_save.h"
+#include "city/sim_life_cells.h"
+#include "city/sim_life_save.h"
 
 using namespace tbd::city;
 
@@ -38,9 +41,30 @@ struct Bench {
     std::vector<SimFlags> flags;
     std::vector<int> segComp;
     FlowSolver solver;
+    LifeSim life;           // Phase 1: the citizen records (CitySim::externalPeople)
+    CellFactors factors;
+    uint64_t lifeReg = ~0ull; // the registry version the records last synced
     std::map<std::string, double> ms; // per system, over the day
     std::map<std::string, int> calls;
 };
+
+// Phase 0's hub: the building ids from the lots.
+static void HubSync(Bench& b) {
+    b.reg.BeginSync();
+    for (const Lot& l : b.zones.lots) {
+        BuildingRow r;
+        const CellKey k = CellKeyAt(l.c.x, l.c.z);
+        r.kind = l.type, r.cellX = k.x, r.cellZ = k.z, r.level = (uint8_t)l.level;
+        b.reg.Upsert(BOrigin::Lot, l.id, r);
+    }
+    b.reg.EndSync();
+}
+// Phase 1 (city_sim_p1.inl): the rows' homes, jobs, cells and hoods (a hood per supercell here), then the records.
+static void LifeSync(Bench& b) {
+    LifeFillRows(b.reg, b.cells, b.zones.lots, [&b](int c) { return b.cells.SuperOf(c); });
+    b.life.SyncBuildings(b.reg, [](const BuildingRow& r) { return LifeJobKind(r.kind); });
+    b.lifeReg = b.reg.version;
+}
 
 // A B x B grid of 120 m blocks and lots along its blocks: types cycle residential (4 densities), commercial, office, industrial.
 static void Build(Bench& b, int lots) {
@@ -99,6 +123,17 @@ int main(int argc, char** argv) {
     const int lots = argc > 1 ? std::max(1, std::atoi(argv[1])) : 5000;
     static Bench b; // big: not on the stack
     Build(b, lots);
+    // Phase 1: the records own the people; the city starts populated by the old-save bootstrap.
+    b.cells.externalPeople = true;
+    b.cells.Sync(b.zones.lots, b.zones.version);
+    b.life.w.factors = &b.factors;
+    b.life.Reset(1);
+    const double boot0 = NowMs();
+    HubSync(b);
+    LifeSync(b);
+    b.life.Bootstrap();
+    LifeApplyCells(b.life.w, b.cells);
+    std::printf("sim_bench: P1 bootstrap %.1f ms: %u citizens, %u households\n", NowMs() - boot0, b.life.w.cit.Live(), b.life.w.hh.Live());
     SimScheduler s;
     s.budgetMs = 1e9; // the bench measures, it never defers
     auto timed = [&](const char* name, std::function<void(const SimTick&)> fn) {
@@ -145,22 +180,29 @@ int main(int argc, char** argv) {
     timed("hub: buildings", [](const SimTick& t) {
         if (t.minute % 10) return;
         if (t.minute % 60 == 0) ++b.zones.lots[(size_t)(t.minute / 60) % b.zones.lots.size()].level; // some change
-        b.reg.BeginSync();
-        for (const Lot& l : b.zones.lots) {
-            BuildingRow r;
-            const CellKey k = CellKeyAt(l.c.x, l.c.z);
-            r.kind = l.type, r.cellX = k.x, r.cellZ = k.z, r.level = (uint8_t)l.level;
-            b.reg.Upsert(BOrigin::Lot, l.id, r);
-        }
-        b.reg.EndSync();
+        HubSync(b);
     });
-    // ... and the .tbdsim image (HEAD + BLDG) the autosave copies on the main thread, once a game hour here.
+    // Phase 1: the records' building sync after a lot changed (the hourly level change here; the game: on a zones change, at
+    // most once a real second), the "life" system (monthly slices, moves, job matching every 10 minutes), the views into
+    // the cells every 10 minutes and the factors every 30.
+    timed("life: buildings", [](const SimTick& t) { if (t.minute % 60 == 1) LifeSync(b); });
+    timed("life", [](const SimTick& t) {
+        b.life.Tick(t.minute);
+        if (t.minute % 10 == 5) LifeApplyCells(b.life.w, b.cells);
+        if (t.minute % 30 == 17) b.life.WriteFactors(b.factors);
+    });
+    // ... and the .tbdsim image (HEAD + BLDG + the P1 records) the autosave copies on the main thread, once a game hour here.
     size_t imageBytes = 0;
     timed("hub: .tbdsim copy", [&imageBytes](const SimTick& t) {
         if (t.minute % 60) return;
         SimSaveRegistry chunks;
         chunks.Register({simchunk::HEAD, 1, 0, [](ByteWriter& w) { WriteHead(w, SimSaveHead{}); }, nullptr, nullptr});
         chunks.Register({simchunk::BLDG, 1, 0, [](ByteWriter& w) { WriteBuildings(w, b.reg); }, nullptr, nullptr});
+        chunks.Register({simchunk::CITZ, 1, 0, [](ByteWriter& w) { // Phase 1: the four chunks as one here (the game writes four)
+            LifeChunks c;
+            LifeSave(b.life, c);
+            for (const std::vector<uint8_t>* v : {&c.citz, &c.hhld, &c.occu, &c.migr}) w.Raw(v->data(), v->size());
+        }, nullptr, nullptr});
         const std::vector<SimSaveRegistry::ChunkImage> snap = chunks.Snapshot(); // the main thread's part
         const double a0 = NowMs();
         imageBytes = SimSaveRegistry::Assemble(snap).size(); // the worker's part (framing, CRCs): not in the total
@@ -183,6 +225,6 @@ int main(int argc, char** argv) {
     }
     std::printf("  %-20s %10.2f %8s %12.4f %14.4f   (main thread; x2 = the iPad gate: %.4f ms/frame)\n", "TOTAL", sum, "", sum / 1440.0, sum / 1440.0 * 0.6,
                 sum / 1440.0 * 0.6 * 2.0);
-    std::printf("  .tbdsim image (HEAD + BLDG): %zu bytes\n", imageBytes);
+    std::printf("  .tbdsim image (HEAD + BLDG + CITZ HHLD OCCU MIGR): %zu bytes\n", imageBytes);
     return 0;
 }

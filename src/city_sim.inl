@@ -27,6 +27,12 @@ void SimPhasesAfterReset();
 void SimPhasesFrame(float realDt);
 bool SimTbdLoadIsPending(); // city_sim_save.inl: a load's .tbdsim waits to be applied
 void SimBuildingsLotsBack();   // city_sim_save.inl: the load's lots are back (BLDG releases what never came back)
+// Phase 1 (city_sim_p1.inl): the citizen records own who lives and works where once it is on.
+bool SimP1On();
+bool SimP1LotLines(uint64_t lot, std::string& title, std::vector<std::string>& lines);
+void SimP1LotsBack();
+void SimP1SavedPerson(uint64_t homeLot);
+bool g_simLoadInProgress = false; // SimSync: the reset being settled came with a load (P1 bootstraps after its lots)
 
 void SimLoadTuning() {
     g_simTune = tbd::city::SimTuning();
@@ -42,7 +48,10 @@ void SimLoadTuning() {
         int phaseApplied = 0;
         g_simPhaseTune.LoadFile(path, &phaseUnknown, &phaseApplied);
         if (phaseApplied) tbd::Log("Sim: tuning.json applied %d phase values", phaseApplied);
-        for (const std::string& u : phaseUnknown) tbd::Log("Sim: tuning.json: unknown phase name \"%s\" (ignored)", u.c_str());
+        for (const std::string& u : phaseUnknown) {
+            tbd::city::LifeTuning life; // P1's full set (sim_life_tuning.h; city_sim_p1.inl reads it): not unknown
+            if (!life.Set(u.c_str(), 0.0)) tbd::Log("Sim: tuning.json: unknown phase name \"%s\" (ignored)", u.c_str());
+        }
     } else {
         tbd::Log("Sim: no assets\\sim\\tuning.json; compiled-in tuning");
     }
@@ -110,6 +119,7 @@ void SimShowLot(uint64_t lot) {
                 if (g_simFlags[i] & (1u << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
             g_simCitizenLines.push_back(line);
         }
+    if (SimP1LotLines(lot, g_simCitizenTitle, g_simCitizenLines)) return; // the records (Phase 1)
     if (!tbd::city::SimPeople::LotSlots(g_citySim, lot, cell, first, count) || count == 0) {
         g_simCitizenLines.push_back("Nobody lives here (a workplace, or still being built).");
         return;
@@ -207,6 +217,13 @@ void SimApplyPending() {
     }
     if (!s.lotsBack) return;
     s.lotsBack = false;
+    if (SimP1On()) { // the records move in (P1 bootstrap); the saved people are pinned onto them
+        for (const auto& f : s.people) SimP1SavedPerson(strtoull(f[3].c_str(), nullptr, 10));
+        s.people.clear();
+        g_citySim.Sync(g_zones.lots, g_zones.version);
+        SimP1LotsBack();
+        return;
+    }
     // the counters at once (the lots just came back; a paused game would otherwise show nobody until it runs), then
     // each person on top of them without changing a total
     if (g_citySim.Sync(g_zones.lots, g_zones.version)) {
@@ -322,7 +339,11 @@ void SimSyncFrame(float realDt) {
         SimOnCityReset();
     }
     SimApplyPending(); // a loaded game's sim records, once the reset above is done
-    if (reset || SimTbdLoadIsPending()) SimPhasesAfterReset(); // the load's .tbdsim (or fresh), then the phases' Load hooks
+    if (reset || SimTbdLoadIsPending()) { // the load's .tbdsim (or fresh), then the phases' Load hooks
+        g_simLoadInProgress = SimTbdLoadIsPending();
+        SimPhasesAfterReset();
+        g_simLoadInProgress = false;
+    }
     SimMilestonesSync();
     SimConstructionSync(realDt); // what was placed since the last frame is paid for
     for (int c = 0; c < tbd::city::SimEconomy::kCats; ++c) g_simGrowth.offset[c] = g_simEcon.DemandOffset(c, g_simTune);

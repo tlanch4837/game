@@ -2,13 +2,16 @@
 //   the same slot gives the same person; materialize / collapse keeps every total; moving house updates both cells (and
 //   the lot records, so a later demolition stays exact); losing a job raises unemployment; a fuzz of random operations
 //   (people and city changes) never leaves a negative or inconsistent counter; the cap and idle collapse hold; the
-//   schedule is a pure function of time.
+//   schedule is a pure function of time. Phase 1: the person in a building is a citizen record (TenantOf), and an old
+//   save's people map onto the bootstrapped records as pins (sim_life_cells.h LifePinSaved).
 // Build and run: tests\sim_person_test.bat
 #include <cstdio>
 #include <vector>
 
 #include "city/sim.h"
 #include "city/sim_people.h"
+#include "city/sim_life_cells.h"
+#include "city/sim_life_save.h"
 
 using namespace tbd::city;
 
@@ -49,7 +52,61 @@ static bool Consistent(const CitySim& s, bool say = false) {
     return true;
 }
 
+// Phase 1: the person in a building is a record. TenantOf gives the same citizen for the same slot, every slot of a
+// building's residents is a live citizen of a household there, an old save's people (by home lot) map onto records and
+// are pinned, and nothing about that changes a counter.
+static void TestCitizenView() {
+    std::vector<Lot> lots = {MakeLot(1, 10, 10, 3, 4, 4), MakeLot(2, 40, 10, 2, 3, 3), MakeLot(3, 70, 10, 6, 6, 6), MakeLot(4, 300, 10, 1, 2, 2)};
+    CitySim s;
+    s.externalPeople = true;
+    s.Sync(lots, 1);
+    BuildingRegistry reg;
+    reg.BeginSync();
+    for (const Lot& l : lots) {
+        BuildingRow r;
+        const CellKey k = CellKeyAt(l.c.x, l.c.z);
+        r.kind = l.type, r.cellX = k.x, r.cellZ = k.z;
+        reg.Upsert(BOrigin::Lot, l.id, r);
+    }
+    reg.EndSync();
+    LifeFillRows(reg, s, lots, nullptr);
+    LifeSim life;
+    life.Reset(11);
+    life.SyncBuildings(reg, [](const BuildingRow& r) { return LifeJobKind(r.kind); });
+    life.Bootstrap();
+    LifeApplyCells(life.w, s);
+    const uint64_t pop = s.Population();
+    const uint32_t b1 = reg.Find(BOrigin::Lot, 1).v, b3 = reg.Find(BOrigin::Lot, 3).v;
+    CHECK(reg.Get(BuildingId(b1))->homes == 80 && reg.Get(BuildingId(b3))->homes == 0 && reg.Get(BuildingId(b3))->jobSlots[1] > 0);
+    const LifeBuilding* L1 = life.w.B(b1);
+    CHECK(L1 && L1->used == 76); // 80 homes, 5 % free
+    uint32_t n = 0;
+    for (CitizenId c; (c = life.TenantOf(b1, n)).Valid(); ++n) {
+        CHECK(life.w.cit.Alive(c) && life.w.hh.home[LifeWorld::Ix(life.w.cit.household[c.Index()])] == b1);
+        CHECK(life.TenantOf(b1, n) == c); // the same slot, the same person
+    }
+    CHECK(n == L1->used);
+    CHECK(!life.TenantOf(b3, 0).Valid()); // a workplace houses nobody
+    // an old save's Q people: two in lot 1, one in lot 2, one in the workplace and one in a lot that is gone
+    const int pinned = LifePinSaved(life, reg, {1, 1, 2, 3, 99});
+    CHECK(pinned == 3);
+    CHECK((life.w.cit.flags[life.TenantOf(b1, 0).Index()] & kCitPinned) && (life.w.cit.flags[life.TenantOf(b1, 1).Index()] & kCitPinned));
+    CHECK(!(life.w.cit.flags[life.TenantOf(b1, 2).Index()] & kCitPinned));
+    LifeApplyCells(life.w, s);
+    CHECK(s.Population() == pop);
+    std::string why;
+    CHECK(life.w.Verify(&why));
+    // pins survive a save and load
+    LifeChunks ch;
+    LifeSave(life, ch);
+    LifeSim back;
+    back.Reset(11);
+    CHECK(LifeLoad(back, ch));
+    CHECK(back.w.cit.flags[life.TenantOf(b1, 0).Index()] & kCitPinned);
+}
+
 int main() {
+    TestCitizenView();
     std::vector<Lot> lots = {MakeLot(1, 10, 10, 3, 4, 4), MakeLot(2, 40, 10, 2, 3, 3), MakeLot(3, 70, 10, 6, 6, 6), MakeLot(4, 300, 10, 2, 4, 4),
                              MakeLot(5, 330, 10, 4, 4, 4)};
     CitySim s;

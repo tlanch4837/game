@@ -70,6 +70,9 @@
 #include "city/sim_tuning_table.h" // the CS2 phases' prefixed tuning (city_sim.inl g_simPhaseTune)
 #include "city/sim_calendar.h"     // minute -> day, life month, season (city_sim_save.inl)
 #include "city/sim_walkers.h"      // [walkers] people on the sidewalks (city_walkers.inl hosts them; included here: game_core.inl sits in a namespace)
+#include "city/sim_life_save.h"      // Phase 1 citizens, households, jobs, migration and their .tbdsim chunks (city_sim_p1.inl)
+#include "city/sim_life_views.h"     // Phase 1 Population panel, building inspector, active tier
+#include "city/sim_life_cells.h"     // Phase 1 records into CitySim cells and links
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
 #include "city/city_interact.h" // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)

@@ -2,7 +2,9 @@
 //   LotCapacity matches the per-area factors; conservation (adults >= working, employed <= jobs, vacancies = jobs -
 //   employed, working == employed == links city-wide and per supercell) under a random sequence of spawns, completions,
 //   level swaps and demolitions; demolishing everything returns every counter to zero; same inputs give the same result;
-//   a full matching pass for ~50k residents over 10k lots is timed (target under 1 ms).
+//   a full matching pass for ~50k residents over 10k lots is timed (target under 1 ms). Phase 1: with externalPeople a lot
+//   brings empty homes and job slots only; the citizen records' bootstrap equals the old counters per cell exactly, and the
+//   cells and links copied from the records (sim_life_cells.h) keep the same invariants through matching and demolition.
 // Build and run: tests\sim_cells_test.bat
 #include <chrono>
 #include <cstdio>
@@ -10,6 +12,7 @@
 
 #include "city/sim.h"
 #include "city/sim_cells.h"
+#include "city/sim_life_cells.h"
 
 using namespace tbd::city;
 
@@ -86,6 +89,78 @@ static uint64_t Fuzz(uint64_t seed, int steps, bool& invOk) {
     s.Sync(lots, ++version);
     if (s.Population() != 0 || s.Working() != 0 || s.Employed() != 0 || s.JobCap() != 0 || s.HomeCap() != 0 || s.Links() != 0 || s.Lots() != 0) invOk = false;
     return s.Hash() ^ (uint64_t)s.Population();
+}
+
+// Phase 1: the counters as a view of the citizen records (CitySim::externalPeople, sim_life_cells.h).
+static void SyncLife(LifeSim& life, BuildingRegistry& reg, const CitySim& s, const std::vector<Lot>& lots) {
+    reg.BeginSync();
+    for (const Lot& l : lots) {
+        BuildingRow r;
+        const CellKey k = CellKeyAt(l.c.x, l.c.z);
+        r.kind = l.type, r.cellX = k.x, r.cellZ = k.z, r.level = (uint8_t)l.level;
+        reg.Upsert(BOrigin::Lot, l.id, r);
+    }
+    reg.EndSync();
+    LifeFillRows(reg, s, lots, [&s](int c) { return s.SuperOf(c); }); // a hood per supercell
+    life.SyncBuildings(reg, [](const BuildingRow& r) { return LifeJobKind(r.kind); });
+}
+static void TestExternalPeople() {
+    SplitMix64 r(77);
+    std::vector<Lot> lots;
+    for (uint64_t i = 0; i < 1500; ++i) {
+        const uint32_t pick = r.Below(100);
+        const int type = pick < 40 ? (int)r.Below(4) : pick < 60 ? 4 : pick < 80 ? 5 : 6;
+        lots.push_back(MakeLot(i + 1, (float)r.Below(2400) - 1200.0f, (float)r.Below(1600) - 800.0f, type, 1 + (int)r.Below(3), 1 + (int)r.Below(3), true));
+    }
+    CitySim old; // the old fixed split, for the bootstrap comparison
+    old.Sync(lots, 1);
+    CitySim s;
+    s.externalPeople = true;
+    s.Sync(lots, 1);
+    CHECK(s.Population() == 0 && s.Working() == 0 && s.Links() == 0); // empty homes and job slots only
+    CHECK(s.HomeCap() == old.HomeCap() && s.JobCap() == old.JobCap());
+    CHECK(Invariants(s, true));
+    s.Clear();
+    CHECK(s.externalPeople); // Clear keeps the mode
+    s.Sync(lots, 2);
+
+    // bootstrap (no ticks): every cell's residents and education equal the old counters exactly
+    BuildingRegistry reg;
+    LifeSim life;
+    life.Reset(5);
+    SyncLife(life, reg, s, lots);
+    life.Bootstrap();
+    LifeApplyCells(life.w, s);
+    bool same = s.sim.size() == old.sim.size();
+    for (size_t c = 0; same && c < s.sim.size(); ++c)
+        for (int a = 0; a < 3; ++a) same = same && s.sim[c].residents[a] == old.sim[c].residents[a] && s.sim[c].edu[a] == old.sim[c].edu[a];
+    CHECK(same);
+    CHECK(s.Population() == old.Population() && s.Population() == life.w.Population());
+
+    // a few days of job matching: the links come from real assignments and keep every invariant
+    for (int64_t m = 0; m < 3 * 1440; ++m) life.Tick(m);
+    LifeApplyCells(life.w, s);
+    std::printf("external: %llu residents, %llu working, %llu links, %d supercells\n", (unsigned long long)s.Population(), (unsigned long long)s.Working(),
+                (unsigned long long)s.Links(), s.Supercells());
+    CHECK(s.Working() > 0 && s.Working() == s.Employed() && s.Employed() == s.Links());
+    CHECK(Invariants(s, true));
+    std::string why;
+    CHECK(life.w.Verify(&why));
+    auto crowded = [&s] { uint64_t n = 0; for (const CellSim& c : s.sim) n += c.Population() > c.homeCap ? c.Population() - c.homeCap : 0; return n; };
+    const uint64_t crowdedBefore = crowded(); // births may crowd a home (that is no eviction)
+    std::printf("external: before demolition %llu people over their cells' homes\n", (unsigned long long)crowdedBefore);
+
+    // demolish a third: capacity goes at once, the people when the records follow (evicted, rehoused or gone)
+    std::vector<Lot> keep;
+    for (const Lot& l : lots) if (l.id % 3) keep.push_back(l);
+    s.Sync(keep, 3);
+    SyncLife(life, reg, s, keep);
+    LifeApplyCells(life.w, s);
+    CHECK(Invariants(s, true));
+    std::printf("external: after demolition %llu residents in %llu homes, %llu over their cells' homes\n", (unsigned long long)s.Population(),
+                (unsigned long long)s.HomeCap(), (unsigned long long)crowded());
+    CHECK(s.Population() <= s.HomeCap() + crowdedBefore && crowded() <= crowdedBefore); // the evicted found free homes or left
+    CHECK(life.w.Verify(&why));
 }
 
 int main() {
@@ -183,6 +258,8 @@ int main() {
         const auto t7 = std::chrono::steady_clock::now();
         std::printf("scale: second re-add + full match %.3f ms\n", ms(t6, t7));
     }
+
+    TestExternalPeople();
 
     if (failures) {
         std::printf("sim_cells_test: %d failure(s)\n", failures);

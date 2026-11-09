@@ -342,7 +342,7 @@ static void TestTuningTables() {
     CHECK(t.land.enabled == 1.0 && t.move.enabled == 1.0 && t.goods.enabled == 1.0 && t.gov.enabled == 1.0); // untouched
     CHECK(unknown.size() == 2 && unknown[0] == "life.nope" && unknown[1] == "gov.typo");
     // One table alone ignores every other prefix and the unprefixed set, silently.
-    LifeTuning life;
+    LifePhaseTuning life;
     std::vector<std::string> u2;
     CHECK(life.ParseJson(json, &u2) == 2 && u2.size() == 1);
     CHECK(!life.Set("env.enabled", 0) && !life.Set("instantFill", 0) && life.Set("life.instantFill", 2) && life.instantFill == 2.0);

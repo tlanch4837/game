@@ -13,6 +13,11 @@
 // Invariants (checked by the test): per cell residents[adult] >= working, employed[k] <= jobCap[k],
 // vacancies[k] == jobCap[k] - employed[k]; city-wide sum(working) == sum(employed) == sum(links); per supercell
 // sum(working) == its home links and sum(employed) == its job links.
+//
+// externalPeople (CS2 sim roadmap Phase 1): the citizen records (sim_life*.h) are the one source of who lives and works
+// where. Add() then gives a lot's empty homes and job slots only, Remove() takes capacity only, Match() does nothing,
+// and the host writes every cell's people with SetCellPeople and the commute links with SetLinks (sim_life_cells.h).
+// The supercell links come from the real job assignments, so ForEachLink, herds and hoods work unchanged.
 #pragma once
 
 #include <algorithm>
@@ -97,6 +102,35 @@ public:
 
     CityCells cells;
     std::vector<CellSim> sim; // parallel to cells.cells
+    bool externalPeople = false; // Phase 1: people come from the citizen records (see the header comment); Clear keeps it
+
+    // externalPeople: one cell's people as the records count them (saturating to the uint16 counters).
+    void SetCellPeople(int cell, const uint32_t res[kAgeBands], uint32_t working, const uint32_t employed[kJobKinds], const uint32_t edu[3],
+                       const uint32_t wealth[4]) {
+        if (cell < 0 || (size_t)cell >= sim.size()) return;
+        CellSim& c = sim[(size_t)cell];
+        const auto sat = [](uint32_t v) { return (uint16_t)std::min<uint32_t>(v, 65535u); };
+        bool diff = c.working != sat(working);
+        for (int a = 0; a < kAgeBands; ++a) diff |= c.residents[a] != sat(res[a]), c.residents[a] = sat(res[a]);
+        c.working = sat(working);
+        for (int k = 0; k < kJobKinds; ++k) {
+            diff |= c.employed[k] != sat(employed[k]);
+            c.employed[k] = sat(employed[k]);
+            c.vacancies[k] = Sub(c.jobCap[k], c.employed[k]);
+        }
+        for (int e = 0; e < 3; ++e) c.edu[e] = sat(edu[e]);
+        for (int w = 0; w < 4; ++w) c.wealth[w] = sat(wealth[w]);
+        if (diff) cells.Touch(cell, kDirtySim);
+    }
+    // externalPeople: the commute links from scratch. each(add) calls add(homeCell, jobCell, workers) for every pair.
+    template <class F>
+    void SetLinks(F&& each) {
+        byJob_.clear(), byHome_.clear();
+        each([this](int h, int j, int32_t n) {
+            if (n <= 0 || h < 0 || j < 0 || (size_t)h >= superOf_.size() || (size_t)j >= superOf_.size()) return;
+            Link(superOf_[(size_t)h], superOf_[(size_t)j], n);
+        });
+    }
 
     // Diffs the zone grid's lots against what the sim knows: new lots join their cell (render dirty), lots that finished
     // building add capacity and residents, lots that are gone take theirs away. Then fixes over-employment and matches.
@@ -149,6 +183,7 @@ public:
 
     // Unemployed adults take vacancies: own supercell first, then ring by ring.
     void Match() {
+        if (externalPeople) return; // the records match jobs (sim_jobs.h)
         const int nsc = (int)supers_.size();
         std::vector<uint32_t> scVac((size_t)nsc, 0), scUnemp((size_t)nsc, 0);
         for (size_t c = 0; c < sim.size(); ++c) {
@@ -380,7 +415,7 @@ private:
         r.cap = LotCapacity(r.type, r.w, r.d, r.level);
         static const int kAge[3] = {20, 65, 15}, kEdu[3] = {30, 50, 20}, kWealth[4] = {25, 35, 30, 10};
         // 5% of homes stay free (at least one in a lot of two or more): people moving house need somewhere to go
-        const uint32_t occupied = r.cap.homes >= 2 ? r.cap.homes - std::max<uint32_t>(1u, r.cap.homes / 20u) : r.cap.homes;
+        const uint32_t occupied = externalPeople ? 0u : r.cap.homes >= 2 ? r.cap.homes - std::max<uint32_t>(1u, r.cap.homes / 20u) : r.cap.homes;
         Split(occupied, kAge, r.res);
         Split(r.res[kAdults], kEdu, r.edu);
         Split(occupied, kWealth, r.wealth);
@@ -402,10 +437,10 @@ private:
         for (int a = 0; a < kAgeBands; ++a) c.residents[a] = Sub(c.residents[a], r.res[a]);
         for (int e = 0; e < 3; ++e) c.edu[e] = Sub(c.edu[e], r.edu[e]);
         for (int w = 0; w < 4; ++w) c.wealth[w] = Sub(c.wealth[w], r.wealth[w]);
-        if (c.working > c.residents[kAdults]) Quit(r.cell, (uint32_t)(c.working - c.residents[kAdults]));
+        if (!externalPeople && c.working > c.residents[kAdults]) Quit(r.cell, (uint32_t)(c.working - c.residents[kAdults]));
         for (int k = 0; k < kJobKinds; ++k) {
             c.jobCap[k] = Sub(c.jobCap[k], r.cap.jobs[k]);
-            if (c.employed[k] > c.jobCap[k]) Fire(r.cell, k, (uint32_t)(c.employed[k] - c.jobCap[k]));
+            if (!externalPeople && c.employed[k] > c.jobCap[k]) Fire(r.cell, k, (uint32_t)(c.employed[k] - c.jobCap[k]));
             c.vacancies[k] = Sub(c.jobCap[k], c.employed[k]);
         }
         r.built = false;

@@ -114,7 +114,7 @@ struct SimTuningTable {
 #define TBD_SIM_TUNING_LIFE(X)                                                                                              \
     X(enabled, 1.0)                                                                                                         \
     X(instantFill, 0.0)                /* 1: a finished home fills at once (tests) */
-TBD_SIM_TUNING_TABLE(LifeTuning, "life.", TBD_SIM_TUNING_LIFE)
+TBD_SIM_TUNING_TABLE(LifePhaseTuning, "life.", TBD_SIM_TUNING_LIFE) // not LifeTuning: that is sim_life_tuning.h's full set
 
 // ---- P2 growth, land value, rent, demand (land.) ----------------------------------------------------------------------
 #define TBD_SIM_TUNING_LAND(X)                                                                                              \
@@ -149,7 +149,7 @@ TBD_SIM_TUNING_TABLE(GovTuning, "gov.", TBD_SIM_TUNING_GOV)
 // All seven, read from one text. `unknown` gets the prefixed names no table knows (names with no phase prefix are
 // SimTuning's business and are not reported here).
 struct PhaseTuning {
-    LifeTuning life;
+    LifePhaseTuning life;
     LandTuning land;
     EnvTuning env;
     SvcTuning svc;

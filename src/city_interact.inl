@@ -445,7 +445,9 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
         if (cap.homes) {
             int cell = -1;
             uint32_t first = 0, count = 0;
-            const bool known = SimPeople::LotSlots(g_citySim, l.id, cell, first, count);
+            const int records = SimP1LotResidents(l.id); // Phase 1: the citizen records (-1: off, the old counters)
+            const bool known = records >= 0 || SimPeople::LotSlots(g_citySim, l.id, cell, first, count);
+            if (records >= 0) count = (uint32_t)records;
             d.rows.push_back({"Residents", (known ? std::to_string(count) : std::string("0")) + " of " + std::to_string(cap.homes)});
         }
         if (cap.Jobs()) d.rows.push_back({"Jobs", std::to_string(cap.Jobs()) + (zt.cat == ZoneCat::Commercial ? " (shop)" : zt.cat == ZoneCat::Office ? " (office)" : " (industry)")});
