@@ -10,6 +10,7 @@
 
 #include "city/sim_life.h"
 #include "city/sim_life_save.h"
+#include "city/sim_life_views.h"
 
 namespace lifetest {
 using namespace tbd::city;

@@ -3,7 +3,7 @@
 //   handles and generations (a freed citizen's id never matches the next occupant); the bootstrap from lots equals the old
 //   CitySim counters (ages and education exactly, wealth exactly on lots of 5+); the incremental views equal a full
 //   recount after 10k random operations (births, deaths, hires, fires, moves, evictions, building removal); determinism
-//   (same seed same hash, other seed other hash); save / load through plain byte vectors continues identically; a bench
+//   (same seed same hash, other seed other hash); the UI views and the active tier (sim_life_views.h); save / load through plain byte vectors continues identically; a bench
 //   of ms per tick at 50k residents (target 0.25 ms average).
 // Build and run: tests\sim_citizens_test.bat
 #include <chrono>
@@ -138,6 +138,50 @@ static void TestDeterminism() {
     std::printf("  determinism: hash %016llx twice, other seed %016llx\n", (unsigned long long)a, (unsigned long long)c);
 }
 
+// UI views and the active tier: totals add up, the inspector lists exactly the building's records, the active set stays
+// within 512, workers are at work at 10:00 on a weekday and everyone sleeps at 03:00, TenantOf walks the same records.
+static void TestViews() {
+    Town t;
+    t.sim.w.citySeed = 3;
+    t.Build(8, 40, 30);
+    t.sim.Bootstrap();
+    int64_t minute = 0;
+    t.RunDays(minute, 3);
+    LifeWorld& w = t.sim.w;
+    LifePopulationStats ps;
+    LifePopulation(w, ps);
+    uint32_t sum = 0;
+    for (int b = 0; b < LifePopulationStats::kBins; ++b) sum += ps.male[b] + ps.female[b];
+    CHECK(sum == w.cit.Live() && ps.births.size() == w.history.size() && ps.working == w.Working());
+    std::vector<uint32_t> near;
+    for (const LifeBuilding& L : w.bld) if (L.id && L.homes) near.push_back(L.id);
+    std::vector<LifeHouseholdInfo> info;
+    uint32_t stat = 0, listed = 0;
+    LifeBuildingInfo(w, near[0], info, stat);
+    for (const LifeHouseholdInfo& h : info) listed += (uint32_t)h.members.size();
+    CHECK(listed == w.B(near[0])->used && listed > 0);
+    CHECK(t.sim.TenantOf(near[0], 0) == info[0].members[0].id && !t.sim.TenantOf(near[0], listed).Valid());
+    LifeActiveSet as;
+    const int64_t day = minute - minute % 1440 + 1440 * (w.cal.Weekend(minute) ? 2 : 0); // a weekday start
+    as.Refresh(w, near, day + 600);
+    int working = 0, atWork = 0, asleep = 0;
+    for (size_t i = 0; i < as.members.size(); ++i) {
+        const uint32_t ci = CitizenId(as.members[i]).Index();
+        if (w.cit.work[ci] && !w.cal.Weekend(day + 600)) ++working, atWork += as.act[i] == kActWork;
+        asleep += LifeActivityAt(w, ci, day + 180) == kActSleep;
+    }
+    std::vector<LifeActivityChange> ch;
+    size_t changes = 0;
+    const auto a = std::chrono::steady_clock::now();
+    for (int64_t m = day; m < day + 1440; ++m) as.Tick(w, m, ch), changes += ch.size();
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count() / 1440.0;
+    std::printf("  views: pyramid sums to %u, inspector lists %u, active set %zu (cap 512): %d/%d workers at work at 10:00, %d asleep at 03:00, "
+                "%zu activity changes a day, %.4f ms per minute\n", sum, listed, as.members.size(), atWork, working, asleep, changes, ms);
+    CHECK(as.members.size() <= 512 && as.members.size() > 100);
+    CHECK(atWork == working && asleep == (int)as.members.size() && changes > as.members.size());
+    CHECK(ms < 0.1);
+}
+
 // Save after 20 days, load into a fresh sim, run both 20 more days: identical. A truncated chunk means start fresh.
 static void TestSaveLoad() {
     Town a;
@@ -212,6 +256,7 @@ int main(int argc, char** argv) {
         BootstrapCity(true);
         TestDeltaView();
         TestDeterminism();
+        TestViews();
         TestSaveLoad();
     }
     Bench(33, 40, 10);
