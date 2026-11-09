@@ -20,6 +20,7 @@
 
 #include "rail_port.h"
 #include "road_network.h"
+#include "road_snap.h" // [auto snap] building access, angle steps, spacing, dashed guides
 
 namespace tbd {
 namespace city {
@@ -38,6 +39,10 @@ enum SnapBit : uint32_t {
     // continues the old one's tangent (roads within 35 deg, track always); track joins track only through a switch
     // (within 35 deg of a through route) and never overlaps it.
     SnapConnect = 1u << 7,
+    // [auto snap] along a placed building's entrance edge, sidewalk flush with the footprint (road_snap.h AccessOf)
+    SnapBuilding = 1u << 8,
+    // [auto snap] parallel / perpendicular to the nearest road, and the same spacing as its parallel neighbour
+    SnapAlign = 1u << 9,
 };
 enum class Tab : int { Small, Medium, Large, Highway, Quay, Path, Rail, Intersection, Roundabout, Count }; // the first seven follow city::Cat
 enum class AssetKind { Road, Intersection, Roundabout };
@@ -90,6 +95,8 @@ struct Snap {
     bool lane = false; // locked onto a highway lane's centre: the new road leaves / joins along that lane
     V2 laneDir{};      // the lane's direction there (a -> b of its road)
     int port = -1;     // [yard] a rail yard's track end (RoadTool::ports); the new track carries the yard track straight on
+    int lot = -1;      // [auto snap] on this building's access line (RoadTool::lots)
+    float angleDeg = -1; // [auto snap] the snapped angle from the reference (the label), -1: none
 };
 // Snap::kind values that join the new piece to the network (the connection snaps' marker and the aim dot's label).
 inline bool IsConnection(const char* k) {
@@ -102,7 +109,9 @@ inline bool IsConnection(const char* k) {
 inline const char* SnapLabel(const char* k) {
     static const char* const kinds[][2] = {{"node", "Junction"}, {"end", "Connect end"}, {"switch", "Switch"}, {"middle", "Mid-point"},
                                            {"road", "T-junction"}, {"lane", "Lane"}, {"guide", "Guideline"}, {"length", "Length"},
-                                           {"angle", "Angle"}, {"net side", "Lot depth"}, {"grid", "Grid"}, {"yard", "Rail yard track"}};
+                                           {"angle", "Angle"}, {"net side", "Lot depth"}, {"grid", "Grid"}, {"yard", "Rail yard track"},
+                                           {"access", "Building access"}, {"parallel", "Parallel"}, {"perpendicular", "Perpendicular"},
+                                           {"spacing", "Equal spacing"}, {"extension", "Extension"}, {"flush", "Sidewalks flush"}};
     if (!k || !k[0]) return "";
     for (const auto& p : kinds)
         if (std::strcmp(k, p[0]) == 0) return p[1];
@@ -135,7 +144,12 @@ public:
     bool parallel = false;
     float parallelOffset = 0; // 0: auto (profile width + 8 m)
     bool snapAll = true;
-    uint32_t snaps = SnapLength | SnapGeometry | SnapStraight | SnapNetSide | SnapGuide | SnapConnect;
+    uint32_t snaps = SnapLength | SnapGeometry | SnapStraight | SnapNetSide | SnapGuide | SnapConnect | SnapBuilding | SnapAlign;
+    float angleStep = 15.0f;  // [auto snap] degrees: 15 / 30 / 45 / 90 (the kit's angle chip cycles it)
+    float lengthStep = 8.0f;  // [auto snap] metres a piece's length rounds to (one zone cell)
+    void CycleAngleStep() { angleStep = angleStep < 20 ? 30.0f : angleStep < 40 ? 45.0f : angleStep < 60 ? 90.0f : 15.0f; }
+    // [auto snap] placed buildings a road lines up with (the host fills it, like ports)
+    std::vector<BuildingLot> lots;
     // Metres the connection snaps reach (0: the mouse's own radii). The host sets it from a finger's width at the aim dot
     // or the touch point, so the snap radius follows the zoom.
     float snapRadius = 0;
@@ -156,6 +170,9 @@ public:
     }
     static constexpr float kRailSwitchCos = 0.819f; // cos 35 deg: the sharpest a train turns through a switch
     static constexpr float kAlignCos = 0.819f;      // a road within 35 deg of a dead end's tangent carries it on
+    static constexpr float kTeeCos = 0.906f;        // [T] cos 25 deg: a road this near square to another meets it square
+    static constexpr float kFlushIn = 1.5f, kFlushOut = 1.0f; // [parallel] an edge gap in [-in, out] closes: sidewalks flush
+    static constexpr float kMedianMax = 4.0f;       // [parallel] a gap up to this (m) between parallel roads is a median
     float gridSpacing = 96.0f; // 12 zone cells
     float rotationDeg = 0;     // intersections / roundabouts
     GroundFn ground;
@@ -555,6 +572,13 @@ public:
                 out.push_back(a);
             }
         }
+        if (cursor.angleDeg >= 0 && !pts.empty()) { // [auto snap] the snapped angle, by the protractor
+            WorldLabel a;
+            const V2 p = XZ(pts.back().p) + Norm(XZ(cursor.p) - XZ(pts.back().p)) * 11.0f;
+            a.p = {p.x, pts.back().p.y + 2.0f, p.z};
+            std::snprintf(a.text, sizeof(a.text), "%.0f deg", cursor.angleDeg);
+            out.push_back(a);
+        }
         if (std::fabs(elevation) > 0.01f) {
             WorldLabel e;
             e.p = {cursor.p.x, cursor.p.y + 4.0f, cursor.p.z};
@@ -613,7 +637,18 @@ public:
         const bool ok = PendingCurves(curves);
         const Vec3 good{0.18f, 0.5f, 1.0f}, bad{0.95f, 0.28f, 0.22f};
         for (const PreviewCurve& pc : curves) GhostCurve(pc, ok ? good : bad, tris, lines, 0.4f);
-        for (const Segment3& g : guides) line(g.a, g.b, {1.0f, 0.95f, 0.6f});
+        { // [auto snap] the guides, dashed (short pieces such as the protractor's arc stay whole)
+            std::vector<std::pair<V2, V2>> dash;
+            for (const Segment3& g : guides) {
+                dash.clear();
+                DashedGuide(XZ(g.a), XZ(g.b), 3.0f, 2.0f, dash);
+                const float L = std::max(1e-3f, Len(XZ(g.b) - XZ(g.a)));
+                for (const auto& d : dash) {
+                    const float ya = g.a.y + (g.b.y - g.a.y) * Len(d.first - XZ(g.a)) / L, yb = g.a.y + (g.b.y - g.a.y) * Len(d.second - XZ(g.a)) / L;
+                    line({d.first.x, ya, d.first.z}, {d.second.x, yb, d.second.z}, {1.0f, 0.95f, 0.6f});
+                }
+            }
+        }
         // handles and the control polygon
         const Vec3 handle{1, 1, 1};
         for (size_t i = 0; i < pts.size(); ++i) {
@@ -623,6 +658,8 @@ public:
         if (!pts.empty()) line({pts.back().p.x, pts.back().p.y + 0.5f, pts.back().p.z}, {cursor.p.x, cursor.p.y + 0.5f, cursor.p.z}, {0.7f, 0.8f, 1.0f});
         const bool snapped = cursor.kind && cursor.kind[0];
         circle({cursor.p.x, cursor.p.y + 0.5f, cursor.p.z}, snapped ? 2.2f : 1.4f, snapped ? Vec3{1.0f, 0.85f, 0.2f} : handle);
+        if (snapped && snapRadius > 0) // [auto snap] the capture reach around the snap: modest, never a far yank
+            circle({cursor.p.x, cursor.p.y + 0.45f, cursor.p.z}, std::max(4.0f, snapRadius * 0.6f), {0.55f, 0.5f, 0.3f});
         if (IsConnection(cursor.kind)) { // [connect] the join marker: a green ring; an open end shows the way it carries on
             const Vec3 join{0.35f, 1.0f, 0.55f};
             circle({cursor.p.x, cursor.p.y + 0.6f, cursor.p.z}, std::max(3.6f, Prof().Half() + 1.0f), join);
@@ -769,6 +806,10 @@ private:
         const bool h0 = EndTangent(a, true, d0) && Dot2(d0, chord) >= need;
         const bool h1 = EndTangent(b, false, d1) && Dot2(d1, chord) >= need;
         if (h0 && h1) return {A, A + d0 * (L * 0.36f), C - d1 * (L * 0.36f), C};
+        // [T] out of / into the side of a road: straight (square when near it) at that end, never a blend into the road
+        V2 e0 = h0 ? d0 : chord, e1 = h1 ? d1 : chord;
+        const bool t0 = !h0 && TeeDir(a, chord, e0), t1 = !h1 && TeeDir(b, chord, e1);
+        if (t0 || t1) return {A, A + e0 * (L * 0.3f), C - e1 * (L * 0.3f), C};
         if (h0 || h1) {
             const V2 d = h0 ? d0 : d1;
             const float cosPhi = Dot2(d, chord);
@@ -778,6 +819,240 @@ private:
         return Cubic::Line(A, C);
     }
 
+    // ------------------------------------------------------------------------------------------------ [auto snap] helpers
+    // The nearest live segment to p within reach (not `skip`): its tangent there. False when none.
+    bool NearestRoadDir(V2 p, float reach, int skipNode, V2& T, V2& q) const {
+        int best = -1;
+        float bt = 0, bd = reach;
+        for (size_t i = 0; i < net.segs.size(); ++i) {
+            const Segment& g = net.segs[i];
+            if (!g.alive || (skipNode >= 0 && (g.a == skipNode || g.b == skipNode))) continue;
+            const V2 a = XZ(net.nodes[g.a].p), b = XZ(net.nodes[g.b].p); // cheap reject on the end points' box
+            if (p.x < std::min(a.x, b.x) - reach - 60 || p.x > std::max(a.x, b.x) + reach + 60 || p.z < std::min(a.z, b.z) - reach - 60 || p.z > std::max(a.z, b.z) + reach + 60) continue;
+            float t, d;
+            net.Nearest((int)i, p, t, d);
+            if (d < bd) bd = d, bt = t, best = (int)i;
+        }
+        if (best < 0) return false;
+        const Cubic c = net.Curve(best);
+        T = Norm(c.Tan(bt)), q = c.At(bt);
+        return true;
+    }
+    // Equal spacing: the centre-to-centre distance from segment `seg` (point q, tangent T) to its parallel neighbour on
+    // the far side from `side`, or 0.
+    float NeighbourSpacing(int seg, V2 q, V2 T, V2 side) const {
+        std::vector<std::pair<V2, V2>> others;
+        for (size_t i = 0; i < net.segs.size(); ++i) {
+            if (!net.segs[i].alive || (int)i == seg) continue;
+            float t, d;
+            net.Nearest((int)i, q, t, d);
+            if (d > 200.0f) continue;
+            const Cubic c = net.Curve((int)i);
+            others.push_back({c.At(t), c.Tan(t)});
+        }
+        return ParallelSpacing(q, T, side, others);
+    }
+    // A building's access line near p (or the one the previous point is on: the road carries on along it). Moves p onto
+    // it, sets the snap and the guides (the line and the footprint edge). True when it snapped.
+    bool SnapAccess(V2& p, Snap& s, const Snap* from, float hwNew, float y) {
+        const float reachB = std::max(4.0f, snapRadius * 0.6f);
+        int bestLot = -1;
+        float bestOff = 1e9f;
+        V2 bestQ;
+        AccessLine bestA;
+        for (size_t i = 0; i < lots.size(); ++i) {
+            const BuildingLot& b = lots[i];
+            const bool carry = from && from->lot == (int)i;
+            if (!carry && Len(b.c - p) > 0.5f * (b.W + b.D) + hwNew + reachB) continue; // near the cursor only
+            const AccessLine a = AccessOf(b, hwNew);
+            float off, along;
+            const V2 q = OntoLine(a.o, a.dir, p, off, along);
+            float reach = reachB;
+            if (carry) reach = std::max(reachB, 2.0f * AngleTolerance(Len(p - XZ(from->p)), snapRadius)); // keeps parallel
+            else if (std::fabs(along) > a.halfLen + reachB) continue; // a new road starts beside the edge itself
+            if (off < reach && off < bestOff) bestOff = off, bestLot = (int)i, bestQ = q, bestA = a;
+        }
+        if (bestLot < 0) return false;
+        p = bestQ;
+        float along = Dot2(p - bestA.o, bestA.dir);
+        if (from && from->lot == bestLot && On(SnapLength)) { // whole lengthSteps along the line from the previous point
+            const float a0 = Dot2(XZ(from->p) - bestA.o, bestA.dir), d = along - a0;
+            along = a0 + (d < 0 ? -1.0f : 1.0f) * RoundLength(std::fabs(d), lengthStep);
+            p = bestA.o + bestA.dir * along;
+        }
+        s.kind = "access", s.lot = bestLot;
+        const float lo = std::min(-bestA.halfLen, along) - 8.0f, hi = std::max(bestA.halfLen, along) + 8.0f;
+        const V2 l0 = bestA.o + bestA.dir * lo, l1 = bestA.o + bestA.dir * hi; // the road's centre line
+        guides.push_back({{l0.x, y + 0.6f, l0.z}, {l1.x, y + 0.6f, l1.z}});
+        const V2 e = bestA.o - bestA.out * hwNew; // the footprint edge (= the sidewalk's outer edge)
+        const V2 e0 = e - bestA.dir * bestA.halfLen, e1 = e + bestA.dir * bestA.halfLen;
+        guides.push_back({{e0.x, y + 0.6f, e0.z}, {e1.x, y + 0.6f, e1.z}});
+        return true;
+    }
+    // The angle snap from the previous point (see SnapAt 3). Every reference is tried; the one nearest the cursor wins.
+    bool SnapAngle(V2& p, Snap& s, const Snap* from, const std::vector<std::pair<V2, V2>>& lines) {
+        const V2 o = XZ(from->p);
+        const float L = Len(p - o), tol = AngleTolerance(L, snapRadius);
+        if (L <= 2.0f) return false;
+        if (Current().kind == AssetKind::Road && On(SnapAlign)) { // [T] leaving a road's side: square to it within 25 deg
+            V2 n;
+            if (TeeDir(*from, (p - o) * (1.0f / L), n) && Dot2(n, (p - o) * (1.0f / L)) > kTeeCos) {
+                const float len = On(SnapLength) ? RoundLength(L, lengthStep) : L;
+                p = o + n * len, s.kind = "perpendicular", s.angleDeg = 90.0f;
+                const float y = from->p.y + 0.6f;
+                const V2 farEnd = o + n * (len + 30.0f);
+                guides.push_back({{o.x, y, o.z}, {farEnd.x, y, farEnd.z}});
+                return true;
+            }
+        }
+        struct Ref { V2 d; float step; int kind; }; // kind 0 angle, 1 align (parallel / perpendicular)
+        Ref refs[4];
+        int nr = 0;
+        V2 own{1, 0};
+        bool haveOwn = true;
+        if (from->node >= 0 && net.nodes[from->node].alive && !net.nodes[from->node].segs.empty()) own = net.OutDir(net.nodes[from->node].segs.front(), from->node) * -1.0f;
+        else if (from->seg >= 0 && net.segs[from->seg].alive) own = net.Curve(from->seg).Tan(from->t);
+        else if (contHas_) own = contDir_;
+        else if (pts.size() >= 2) own = Norm(o - XZ(pts[pts.size() - 2].p)); // the previous piece: straight on, 45, 90
+        else haveOwn = false;
+        if (haveOwn) refs[nr++] = {Norm(own), angleStep, 0};
+        refs[nr++] = {{1, 0}, angleStep, 0}; // the world axes
+        V2 T, q;
+        if (On(SnapAlign) && NearestRoadDir(p, 150.0f, from->node, T, q)) refs[nr++] = {T, 90.0f, 1};
+        int bi = -1;
+        float bestOff = 1e9f, bestDeg = 0;
+        V2 bestQ, bestDir;
+        for (int i = 0; i < nr; ++i) {
+            V2 sq, dir;
+            float deg;
+            // the align reference only snaps when it is tighter than the plain angle (priority: the road's own, then align)
+            if (!AngleSnap(o, p, refs[i].d, refs[i].step, tol, sq, deg, dir)) continue;
+            const float off = Len(sq - p) + (refs[i].kind == 1 ? 0.25f : i == 0 ? 0.0f : 0.1f);
+            if (off < bestOff) bestOff = off, bi = i, bestQ = sq, bestDir = dir, bestDeg = deg;
+        }
+        if (bi < 0) return false;
+        // a guideline crossing this ray near the cursor wins (and pins the length)
+        V2 cross;
+        float bestD = 6.0f;
+        for (const auto& ln : lines) {
+            V2 h;
+            if (LineHit(o, bestDir, ln.first, ln.second, h) && Dot2(h - o, bestDir) > 4.0f && Len(h - p) < bestD) bestD = Len(h - p), cross = h;
+        }
+        const float y = from->p.y + 0.6f;
+        if (bestD < 6.0f) {
+            p = cross, s.kind = "guide";
+            guides.push_back({{o.x, y, o.z}, {p.x, y, p.z}});
+        } else {
+            const float len = On(SnapLength) ? RoundLength(L, lengthStep) : L;
+            p = o + bestDir * len;
+            s.kind = refs[bi].kind == 1 ? (bestDeg < 45.0f || bestDeg > 135.0f ? "parallel" : "perpendicular") : On(SnapLength) ? "length" : "angle";
+            const V2 farEnd = o + bestDir * (len + 30.0f);
+            guides.push_back({{o.x, y, o.z}, {farEnd.x, y, farEnd.z}});
+        }
+        s.angleDeg = bestDeg;
+        // the protractor: the reference ray and an arc from it to the snapped direction
+        const V2 rd = refs[bi].d, r0 = o + rd * 14.0f;
+        guides.push_back({{o.x, y, o.z}, {r0.x, y, r0.z}});
+        const float a0 = Angle(rd), a1 = Angle(bestDir);
+        float da = a1 - a0;
+        while (da > 3.14159265f) da -= 6.2831853f;
+        while (da < -3.14159265f) da += 6.2831853f;
+        const int n = std::max(2, (int)(std::fabs(da) / 0.2f));
+        for (int i = 0; i < n; ++i) {
+            const float u0 = a0 + da * i / n, u1 = a0 + da * (i + 1) / n;
+            guides.push_back({{o.x + std::cos(u0) * 9.0f, y, o.z + std::sin(u0) * 9.0f}, {o.x + std::cos(u1) * 9.0f, y, o.z + std::sin(u1) * 9.0f}});
+        }
+        return true;
+    }
+    // [parallel] Beside a road with the edges nearly touching (gap in [-kFlushIn, kFlushOut]): moved across so the
+    // sidewalks are flush. True when it snapped.
+    bool SnapFlush(V2& p, Snap& s, float hwNew, float y) {
+        int seg = -1;
+        float bt = 0, bd = 1e9f;
+        for (size_t i = 0; i < net.segs.size(); ++i) {
+            if (!net.segs[i].alive) continue;
+            const Segment& g = net.segs[i];
+            const V2 a = XZ(net.nodes[g.a].p), b = XZ(net.nodes[g.b].p), lo{std::min(a.x, b.x), std::min(a.z, b.z)}, hi{std::max(a.x, b.x), std::max(a.z, b.z)};
+            if (p.x < lo.x - 80 || p.x > hi.x + 80 || p.z < lo.z - 80 || p.z > hi.z + 80) continue; // near the cursor only
+            float t, d;
+            net.Nearest((int)i, p, t, d);
+            if (d < bd) bd = d, bt = t, seg = (int)i;
+        }
+        if (seg < 0 || net.IsRailSeg(seg) || bt < 0.01f || bt > 0.99f) return false;
+        const float want = net.Prof(seg).Half() + hwNew, gap = bd - want;
+        if (gap < -kFlushIn || gap > kFlushOut) return false;
+        const Cubic c = net.Curve(seg);
+        const V2 q = c.At(bt), T = Norm(c.Tan(bt)), n = Norm(p - q);
+        p = q + n * want;
+        s.kind = "flush";
+        const V2 e = q + n * net.Prof(seg).Half(), e0 = e - T * 12.0f, e1 = e + T * 12.0f; // the shared edge
+        guides.push_back({{e0.x, y + 0.6f, e0.z}, {e1.x, y + 0.6f, e1.z}});
+        return true;
+    }
+    // [T] The direction a straight piece leaves / meets the side of a road (sp a "road" / "middle" snap): square to it
+    // when the chord is within kTeeCos of square, else the chord itself. False when sp is not on a road's side.
+    bool TeeDir(const Snap& sp, V2 chord, V2& d) const {
+        if (IsRail() || sp.seg < 0 || sp.seg >= (int)net.segs.size() || !net.segs[sp.seg].alive || sp.node >= 0) return false;
+        if (!sp.kind || (std::strcmp(sp.kind, "road") != 0 && std::strcmp(sp.kind, "middle") != 0)) return false;
+        V2 n = LeftOf(Norm(net.Curve(sp.seg).Tan(sp.t)));
+        if (Dot2(n, chord) < 0) n = n * -1.0f;
+        d = Dot2(n, chord) > kTeeCos ? n : chord;
+        return true;
+    }
+    // The live segment nearest p, skipping `made` and rail. -1: none.
+    int NearestOther(V2 p, const std::vector<int>& made, float& t, float& d) const {
+        int best = -1;
+        float bd = 1e9f, bt = 0;
+        for (size_t i = 0; i < net.segs.size(); ++i) {
+            if (!net.segs[i].alive || net.IsRailSeg((int)i) || std::find(made.begin(), made.end(), (int)i) != made.end()) continue;
+            float ti, di;
+            net.Nearest((int)i, p, ti, di);
+            if (di < bd) bd = di, bt = ti, best = (int)i;
+        }
+        t = bt, d = bd;
+        return best;
+    }
+    // [parallel] After a straight road is built beside a close parallel road (edge gap <= kMedianMax): each free end of
+    // the new road gets a short crossing to the old one (a regular junction there, and the two roads stay one connected
+    // network), and the gap between them, if any, becomes a median strip (Network::medians).
+    void LinkParallel(const PreviewCurve& pc, const std::vector<int>& made) {
+        const Profile& np = Profiles()[pc.profile];
+        if (np.cat == Cat::Rail || np.cat == Cat::Path || np.cat == Cat::Highway) return;
+        const V2 A = pc.c.p0, B = pc.c.p3, u = Norm(B - A);
+        if (Len(B - A) < 8.0f || std::fabs(Cross2(pc.c.p1 - A, u)) > 0.05f || std::fabs(Cross2(pc.c.p2 - A, u)) > 0.05f) return; // straight only
+        float tm, D;
+        const int old = NearestOther((A + B) * 0.5f, made, tm, D);
+        if (old < 0) return;
+        const Cubic oc0 = net.Curve(old);
+        if (std::fabs(Cross2(Norm(oc0.Tan(tm)), u)) > 0.05f) return; // parallel (3 deg)
+        const float gap = D - net.Prof(old).Half() - np.Half();
+        if (gap < -0.5f || gap > kMedianMax) return;
+        // the median: between the two edges, clear of the crossings at the ends
+        const V2 side = Norm((A + B) * 0.5f - oc0.At(tm));
+        const float off = net.Prof(old).Half() + std::max(0.0f, gap) * 0.5f;
+        float ta, tb, da, db;
+        net.Nearest(old, A, ta, da), net.Nearest(old, B, tb, db);
+        const V2 ma = A - side * (D - off), mb = B - side * (D - off);
+        const float clear = np.Half() + 1.0f;
+        if (gap >= 0.5f && Len(mb - ma) > 2 * clear + 2.0f) {
+            const V2 mu = Norm(mb - ma);
+            net.medians.push_back({ma + mu * clear, mb - mu * clear, gap - 0.2f, 0.5f * (pc.ya + pc.yb)});
+        }
+        // the crossings at the new road's free ends
+        std::vector<int> extra;
+        for (const V2& e : {A, B}) {
+            const int n = net.NearestNode(e, 0.75f);
+            if (n < 0 || LiveSegs(n) != 1) continue; // that end already joins something
+            float t, d;
+            const int o2 = NearestOther(e, made, t, d);
+            if (o2 < 0 || t <= 0.0f || t >= 1.0f || d > D + 1.0f) continue;
+            const V2 f = net.Curve(o2).At(t);
+            const int fn = FindOrMake({f.x, net.YAt(net.segs[o2], t), f.z}, pc.profile);
+            AddWithCrossings(n, fn, Cubic::Line(e, f), pc.profile, &extra);
+        }
+        Level(extra);
+        ++net.version;
+    }
     // ------------------------------------------------------------------------------------------------ snapping
     Snap SnapAt(Vec3 hit, bool endpoint) {
         Snap s;
@@ -833,72 +1108,51 @@ private:
                 return s;
             }
             if (seg >= 0) {
-                bool mid = false;
-                if (connect && as.kind == AssetKind::Road) { // [connect] the segment's middle pulls (a T at its centre)
+                bool mid = false, tee = false;
+                // [T] onto the side of a road from the previous point: within kTeeDeg of square, slide to the foot of the
+                // perpendicular so the new road meets it at a right angle (beyond that the real angle stays: a Y)
+                if (!pts.empty() && as.kind == AssetKind::Road && !IsRail() && On(SnapAlign)) {
+                    float tf, df;
+                    net.Nearest(seg, XZ(pts.back().p), tf, df);
+                    const Cubic sc = net.Curve(seg);
+                    const V2 o = XZ(pts.back().p), foot = sc.At(tf), ch = sc.At(t) - o;
+                    if (tf > 0.01f && tf < 0.99f && Len(ch) > 1.0f && Len(foot - o) > 1.0f && Dot2(Norm(ch), Norm(foot - o)) > kTeeCos) t = tf, tee = true;
+                }
+                if (!tee && connect && as.kind == AssetKind::Road) { // [connect] the segment's middle pulls (a T at its centre)
                     const float len = net.Curve(seg).Length();
                     if (std::fabs(t - 0.5f) * len < std::max(3.0f, snapRadius * 0.5f)) t = 0.5f, mid = true;
                 }
                 const V2 q = net.Curve(seg).At(t);
                 s.p = {q.x, net.YAt(net.segs[seg], t), q.z}, s.seg = seg, s.t = t;
                 s.kind = !connect ? "road" : mid ? "middle" : IsRail() ? "switch" : "road";
+                if (tee) s.angleDeg = 90.0f;
                 return s;
             }
         }
         const Snap* from = pts.empty() ? nullptr : &pts.back();
         bool done = false;
+        // 1b. [auto snap] a building's access line: the road along its entrance edge, sidewalk flush with the footprint
+        if (as.kind == AssetKind::Road && On(SnapBuilding)) done = SnapAccess(p, s, from, hwNew, hit.y);
+        // 1c. [parallel] beside a road, nearly touching: the sidewalks flush (no sliver of gap, no overlap)
+        if (!done && as.kind == AssetKind::Road && !IsRail() && On(SnapAlign)) done = SnapFlush(p, s, hwNew, hit.y);
         // 2. guidelines from nearby roads: extensions of dead ends and perpendiculars through nodes
         std::vector<std::pair<V2, V2>> lines; // point, direction
-        if (On(SnapGuide)) {
+        std::vector<char> ext;                // [auto snap] lines[i] carries a dead end straight on
+        if (!done && On(SnapGuide)) {
             for (size_t i = 0; i < net.nodes.size(); ++i) {
                 const Node& nd = net.nodes[i];
                 if (!nd.alive || Len(XZ(nd.p) - p) > 220.0f) continue;
                 for (int sg : nd.segs) {
                     const V2 u = net.OutDir(sg, (int)i);
-                    if (nd.segs.size() == 1) lines.push_back({XZ(nd.p), u * -1.0f});
-                    lines.push_back({XZ(nd.p), RightOf(u)});
-                    lines.push_back({XZ(nd.p), LeftOf(u)});
+                    if (nd.segs.size() == 1) lines.push_back({XZ(nd.p), u * -1.0f}), ext.push_back(1);
+                    lines.push_back({XZ(nd.p), RightOf(u)}), ext.push_back(0);
+                    lines.push_back({XZ(nd.p), LeftOf(u)}), ext.push_back(0);
                 }
             }
         }
-        // 3. straight directions from the previous point: 15 degree steps from its road (or the world axes)
-        if (from && On(SnapStraight)) {
-            const V2 o = XZ(from->p);
-            V2 ref{1, 0};
-            if (from->node >= 0 && net.nodes[from->node].alive && !net.nodes[from->node].segs.empty()) ref = net.OutDir(net.nodes[from->node].segs.front(), from->node) * -1.0f;
-            else if (from->seg >= 0 && net.segs[from->seg].alive) ref = net.Curve(from->seg).Tan(from->t);
-            else if (contHas_) ref = contDir_;
-            const V2 d = p - o;
-            const float L = Len(d);
-            if (L > 2.0f) {
-                const float rel = Angle(d) - Angle(ref), stepA = 15.0f * 0.01745329f;
-                const float snapped = std::round(rel / stepA) * stepA;
-                const float off = std::fabs(rel - snapped) * L; // metres off the snapped ray at the cursor
-                if (off < std::max(2.5f, L * 0.035f)) {
-                    const float a = Angle(ref) + snapped;
-                    const V2 dir{std::cos(a), std::sin(a)};
-                    float len = L;
-                    // a guideline crossing this ray near the cursor wins (and pins the length)
-                    V2 best;
-                    float bestD = 6.0f;
-                    for (const auto& ln : lines) {
-                        V2 q;
-                        if (LineHit(o, dir, ln.first, ln.second, q) && Dot2(q - o, dir) > 4.0f && Len(q - p) < bestD) bestD = Len(q - p), best = q;
-                    }
-                    if (bestD < 6.0f) {
-                        p = best;
-                        guides.push_back({{o.x, from->p.y + 0.6f, o.z}, {p.x, from->p.y + 0.6f, p.z}});
-                        s.kind = "guide";
-                    } else {
-                        if (On(SnapLength)) len = std::max(8.0f, std::round(L / 8.0f) * 8.0f);
-                        p = o + dir * len;
-                        s.kind = On(SnapLength) ? "length" : "angle";
-                        const V2 farEnd = o + dir * (len + 30.0f);
-                        guides.push_back({{o.x, from->p.y + 0.6f, o.z}, {farEnd.x, from->p.y + 0.6f, farEnd.z}});
-                    }
-                    done = true;
-                }
-            }
-        }
+        // 3. straight directions from the previous point: angleStep steps from its road, the previous piece or the world
+        //    axes, or parallel / perpendicular to the nearest road; a guideline crossing the ray pins it, else the length rounds
+        if (!done && from && On(SnapStraight)) done = SnapAngle(p, s, from, lines);
         if (!done && !lines.empty()) { // single guideline, or two crossing near the cursor
             V2 best = p;
             float bd = 3.0f;
@@ -911,6 +1165,7 @@ private:
                 if (Len(q - p) < bd) bd = Len(q - p), best = q, hitLine = &ln;
             }
             if (hitLine) {
+                const bool isExt = ext[(size_t)(hitLine - lines.data())] != 0;
                 for (const auto& ln : lines) { // a crossing of two guidelines snaps harder
                     if (&ln == hitLine) continue;
                     V2 q;
@@ -922,7 +1177,7 @@ private:
                 }
                 p = best;
                 guides.push_back({{hitLine->first.x, hit.y + 0.6f, hitLine->first.z}, {p.x, hit.y + 0.6f, p.z}});
-                s.kind = "guide";
+                s.kind = isExt ? "extension" : "guide";
                 done = true;
             }
         }
@@ -939,7 +1194,18 @@ private:
             if (bestSeg >= 0 && bd < 120.0f && bt > 0.02f && bt < 0.98f) {
                 const float base = net.Prof(bestSeg).Half() + hwNew;
                 const float k = std::round((bd - base) / 8.0f), target = base + std::max(0.0f, k) * 8.0f;
-                if (std::fabs(bd - target) < 1.5f) {
+                const Cubic bc = net.Curve(bestSeg);
+                const V2 bq = bc.At(bt), side = Norm(p - bq);
+                // [auto snap] equal spacing: as far from this road as its parallel neighbour on the other side
+                const float D = On(SnapAlign) ? NeighbourSpacing(bestSeg, bq, Norm(bc.Tan(bt)), side) : 0.0f;
+                if (D > 0 && std::fabs(bd - D) < std::max(2.0f, snapRadius * 0.3f)) {
+                    p = bq + side * D;
+                    s.kind = "spacing";
+                    guides.push_back({{bq.x, hit.y + 0.6f, bq.z}, {p.x, hit.y + 0.6f, p.z}});
+                    const V2 o = bq - side * D; // the neighbour's matching gap
+                    guides.push_back({{o.x, hit.y + 0.6f, o.z}, {bq.x, hit.y + 0.6f, bq.z}});
+                    done = true;
+                } else if (std::fabs(bd - target) < 1.5f) {
                     const Cubic c = net.Curve(bestSeg);
                     const V2 q = c.At(bt), n = Norm(p - q);
                     p = q + n * target;
@@ -1181,6 +1447,7 @@ private:
         std::vector<int> made;
         AddWithCrossings(na, nb, pc.c, pc.profile, &made);
         Level(made);
+        if (start && On(SnapAlign)) LinkParallel(pc, made); // [parallel] the tool's own pieces (not scripted builds)
     }
 
     void CommitIntersection(const std::vector<PreviewCurve>& arms) {

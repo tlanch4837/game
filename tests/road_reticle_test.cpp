@@ -277,6 +277,34 @@ int main() {
         CHECK(!(t.tool.cursor.node >= 0 && t.tool.net.HasRoadSeg(t.tool.cursor.node)));
     }
 
+    // ---- [auto snap] the dot snaps on its own: along a building's entrance edge, the whole piece parallel to it
+    {
+        Harness t;
+        t.tool.Open();
+        const float half = t.tool.Prof().Half();
+        t.tool.lots.push_back({{300, 300}, city::FrontFromDeg(30.0f), 24, 16, 0}); // a rotated building, door to the front
+        const city::V2 f = city::FrontFromDeg(30.0f), along{-f.z, f.x}, mid = city::V2{300, 300} + f * 8.0f;
+        const city::V2 a = mid + f * (half + 2.0f) - along * 6.0f; // near the line, the snap toggle untouched
+        t.AimAt(a.x, a.z);
+        CHECK(t.tool.cursor.kind && std::strcmp(t.tool.cursor.kind, "access") == 0);
+        t.Tick();
+        const city::V2 b = mid + f * (half - 1.5f) + along * 30.0f;
+        t.AimAt(b.x, b.z);
+        t.Tick();
+        int seg = -1;
+        for (size_t i = 0; i < t.tool.net.segs.size(); ++i)
+            if (t.tool.net.segs[i].alive) seg = (int)i;
+        CHECK(seg >= 0);
+        if (seg >= 0) {
+            const city::Cubic c = t.tool.net.Curve(seg);
+            for (float u : {0.0f, 0.5f, 1.0f}) CHECK(std::fabs(city::Dot2(c.At(u) - mid, f) - half) < 0.01f); // the whole road on the line
+        }
+        // free placement: the toggle off, the same aim is not pulled
+        t.tool.snapAll = false;
+        t.AimAt(a.x, a.z);
+        CHECK(!(t.tool.cursor.kind && t.tool.cursor.kind[0]));
+    }
+
     // ---- the buttons keep out of a large safe area
     {
         Harness t;

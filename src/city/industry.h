@@ -197,8 +197,9 @@ struct IndustryWorld {
     }
     // A hub snapped beside the nearest ordinary road to p. False when no road is near. quarter turns it from facing the
     // road by 90 degree steps (placement_rotation.h RoadSnap: its road-side edge stays half a metre off the kerb).
-    bool Snap(const Network& net, V2 p, IndSite& s, int quarter = 0) const {
-        const BuildingSnap r = SnapBesideRoad(net, p, kHubW, kHubD, quarter, 0, 0.5f, 60.0f); // [snap] building_snap.h
+    bool Snap(const Network& net, V2 p, IndSite& s, int quarter = 0, BuildingSnapLatch* latch = nullptr, bool fast = false, float reach = -1.0f) const {
+        const BuildingSnap r = latch ? SnapBesideRoadLatched(net, p, kHubW, kHubD, quarter, 0, 0.5f, *latch, fast, reach) // [snap tune]
+                                     : SnapBesideRoad(net, p, kHubW, kHubD, quarter, 0, 0.5f, 60.0f); // [snap] building_snap.h
         if (!r.snapped) return false;
         s.c = r.c, s.front = r.front;
         return true;

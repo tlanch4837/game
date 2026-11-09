@@ -51,6 +51,7 @@ void TransportCursor() {
     else if (g_transportTool.def >= 0) {
         tbd::city::PlanOptions o = g_transportTool.Options();
         if (BuildingFreePlace()) o.snapRoad = false; // [snap] the Rotate dial is out: free position and heading
+        o.latch = &g_bsLatch, o.fast = BuildingSnapFast(), o.reach = BuildingSnapReach(); // [snap tune]
         g_transportIn.plan = g_transport.Plan(TransportContext(), g_transportTool.def, p, g_transportTool.rotation, o);
     }
 }
@@ -66,8 +67,11 @@ void RailYardSync(float realDt) {
     if (netV != g_roads.net.version || twV != g_transport.version) { // the ends move only with the roads (the entrance) or the yards
         netV = g_roads.net.version, twV = g_transport.version;
         g_roads.ports.clear();
+        g_roads.lots.clear(); // [auto snap] the placed transport buildings: a new road lines up with their entrance edge
         for (const Placed& b : g_transport.items)
             if (b.alive) {
+                const BuildingDef& D = Defs()[b.def];
+                g_roads.lots.push_back({b.c, b.front, D.W(), D.D(), D.entrance});
                 const std::vector<RailPort> v = TransportWorld::PortsOf(&g_roads.net, b);
                 g_roads.ports.insert(g_roads.ports.end(), v.begin(), v.end());
             }

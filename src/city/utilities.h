@@ -235,15 +235,17 @@ public:
     // The best placement for def with the cursor at p. With snapRoad the building jumps to the nearest utility road within
     // 45 m, faces it (turned by rotationDeg's nearest quarter turns: 90 puts its side to the road) and sits with its
     // road-side edge a metre off the kerb (placement_rotation.h RoadSnap). Free, rotationDeg is its heading.
-    Placement Plan(const PlaceContext& cx, int def, V2 cursor, float rotationDeg, bool snapRoad) const {
+    Placement Plan(const PlaceContext& cx, int def, V2 cursor, float rotationDeg, bool snapRoad, BuildingSnapLatch* latch = nullptr, bool fast = false,
+                   float reach = -1.0f) const {
         const UtilDef& D = UtilDefs()[def];
         Placement r;
         r.front = FrontFromDeg(rotationDeg);
         r.c = cursor;
         if (snapRoad && cx.net) { // [snap] the shared helper (building_snap.h): entrance (the front) to the road
             const Network& net = *cx.net;
-            const BuildingSnap sr = SnapBesideRoad(net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), 0, 1.0f, std::max(45.0f, SnapRangeFor(D.W(), D.D())),
-                                                   [&](int s) { return CarriesUtilities(net, s); });
+            auto carries = [&](int s) { return CarriesUtilities(net, s); };
+            const BuildingSnap sr = latch ? SnapBesideRoadLatched(net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), 0, 1.0f, *latch, fast, reach, carries) // [snap tune]
+                                          : SnapBesideRoad(net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), 0, 1.0f, std::max(45.0f, SnapRangeFor(D.W(), D.D())), carries);
             if (sr.snapped) r.front = sr.front, r.c = sr.c, r.snapped = true;
         }
         r.y = cx.Ground(r.c);

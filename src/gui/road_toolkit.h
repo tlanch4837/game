@@ -20,6 +20,11 @@
 //            parallel, undo, redo, bulldoze, the aim dot (touch), expand (back to the full panel)
 //   palette  the tab (a popover row of the 9 tabs) and one row of icon tiles (drag to scroll)
 // The caption floats above as a small pill for 3 s. Targets are 40 pt. Both strips keep inside State::safe.
+// Compact (State::compact, touch: the user's "the whole menu should shrink and move down"): the same strips at about 60 %
+// - 28 pt glyph boxes in 34 pt strips, packed right on the bottom edge (the host tucks the dock away: the strip's dock
+// handle peeks it) - while every target still answers over 40 x 40 pt (the boxes sit 40 pt apart, the hit rect grows
+// past the glass). The snap button is then auto snap on / off (off: free placement); held, it opens the snap kinds; an
+// angle chip cycles the angle step (15 / 30 / 45 / 90). On a phone the palette rides above the tools (one more 34 pt row).
 // It edits the RoadTool directly; it draws into the GUI's one UI vertex list (no extra draw calls but the glass).
 // Platform free (tests/road_toolkit_test.cpp drives it headless).
 #pragma once
@@ -40,6 +45,9 @@ namespace road_kit {
 
 struct State {
     bool mini = false;     // the slim strips (touch default: the host sets it once)
+    bool compact = false;  // [road ui] the strips at ~60 % on the bottom edge (touch default, with mini)
+    bool dockAvail = false; // [road ui] the dock is tucked away while building: the strip shows its handle
+    bool dockShown = false; // ... and it is peeking now (the handle is lit)
     SafeInsets safe;       // points, the host sets it every frame
     bool dotAvail = false; // the aim dot exists here (touch): its toggle shows
     bool dotOn = true;     // the player's toggle: the screen centre is the cursor (gui/road_reticle.h)
@@ -64,6 +72,7 @@ struct Out {
     std::vector<float> sfx; // UI tick pitches (the host plays them like the dock's)
     bool changed = false;   // a control was used this frame
     bool close = false;     // the mini strip's close: the host closes the road tool
+    bool dock = false;      // [road ui] the dock handle was tapped: the host shows / tucks the dock
 };
 
 // The rectangles the toolkit takes this frame, in points (for tests and for the host's layout).
@@ -79,6 +88,14 @@ constexpr float kPanelW = 452, kPad = 12, kB = 44, kGap = 4, kLabelH = 16, kRowG
 constexpr float kTileW = 88, kTileH = 72;
 // mini: 40 pt targets in 52 pt strips
 constexpr float kMB = 40, kMPad = 6, kMGap = 4, kMH = kMB + 2 * kMPad, kMTileW = 60, kMValueW = 64;
+// [road ui] compact: 28 pt boxes 40 pt apart in 34 pt strips; hit rects at least kHit square; rows kCRowGap apart
+constexpr float kCB = 28, kCPad = 3, kCGap = 12, kCH = kCB + 2 * kCPad, kCTileW = 44, kCTileGap = 4, kCValueW = 56, kHit = 40, kCRowGap = 6;
+struct Dims {
+    float b, pad, gap, h, tileW, tileGap, valueW;
+};
+inline Dims MiniDims(const State& st) {
+    return st.compact ? Dims{kCB, kCPad, kCGap, kCH, kCTileW, kCTileGap, kCValueW} : Dims{kMB, kMPad, kMGap, kMH, kMTileW, kMGap, kMValueW};
+}
 
 // The snapping toggles, in the row's order (the first is "all")
 struct SnapDef {
@@ -135,30 +152,34 @@ inline float PanelHeight(const city::RoadTool& t, bool collapsed) {
 }
 
 // The mini tool strip's items, left to right (Place and Frame share it).
-enum MiniItem { kClose, kMode, kRotL, kRotV, kRotR, kDown, kValue, kUp, kZero, kEnd, kSnap, kPar, kUndo, kRedo, kDoze, kDot, kExpand };
+enum MiniItem { kClose, kMode, kRotL, kRotV, kRotR, kDown, kValue, kUp, kZero, kEnd, kSnap, kPar, kUndo, kRedo, kDoze, kDot, kExpand, kAngle, kDock };
 struct MiniSlot {
     MiniItem id;
     float w;
 };
 inline std::vector<MiniSlot> MiniItems(const city::RoadTool& t, const State& st, bool tablet) {
     const bool prefab = t.Current().kind != city::AssetKind::Road;
-    std::vector<MiniSlot> v = {{kClose, kMB}};
-    if (prefab) v.push_back({kRotL, kMB}), v.push_back({kRotV, 52}), v.push_back({kRotR, kMB});
-    else v.push_back({kMode, kMB});
-    v.push_back({kDown, kMB}), v.push_back({kValue, kMValueW}), v.push_back({kUp, kMB});
-    if (t.elevation != 0) v.push_back({kZero, kMB});
-    if (t.Pending()) v.push_back({kEnd, 48});
-    v.push_back({kSnap, kMB});
-    if (!prefab) v.push_back({kPar, kMB});
-    v.push_back({kUndo, kMB}), v.push_back({kRedo, kMB});
-    if (!prefab) v.push_back({kDoze, kMB});
-    if (st.dotAvail) v.push_back({kDot, kMB});
-    if (tablet) v.push_back({kExpand, kMB});
+    const Dims d = MiniDims(st);
+    const float B = d.b;
+    std::vector<MiniSlot> v = {{kClose, B}};
+    if (prefab) v.push_back({kRotL, B}), v.push_back({kRotV, st.compact ? 44.0f : 52.0f}), v.push_back({kRotR, B});
+    else v.push_back({kMode, B});
+    v.push_back({kDown, B}), v.push_back({kValue, d.valueW}), v.push_back({kUp, B});
+    if (t.elevation != 0) v.push_back({kZero, B});
+    if (t.Pending()) v.push_back({kEnd, st.compact ? 40.0f : 48.0f});
+    v.push_back({kSnap, B});
+    if (st.compact && !prefab) v.push_back({kAngle, B}); // [road ui] the angle step
+    if (!prefab) v.push_back({kPar, B});
+    v.push_back({kUndo, B}), v.push_back({kRedo, B});
+    if (!prefab) v.push_back({kDoze, B});
+    if (st.dotAvail) v.push_back({kDot, B});
+    if (tablet) v.push_back({kExpand, B});
+    if (st.dockAvail) v.push_back({kDock, B}); // [road ui] the tucked dock's handle, last
     return v;
 }
-inline float MiniWidth(const std::vector<MiniSlot>& v) {
-    float w = 2 * kMPad - kMGap;
-    for (const MiniSlot& m : v) w += m.w + kMGap;
+inline float MiniWidth(const std::vector<MiniSlot>& v, const Dims& d = {kMB, kMPad, kMGap, kMH, kMTileW, kMGap, kMValueW}) {
+    float w = 2 * d.pad - d.gap;
+    for (const MiniSlot& m : v) w += m.w + d.gap;
     return w;
 }
 
@@ -169,8 +190,24 @@ inline Layout Place(const Context& g, const city::RoadTool& t, const State& st, 
     const float s = g.Scale(), W = in.viewW / s, H = in.viewH / s;
     const SafeInsets& sa = st.safe;
     const float left = 12 + sa.L(), right = W - 12 - sa.R(), top = 8 + sa.T();
-    bottom = std::max(bottom, sa.B() + 8);
+    bottom = std::max(bottom, sa.B() + (st.mini && st.compact ? 4.0f : 8.0f));
     Layout L;
+    if (st.mini && st.compact) { // [road ui] the compact strips, right on the bottom edge
+        const Dims d = MiniDims(st);
+        L.panelW = std::min(MiniWidth(MiniItems(t, st, tablet), d), right - left);
+        L.panelH = d.h;
+        L.panelX = left, L.panelY = H - bottom - d.h;
+        L.palette = true;
+        L.palH = d.h;
+        L.palX = L.panelX + L.panelW + 8, L.palW = right - L.palX, L.palY = L.panelY;
+        if (L.palW < 240) { // a phone: the palette rides above the tools, one more slim row
+            L.palX = left, L.palW = std::min(right - left, 640.0f), L.palY = L.panelY - kCRowGap - d.h;
+            if (L.palY < top) L.palette = false;
+        }
+        L.top = L.palette ? std::min(L.panelY, L.palY) : L.panelY;
+        L.rightTop = L.palette ? L.palY : L.panelY;
+        return L;
+    }
     if (st.mini) {
         L.panelW = std::min(MiniWidth(MiniItems(t, st, tablet)), right - left);
         L.panelH = kMH;
@@ -231,7 +268,10 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
     }
     if (in.wheel != 0 && st.tiles.Contains(in.mouseX, in.mouseY)) st.scroll = std::clamp(st.scroll - in.wheel * 40, 0.0f, st.scrollMax);
 
+    const bool grow = st.mini && st.compact; // [road ui] small boxes, 40 pt hit rects
     auto tap = [&](float x, float y, float w, float h, bool* held) {
+        if (grow && w < kHit) x -= (kHit - w) * 0.5f, w = kHit;
+        if (grow && h < kHit) y -= (kHit - h) * 0.5f, h = kHit;
         const Rect r = R(x, y, w, h);
         const bool inside = r.Contains(in.mouseX, in.mouseY), pressedIn = r.Contains(in.pressX, in.pressY);
         if (held) *held = in.down && pressedIn && inside && !st.drag;
@@ -303,6 +343,7 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
     // ================================================================ mini: two slim strips
     if (st.mini) {
         const float W = in.viewW / s;
+        const Dims D = MiniDims(st);
         const SafeInsets& sa = st.safe;
         auto elevSay = [&] {
             char v[48];
@@ -311,58 +352,60 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
         };
         // ---- the tools strip
         const std::vector<MiniSlot> items = MiniItems(t, st, tablet);
-        const float sy = L.panelY + kMPad;
-        P.Glass(L.panelX, L.panelY, L.panelW, L.panelH, 16, kPanel, 22, 1.6f, true);
-        float bx = L.panelX + kMPad;
+        const float sy = L.panelY + D.pad;
+        P.Glass(L.panelX, L.panelY, L.panelW, L.panelH, st.compact ? 12.0f : 16.0f, kPanel, 22, 1.6f, true);
+        if (grow) g.Block(R(L.panelX, L.panelY - 3, L.panelW, L.panelH + 6)); // [road ui] the hit fringe is the kit's too
+        float bx = L.panelX + D.pad;
         float modeX = bx, snapX = bx;
         for (const MiniSlot& it : items) {
-            if (bx + it.w > L.panelX + L.panelW - kMPad + 0.5f) break; // a very narrow screen: what does not fit is in the full panel
+            if (bx + it.w > L.panelX + L.panelW - D.pad + 0.5f) break; // a very narrow screen: what does not fit is in the full panel
             switch (it.id) {
             case kClose:
                 { // [user] a red down arrow (hides the kit and ends the tool), not an X
                     bool held = false;
-                    const bool hit = tap(bx, sy, kMB, kMB, &held);
-                    box(bx, sy, kMB, kMB, false, held, false);
-                    DrawIcon(dl, Icon::ChevronDown, (bx + kMB * 0.5f) * s, (sy + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 2.8f * s), Rgba(255, 69, 58));
+                    const bool hit = tap(bx, sy, D.b, D.b, &held);
+                    box(bx, sy, D.b, D.b, false, held, false);
+                    DrawIcon(dl, Icon::ChevronDown, (bx + D.b * 0.5f) * s, (sy + D.b * 0.5f) * s, std::round(D.b * 0.5f * s), std::max(1.0f, 2.8f * s), Rgba(255, 69, 58));
                     if (hit) out.close = true, sfx(0.65f), out.changed = true;
                 }
                 break;
             case kMode: {
                 static const Icon kModeIcons[] = {Icon::Straight, Icon::CurveSimple, Icon::CurveComplex, Icon::Continuous, Icon::Grid, Icon::Replace, Icon::Swap, Icon::Bulldoze};
                 modeX = bx;
-                if (button(bx, sy, kMB, kMB, kModeIcons[std::clamp((int)t.mode, 0, 7)], st.pop == 1)) st.pop = st.pop == 1 ? 0 : 1, st.popX = bx, sfx(1.0f), out.changed = true;
+                if (button(bx, sy, D.b, D.b, kModeIcons[std::clamp((int)t.mode, 0, 7)], st.pop == 1)) st.pop = st.pop == 1 ? 0 : 1, st.popX = bx, sfx(1.0f), out.changed = true;
                 break;
             }
             case kRotL:
-                if (button(bx, sy, kMB, kMB, Icon::RotateLeft, false)) t.Rotate(15.0f), sfx(0.9f), out.changed = true;
+                if (button(bx, sy, D.b, D.b, Icon::RotateLeft, false)) t.Rotate(15.0f), sfx(0.9f), out.changed = true;
                 break;
             case kRotV: {
                 char v[16];
                 std::snprintf(v, sizeof(v), "%.0f deg", t.rotationDeg);
-                P.Box(bx, sy, it.w, kMB, 10, Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
-                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f, 11, kInk, true, 0.5f);
+                P.Box(bx, sy, it.w, D.b, 10, Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
+                P.Text(v, bx + it.w * 0.5f, sy + D.b * 0.5f, 11, kInk, true, 0.5f);
                 break;
             }
             case kRotR:
-                if (button(bx, sy, kMB, kMB, Icon::RotateRight, false)) t.Rotate(-15.0f), sfx(1.1f), out.changed = true;
+                if (button(bx, sy, D.b, D.b, Icon::RotateRight, false)) t.Rotate(-15.0f), sfx(1.1f), out.changed = true;
                 break;
             case kDown: {
-                const int n = repeatButton(1, bx, sy, kMB, kMB, Icon::ChevronDown, t.elevation <= city::RoadTool::kMinElevation);
+                const int n = repeatButton(1, bx, sy, D.b, D.b, Icon::ChevronDown, t.elevation <= city::RoadTool::kMinElevation);
                 for (int i = 0; i < n; ++i) t.Raise(-1);
                 if (n) sfx(0.9f), out.changed = true, elevSay();
                 break;
             }
             case kValue: { // the readout; a tap cycles the step
                 bool held = false;
-                const bool hit = tap(bx, sy, it.w, kMB, &held);
+                const bool hit = tap(bx, sy, it.w, D.b, &held);
                 const float e = t.elevation;
                 const Color col = t.InTunnel() ? Rgba(140, 190, 255) : t.OnBridge() ? Rgba(255, 214, 120) : e < 0 ? Rgba(170, 215, 255) : kInk;
-                P.Box(bx, sy, it.w, kMB, 10, held ? Rgba(255, 255, 255, 50) : Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
+                P.Box(bx, sy, it.w, D.b, 10, held ? Rgba(255, 255, 255, 50) : Rgba(0, 0, 0, 70), 1, Rgba(255, 255, 255, 26));
                 char v[24];
                 std::snprintf(v, sizeof(v), "%g m", e);
-                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f - 6, 14, col, true, 0.5f, it.w - 4);
+                const bool c = st.compact;
+                P.Text(v, bx + it.w * 0.5f, sy + D.b * 0.5f - (c ? 4.5f : 6.0f), c ? 11.0f : 14.0f, col, true, 0.5f, it.w - 4);
                 std::snprintf(v, sizeof(v), "step %g", t.Step());
-                P.Text(v, bx + it.w * 0.5f, sy + kMB * 0.5f + 10, 9, kMuted, false, 0.5f, it.w - 4);
+                P.Text(v, bx + it.w * 0.5f, sy + D.b * 0.5f + (c ? 7.5f : 10.0f), c ? 7.5f : 9.0f, kMuted, false, 0.5f, it.w - 4);
                 if (hit) {
                     t.CycleStep(), sfx(1.15f), out.changed = true;
                     std::snprintf(v, sizeof(v), "Elevation step %g m", t.Step());
@@ -371,42 +414,87 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
                 break;
             }
             case kUp: {
-                const int n = repeatButton(2, bx, sy, kMB, kMB, Icon::ChevronUp, t.elevation >= city::RoadTool::kMaxElevation);
+                const int n = repeatButton(2, bx, sy, D.b, D.b, Icon::ChevronUp, t.elevation >= city::RoadTool::kMaxElevation);
                 for (int i = 0; i < n; ++i) t.Raise(1);
                 if (n) sfx(1.1f), out.changed = true, elevSay();
                 break;
             }
             case kZero:
-                if (textButton(bx, sy, kMB, kMB, "0 m", false)) t.GroundLevel(), sfx(0.8f), out.changed = true, say("Ground level");
+                if (textButton(bx, sy, D.b, D.b, "0 m", false)) t.GroundLevel(), sfx(0.8f), out.changed = true, say("Ground level");
                 break;
             case kEnd:
-                if (textButton(bx, sy, it.w, kMB, "End", false)) t.Cancel(), sfx(0.65f), out.changed = true, say(rail ? "Track ended" : "Road ended");
+                if (textButton(bx, sy, it.w, D.b, "End", false)) t.Cancel(), sfx(0.65f), out.changed = true, say(rail ? "Track ended" : "Road ended");
                 break;
             case kSnap:
                 snapX = bx;
-                if (button(bx, sy, kMB, kMB, Icon::SnapAll, t.snapAll || st.pop == 2)) st.pop = st.pop == 2 ? 0 : 2, st.popX = bx, sfx(1.0f), out.changed = true;
+                if (st.compact) { // [road ui] auto snap on / off (off: free placement); held .5 s: the snap kinds
+                    bool held = false;
+                    const bool hit = tap(bx, sy, D.b, D.b, &held);
+                    if (held) {
+                        if (st.holdId != 3) st.holdId = 3, st.holdT = 0, st.repeats = 0;
+                        st.holdT += in.dt;
+                        if (st.holdT > 0.5f && !st.repeats) st.repeats = 1, st.pop = 2, st.popX = bx, sfx(1.0f), out.changed = true, say("Snap kinds");
+                    }
+                    box(bx, sy, D.b, D.b, t.snapAll, held, false);
+                    icon(Icon::SnapAll, bx, sy, D.b, D.b, false);
+                    if (hit) {
+                        if (st.pop == 2 && !(st.holdId == 3 && st.repeats)) st.pop = 0, sfx(0.8f), out.changed = true; // closes the kinds
+                        else if (!(st.holdId == 3 && st.repeats)) {
+                            t.snapAll = !t.snapAll, st.pop = 0, sfx(t.snapAll ? 1.25f : 0.85f), out.changed = true;
+                            say(t.snapAll ? "Auto snap on" : "Free placement: no snapping");
+                        }
+                        st.holdId = -1;
+                    }
+                } else if (button(bx, sy, D.b, D.b, Icon::SnapAll, t.snapAll || st.pop == 2)) st.pop = st.pop == 2 ? 0 : 2, st.popX = bx, sfx(1.0f), out.changed = true;
                 break;
+            case kAngle: { // [road ui] the angle step: a tap cycles 15 / 30 / 45 / 90
+                bool held = false;
+                const bool hit = tap(bx, sy, it.w, D.b, &held);
+                const bool dim = !t.snapAll || !t.On(city::SnapStraight);
+                box(bx, sy, it.w, D.b, false, held, dim);
+                char v[16];
+                std::snprintf(v, sizeof(v), "%g", t.angleStep);
+                P.Text(v, bx + it.w * 0.5f, sy + D.b * 0.5f - 3.5f, 11, dim ? Fade(kInk, 0.4f) : kInk, true, 0.5f);
+                P.Text("deg", bx + it.w * 0.5f, sy + D.b * 0.5f + 7.5f, 7.5f, kMuted, false, 0.5f);
+                if (hit && !dim) {
+                    t.CycleAngleStep(), sfx(1.15f), out.changed = true;
+                    std::snprintf(v, sizeof(v), "Angle snap: %g deg steps", t.angleStep);
+                    say(v);
+                }
+                break;
+            }
+            case kDock: { // [road ui] the dock's handle: a grabber bar and a chevron
+                bool held = false;
+                const bool hit = tap(bx, sy, it.w, D.b, &held);
+                box(bx, sy, it.w, D.b, st.dockShown, held, false);
+                const float cx = (bx + it.w * 0.5f) * s, cy = (sy + D.b * 0.5f) * s, u = D.b * 0.22f * s, w = std::max(1.0f, 2.0f * s);
+                dl.Line(cx - u * 1.3f, cy + u * 0.8f, cx + u * 1.3f, cy + u * 0.8f, w, kInk);
+                dl.Line(cx - u * 0.8f, cy + (st.dockShown ? -0.7f : 0.0f) * u, cx, cy + (st.dockShown ? 0.0f : -0.7f) * u, w, kInk);
+                dl.Line(cx, cy + (st.dockShown ? 0.0f : -0.7f) * u, cx + u * 0.8f, cy + (st.dockShown ? -0.7f : 0.0f) * u, w, kInk);
+                if (hit) out.dock = true, sfx(st.dockShown ? 0.75f : 0.9f), out.changed = true, say(st.dockShown ? "Dock tucked away" : "Dock");
+                break;
+            }
             case kPar:
-                if (button(bx, sy, kMB, kMB, Icon::Parallel, t.parallel)) {
+                if (button(bx, sy, D.b, D.b, Icon::Parallel, t.parallel)) {
                     t.parallel = !t.parallel, sfx(1.2f), out.changed = true;
                     say(t.parallel ? "Parallel: a second road to the right" : "Parallel off");
                 }
                 break;
             case kUndo:
-                if (button(bx, sy, kMB, kMB, Icon::Undo, false, !t.CanUndo()) && t.Undo()) sfx(0.65f), out.changed = true, say("Undo");
+                if (button(bx, sy, D.b, D.b, Icon::Undo, false, !t.CanUndo()) && t.Undo()) sfx(0.65f), out.changed = true, say("Undo");
                 break;
             case kRedo: {
                 bool held = false;
-                const bool hit = tap(bx, sy, kMB, kMB, &held);
+                const bool hit = tap(bx, sy, D.b, D.b, &held);
                 const bool dim = !t.CanRedo();
-                box(bx, sy, kMB, kMB, false, held, dim);
-                redoGlyph(bx, sy, kMB, dim);
+                box(bx, sy, D.b, D.b, false, held, dim);
+                redoGlyph(bx, sy, D.b, dim);
                 if (hit && !dim && t.Redo()) sfx(0.8f), out.changed = true, say("Redo");
                 break;
             }
             case kDoze: {
                 const bool dozing = t.mode == city::ToolMode::Bulldoze;
-                if (button(bx, sy, kMB, kMB, Icon::Bulldoze, dozing)) {
+                if (button(bx, sy, D.b, D.b, Icon::Bulldoze, dozing)) {
                     t.SetMode(dozing ? city::ToolMode::Straight : city::ToolMode::Bulldoze), sfx(1.1f), out.changed = true;
                     say(dozing ? "Bulldoze off" : rail ? "Bulldoze: aim at a track" : "Bulldoze: aim at a road");
                 }
@@ -414,9 +502,9 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
             }
             case kDot: {
                 bool held = false;
-                const bool hit = tap(bx, sy, kMB, kMB, &held);
-                box(bx, sy, kMB, kMB, st.dotOn, held, false);
-                DrawDotGlyph(dl, (bx + kMB * 0.5f) * s, (sy + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 1.9f * s), kInk);
+                const bool hit = tap(bx, sy, D.b, D.b, &held);
+                box(bx, sy, D.b, D.b, st.dotOn, held, false);
+                DrawDotGlyph(dl, (bx + D.b * 0.5f) * s, (sy + D.b * 0.5f) * s, std::round(D.b * 0.5f * s), std::max(1.0f, 1.9f * s), kInk);
                 if (hit) {
                     st.dotOn = !st.dotOn, sfx(st.dotOn ? 1.25f : 0.85f), out.changed = true;
                     say(st.dotOn ? "Aim dot: drag the map under the dot, tick to place" : "Aim dot off: tap the map to place");
@@ -424,44 +512,46 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
                 break;
             }
             case kExpand:
-                if (button(bx, sy, kMB, kMB, Icon::ChevronUp, false)) st.mini = false, st.collapsed = false, st.pop = 0, sfx(0.9f), out.changed = true, say("Full toolkit");
+                if (button(bx, sy, D.b, D.b, Icon::ChevronUp, false)) st.mini = false, st.collapsed = false, st.pop = 0, sfx(0.9f), out.changed = true, say("Full toolkit");
                 break;
             }
-            bx += it.w + kMGap;
+            bx += it.w + D.gap;
         }
         // ---- the palette strip: the tab, then one row of tiles
         st.tiles = {};
-        float tabX = L.palX + kMPad;
+        float tabX = L.palX + D.pad;
         if (L.palette) {
-            P.Glass(L.palX, L.palY, L.palW, L.palH, 16, kPanel, 22, 1.6f, true);
-            const float py = L.palY + kMPad;
+            P.Glass(L.palX, L.palY, L.palW, L.palH, st.compact ? 12.0f : 16.0f, kPanel, 22, 1.6f, true);
+            if (grow) g.Block(R(L.palX, L.palY - 3, L.palW, L.palH + 6));
+            const float py = L.palY + D.pad;
             {
                 bool held = false;
-                if (tap(tabX, py, kMB, kMB, &held)) st.pop = st.pop == 3 ? 0 : 3, st.popX = tabX, sfx(1.0f), out.changed = true;
-                box(tabX, py, kMB, kMB, st.pop == 3, held, false);
-                P.Icon(TabAtlasIcon(t.tab), tabX + kMB * 0.5f, py + kMB * 0.5f, 24, kInk, true);
+                if (tap(tabX, py, D.b, D.b, &held)) st.pop = st.pop == 3 ? 0 : 3, st.popX = tabX, sfx(1.0f), out.changed = true;
+                box(tabX, py, D.b, D.b, st.pop == 3, held, false);
+                P.Icon(TabAtlasIcon(t.tab), tabX + D.b * 0.5f, py + D.b * 0.5f, D.b * 0.6f, kInk, true);
             }
-            const float tx0 = tabX + kMB + kMGap + 2, areaW = L.palX + L.palW - kMPad - tx0;
+            const float tx0 = tabX + D.b + D.gap + 2, areaW = L.palX + L.palW - D.pad - tx0;
             if (st.lastTab != (int)t.tab) st.lastTab = (int)t.tab, st.scroll = 0;
             const auto& assets = city::Assets();
             std::vector<int> list;
             for (size_t i = 0; i < assets.size(); ++i)
                 if (assets[i].tab == t.tab) list.push_back((int)i);
-            const float contentW = list.size() * (kMTileW + kMGap) - kMGap;
+            const float contentW = list.size() * (D.tileW + D.tileGap) - D.gap;
             st.scrollMax = std::max(0.0f, contentW - areaW);
             st.scroll = std::clamp(st.scroll, 0.0f, st.scrollMax);
-            st.tiles = R(tx0, py, std::max(0.0f, areaW), kMB);
-            dl.SetClip(st.tiles.x, st.tiles.y, st.tiles.x + st.tiles.w, st.tiles.y + st.tiles.h);
+            const Rect tilesVis = R(tx0, py, std::max(0.0f, areaW), D.b);
+            st.tiles = grow ? R(tx0, py + (D.b - kHit) * 0.5f, std::max(0.0f, areaW), kHit) : tilesVis; // [road ui] 40 pt tall hits
+            dl.SetClip(tilesVis.x, tilesVis.y, tilesVis.x + tilesVis.w, tilesVis.y + tilesVis.h);
             for (size_t k = 0; k < list.size(); ++k) {
                 const int i = list[k];
                 const city::Asset& a = assets[i];
-                const float x = tx0 + k * (kMTileW + kMGap) - st.scroll;
-                if (x + kMTileW < tx0 || x > tx0 + areaW) continue;
+                const float x = tx0 + k * (D.tileW + D.tileGap) - st.scroll;
+                if (x + D.tileW < tx0 || x > tx0 + areaW) continue;
                 bool held = false;
                 const bool sel = i == t.asset;
-                if (tap(x, py, kMTileW, kMB, &held) && st.tiles.Contains(in.mouseX, in.mouseY)) t.Select(i), sfx(1.45f), out.changed = true, say(a.name);
-                P.Box(x, py, kMTileW, kMB, 10, sel ? Rgba(10, 132, 255, 80) : held ? Rgba(255, 255, 255, 40) : Rgba(255, 255, 255, 16), sel ? 2.0f : 1.0f, sel ? kAccent : Rgba(255, 255, 255, 31));
-                const Rect pic = R(x + 3, py + 3, kMTileW - 6, kMB - 6);
+                if (tap(x, py, D.tileW, D.b, &held) && st.tiles.Contains(in.mouseX, in.mouseY)) t.Select(i), sfx(1.45f), out.changed = true, say(a.name);
+                P.Box(x, py, D.tileW, D.b, 10, sel ? Rgba(10, 132, 255, 80) : held ? Rgba(255, 255, 255, 40) : Rgba(255, 255, 255, 16), sel ? 2.0f : 1.0f, sel ? kAccent : Rgba(255, 255, 255, 31));
+                const Rect pic = R(x + 3, py + 3, D.tileW - 6, D.b - 6);
                 if (a.kind == city::AssetKind::Road) road_ui::DrawProfileTile(dl, pic, city::Profiles()[a.profile], s);
                 else DrawIcon(dl, a.kind == city::AssetKind::Roundabout ? Icon::Roundabout : Icon::Intersection, pic.x + pic.w * 0.5f, pic.y + pic.h * 0.5f, std::round(22 * s), std::max(1.0f, 2.0f * s), kInk);
             }
@@ -471,22 +561,22 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
         float capTop = L.top;
         if (st.pop) {
             const int n = st.pop == 1 ? 7 : st.pop == 2 ? kSnapCount : (int)city::Tab::Count;
-            const float pw = n * (kMB + kMGap) - kMGap + 2 * kMPad, ph = kMH;
+            const float pw = n * (D.b + D.gap) - D.gap + 2 * D.pad, ph = D.h;
             const float anchor = st.pop == 1 ? modeX : st.pop == 2 ? snapX : tabX;
-            const float px = std::clamp(anchor - kMPad, 12 + sa.L(), std::max(12 + sa.L(), W - 12 - sa.R() - pw)), py = L.top - 8 - ph;
+            const float px = std::clamp(anchor - D.pad, 12 + sa.L(), std::max(12 + sa.L(), W - 12 - sa.R() - pw)), py = L.top - 8 - ph;
             P.Glass(px, py, pw, ph, 16, kPanel, 22, 1.6f, true);
             capTop = py;
             for (int i = 0; i < n; ++i) {
-                const float x = px + kMPad + i * (kMB + kMGap), y = py + kMPad;
+                const float x = px + D.pad + i * (D.b + D.gap), y = py + D.pad;
                 if (st.pop == 1) {
                     static const Icon kModeIcons[] = {Icon::Straight, Icon::CurveSimple, Icon::CurveComplex, Icon::Continuous, Icon::Grid, Icon::Replace, Icon::Swap};
                     static const char* const kTips[] = {"Straight", "Simple curve", "Complex curve", "Continuous", "Grid", "Replace: upgrade / flip", "Swap: drag the way"};
-                    if (button(x, y, kMB, kMB, kModeIcons[i], (int)t.mode == i)) t.SetMode((city::ToolMode)i), st.pop = 0, sfx(1.2f), out.changed = true, say(kTips[i]);
+                    if (button(x, y, D.b, D.b, kModeIcons[i], (int)t.mode == i)) t.SetMode((city::ToolMode)i), st.pop = 0, sfx(1.2f), out.changed = true, say(kTips[i]);
                 } else if (st.pop == 2) {
                     const SnapDef& d = Snaps()[i];
                     const bool lit = i == 0 ? t.snapAll : t.snapAll && (t.snaps & d.bit) != 0, dim = i > 0 && !t.snapAll;
-                    const bool hit = button(x, y, kMB, kMB, d.icon, lit, dim);
-                    if (d.icon == Icon::None) DrawConnectGlyph(dl, (x + kMB * 0.5f) * s, (y + kMB * 0.5f) * s, std::round(kMB * 0.5f * s), std::max(1.0f, 1.9f * s), dim ? Fade(kInk, 0.4f) : kInk);
+                    const bool hit = button(x, y, D.b, D.b, d.icon, lit, dim);
+                    if (d.icon == Icon::None) DrawConnectGlyph(dl, (x + D.b * 0.5f) * s, (y + D.b * 0.5f) * s, std::round(D.b * 0.5f * s), std::max(1.0f, 1.9f * s), dim ? Fade(kInk, 0.4f) : kInk);
                     if (hit) {
                         if (i == 0) t.snapAll = !t.snapAll;
                         else t.ToggleSnap(d.bit);
@@ -497,9 +587,9 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
                 } else {
                     bool held = false;
                     const bool on = (int)t.tab == i;
-                    if (tap(x, y, kMB, kMB, &held)) t.SelectTab((city::Tab)i), st.pop = 0, sfx(1.2f), out.changed = true, say(city::TabName((city::Tab)i));
-                    box(x, y, kMB, kMB, on, held, false);
-                    P.Icon(TabAtlasIcon((city::Tab)i), x + kMB * 0.5f, y + kMB * 0.5f, 24, kInk, !on);
+                    if (tap(x, y, D.b, D.b, &held)) t.SelectTab((city::Tab)i), st.pop = 0, sfx(1.2f), out.changed = true, say(city::TabName((city::Tab)i));
+                    box(x, y, D.b, D.b, on, held, false);
+                    P.Icon(TabAtlasIcon((city::Tab)i), x + D.b * 0.5f, y + D.b * 0.5f, D.b * 0.6f, kInk, !on);
                 }
             }
         }

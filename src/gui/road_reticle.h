@@ -3,7 +3,8 @@
 // (zoom, twist, tilt), and the tick button places the point at the dot; the cross takes the last point back (none
 // pending: undoes the last piece). The dot snaps like the mouse cursor (RoadTool::Move at the centre: nodes, open ends,
 // segments, guidelines) and shows it: the ring turns amber on a snap and green on a connection, with the snap's name and
-// the piece's length / slope under it. Only roads and rails use it (not buildings, zones, terrain or the bulldozer
+// the piece's length / slope under it. [auto snap] Every kind is on by default (building access, angle steps, parallel /
+// perpendicular, length, equal spacing, extension lines: city/road_snap.h); the kit's snap button off = free placement. Only roads and rails use it (not buildings, zones, terrain or the bulldozer
 // tools; not the road tool's Swap mode, which is a drag); the PC keeps the mouse, and the toolkit's dot button turns it
 // off (road_toolkit.h State::dotOn).
 // Platform free: tests/road_reticle_test.cpp drives the routing, the buttons and the snaps headless.
@@ -159,7 +160,15 @@ inline Layout Frame(Context& g, const dock::Atlas& atlas, city::RoadTool& t, Sta
         P.Text(text, L.cx, ly, 11, ink, true, 0.5f);
         ly += th + 4;
     };
-    if (snapped) chip(city::SnapLabel(t.cursor.kind), joins ? Rgba(30, 120, 70, 220) : Rgba(120, 90, 20, 220), kInk);
+    if (snapped) { // [auto snap] the kind, and the snapped angle when there is one
+        std::string k = city::SnapLabel(t.cursor.kind);
+        if (t.cursor.angleDeg >= 0) {
+            char a[24];
+            std::snprintf(a, sizeof(a), "  %.0f deg", t.cursor.angleDeg);
+            k += a;
+        }
+        chip(k, joins ? Rgba(30, 120, 70, 220) : Rgba(120, 90, 20, 220), kInk);
+    }
     if (bad) chip(t.error, Rgba(170, 40, 34, 230), kInk);
     else if (t.Pending()) {
         std::vector<city::WorldLabel> labels;

@@ -125,16 +125,24 @@ int main() {
             road_kit::Layout kl;
             reticle::State rs;
             reticle::Out ro;
+            reticle::Layout rl;
             auto kits = [&] {
                 dock::Frame(S.g, st, m, S.atlas, o);
-                kl = road_kit::Frame(S.g, S.atlas, tool, ks, o.bottomH + 8, d.pad, ko);
-                reticle::Frame(S.g, S.atlas, tool, rs, d.safe, kl.rightTop, true, {0, 0, 0}, ro);
+                kl = road_kit::Frame(S.g, S.atlas, tool, ks, o.bottomH + (m.tuck ? 4 : 8), d.pad, ko);
+                rl = reticle::Frame(S.g, S.atlas, tool, rs, d.safe, kl.rightTop, true, {0, 0, 0}, ro);
             };
             S.Check((std::snprintf(what, sizeof(what), "%s mini road kit + dot", ui), what), kits);
             ks.pop = 2; // the snapping popover
             S.Check((std::snprintf(what, sizeof(what), "%s mini kit, popover", ui), what), kits);
             ks.pop = 0, ks.caption = "A long caption about what the last tap did on the toolkit", ks.captionT = 0;
             S.Check((std::snprintf(what, sizeof(what), "%s mini kit, caption", ui), what), kits);
+            // [road ui] compact: the dock tucked away, the ~60 % strips on the bottom edge, the tick / undo clear above them
+            ks.caption.clear(), ks.compact = ks.dockAvail = true, m.tuck = true;
+            S.Check((std::snprintf(what, sizeof(what), "%s compact kit, dock tucked", ui), what), kits, 2);
+            CHECK(std::fabs(o.bottomH - d.safe.B()) < 0.01f); // the dock takes nothing but the safe area
+            CHECK(rl.okY + rl.okS <= kl.top + 0.5f && rl.backY + rl.backS + 16 <= kl.top + 0.5f); // the buttons (and the Undo label) clear the strips
+            std::printf("  compact kit: %.0f pt from the bottom (was the dock + the mini strips)\n", d.h / d.dpi - kl.top);
+            ks.compact = ks.dockAvail = false, m.tuck = false;
             ks.mini = false;
             m.slim = m.hidePlaceBar = false;
             S.Check((std::snprintf(what, sizeof(what), "%s full road kit", ui), what), kits);

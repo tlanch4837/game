@@ -363,6 +363,9 @@ struct PlanOptions {
     bool snapCoast = true; // harbours and shipyards snap to the nearest shore and face the water
     bool snapRoad = true;  // flat-site buildings snap beside the nearest road, entrance to it (building_snap.h); the host
                            // turns it off while the Rotate dial is out (free position and heading)
+    BuildingSnapLatch* latch = nullptr; // [snap tune] the interactive tool's: a modest, sticky capture (building_snap.h)
+    bool fast = false;                  // [snap tune] the finger drags fast: no snap
+    float reach = -1.0f;                // [snap tune] a finger's width in metres at the zoom (caps the capture)
 };
 struct Placement {
     bool valid = false;
@@ -416,7 +419,8 @@ public:
         if (D.site == Site::Track && !PlanTrack(cx, D, cursor, opt, r)) return r;
         if (D.site == Site::Coast && opt.snapCoast && !PlanCoast(cx, D, cursor, r)) return r;
         if (D.site == Site::Flat && opt.snapRoad && cx.net) { // [snap] beside the nearest road, entrance to it
-            const BuildingSnap s = SnapBesideRoad(*cx.net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), D.entrance);
+            const BuildingSnap s = opt.latch ? SnapBesideRoadLatched(*cx.net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), D.entrance, kBuildingSnapGap, *opt.latch, opt.fast, opt.reach)
+                                             : SnapBesideRoad(*cx.net, cursor, D.W(), D.D(), QuarterTurns(rotationDeg), D.entrance);
             if (s.snapped) r.c = s.c, r.front = s.front, r.snapped = r.roadSnapped = true;
         }
         Validate(cx, D, r);

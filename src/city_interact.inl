@@ -125,6 +125,34 @@ bool g_dialWasSnapped = false; // [snap] the ghost stood beside a road when the 
 // [snap] While the Rotate dial is out every placement tool's road snap is off (building_snap.h): the ghost stays where it
 // stood and turns freely (the Snap switch: 15 degree steps); closing the dial (Rotate again) returns to the road snap.
 bool BuildingFreePlace() { return g_dial.d.on; }
+// [snap tune] A fast drag (over ~1400 pt/s on the screen) is heading somewhere else: no road snap (building_snap.h
+// SnapBesideRoadLatched lets go). Sampled at most once per frame's worth of time.
+bool BuildingSnapFast() {
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point last = Clock::now();
+    static float lx = 0, ly = 0;
+    static bool fast = false;
+    const Clock::time_point now = Clock::now();
+    const float dt = std::chrono::duration<float>(now - last).count();
+    if (dt < 1.0f / 240.0f) return fast;
+    const tbd::gui::Input& in = g_gui.In();
+    const float s = g_gui.Scale() > 0 ? g_gui.Scale() : 1.0f;
+    const float v = std::hypot(in.mouseX - lx, in.mouseY - ly) / s / std::max(dt, 1e-3f);
+    fast = in.down && dt < 0.25f && v > 1400.0f;
+    lx = in.mouseX, ly = in.mouseY, last = now;
+    return fast;
+}
+namespace gdock { bool Touch(); } // game/glass_dock_host.inl
+// [snap tune] The capture's cap: a fingertip (28 pt) on touch, 24 px with the mouse, in metres at the screen centre.
+float BuildingSnapReach() {
+    const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f, d = 40.0f;
+    tbd::Vec3 a, b;
+    if (!GroundHit(g_engine.camera.ScreenRay(cx, cy, (float)g_engine.vpW, (float)g_engine.vpH), a) ||
+        !GroundHit(g_engine.camera.ScreenRay(cx + d, cy, (float)g_engine.vpW, (float)g_engine.vpH), b))
+        return -1.0f;
+    const float mpp = std::hypot(b.x - a.x, b.z - a.z) / d;
+    return mpp * (gdock::Touch() ? 28.0f * (g_gui.Scale() > 0 ? g_gui.Scale() : 1.0f) : 24.0f);
+}
 bool DialCanLeaveRoad() { return g_utilTool.active && g_utilTool.def >= 0; } // only the utilities' snap is a tool option
 float DialStepNow() { return tbd::city::DialStep(g_dialSnap, false, true); }    // [snap] free: 15 degree steps or none
 void DialApplySnap() { // the angle follows the Snap switch's steps

@@ -125,6 +125,9 @@ struct Model {
     // [road ux] a road / rail / terrain tool with its own compact kit is out: the PC UI bar slims to icons (44 pt) and
     // the placement bar / Phone UI split controls step aside (the kit has their buttons)
     bool slim = false, hidePlaceBar = false;
+    // [road ui] a road / rail tool's compact kit is out (touch): the dock tucks away entirely, the map keeps the screen;
+    // the kit's dock handle brings it back (the host clears tuck while it peeks) and it returns when the tool closes
+    bool tuck = false;
     void Resolve(const Atlas& a) { // preview cells by slug, as the mockup's pvImg(): name, name_road, name_highway
         for (Category& c : cats)
             for (Group& g : c.groups) {
@@ -322,6 +325,12 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
     auto R = [&](float x, float y, float w, float h) { return Rect{x * s, y * s, w * s, h * s}; };
     auto sfx = [&](float pitch) { if (m.sound) out.sfx.push_back(pitch); };
 
+    // [road ui] tucked: nothing drawn, nothing taken but the safe area (no category or menu open: those always show)
+    if (m.tuck && st.cat < 0 && !st.menu) {
+        st.slimT = 1, st.scrollArea = {};
+        out.bottomH = in.viewH / s - H;
+        return;
+    }
     // scroll drag: a press that travels 8 pt inside the tile area scrolls it and is no tap
     if (in.pressed) {
         st.drag = false;

@@ -511,8 +511,10 @@ void SafePixels(float& l, float& t, float& r, float& b) {
 tbd::gui::road_kit::State g_kit = [] { // [road ux] the mini strips and the aim dot by default on touch
     tbd::gui::road_kit::State k;
     k.mini = k.dotAvail = Touch();
+    k.compact = k.dockAvail = Touch(); // [road ui] the ~60 % strips on the bottom edge, the dock tucked behind its handle
     return k;
 }();
+bool g_dockPeek = false; // [road ui] the kit's dock handle brought the dock back while building
 tbd::gui::reticle::State g_dot;
 tbd::gui::terrain_kit::State g_terrainKit;
 float g_dockBottom = 0; // points the dock and the kits took from the bottom edge last frame (the toasts ride above them)
@@ -538,16 +540,19 @@ void TouchSnapRadius() {
 // strips. Hidden while a catalogue panel or the pause menu is open. Then the aim dot and its tick / cross.
 void RoadKit(bool menuOpen, float dockBottom) {
     g_kit.safe = g_model.safe;
+    if (!g_roads.active) g_dockPeek = false; // [road ui] the next road tool starts tucked again
     if (!g_roads.active || menuOpen || g_state.cat >= 0) return;
     // the panels' bottoms: over the PC UI placement bar (iPad / iPhone sizes), or over the Phone UI's corner buttons;
     // mini: right over the (slim) dock
     float bottom = g_state.pcUi ? (g_state.pad ? 146.0f : 116.0f) : 76.0f;
-    if (g_kit.mini) bottom = dockBottom + 8.0f;
+    if (g_kit.mini) bottom = dockBottom + (g_model.tuck ? 4.0f : 8.0f); // [road ui] tucked: right on the bottom edge
+    g_kit.dockShown = g_dockPeek;
     tbd::gui::road_kit::Out ko;
     const tbd::gui::road_kit::Layout kl = tbd::gui::road_kit::Frame(g_gui, g_atlas, g_roads, g_kit, bottom, g_state.pad, ko, g_model.textSize ? 1.15f : 1.0f);
     g_dockBottom = std::max(g_dockBottom, g_gui.In().viewH / g_gui.Scale() - kl.top); // the toasts ride over the kit
     if (g_model.sound)
         for (float p : ko.sfx) tbd::audio::PlayUi("sfx/ui_category_select", 0.6f, p);
+    if (ko.dock) g_dockPeek = !g_dockPeek; // [road ui]
     if (ko.close) {
         CloseTools();
         return;
@@ -629,6 +634,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     // [road ux] the safe area; a road kit in its mini strips or the terrain kit slims the bar and takes the placement bar's place
     FillSafe(g_gui.Scale());
     g_model.slim = g_model.hidePlaceBar = (g_roads.active && g_kit.mini) || g_terrainEdit.on;
+    g_model.tuck = g_roads.active && g_kit.mini && g_kit.compact && !g_dockPeek; // [road ui]
     tbd::gui::dock::Out o;
     tbd::gui::dock::Frame(g_gui, g_state, g_model, g_atlas, o);
     g_dockBottom = o.bottomH;

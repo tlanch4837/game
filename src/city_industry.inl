@@ -1178,7 +1178,8 @@ bool WasteSnap(tbd::city::V2 p, WasteBuilding& b, int quarter = 0) { // quarter:
         b.c = p, b.front = tbd::city::FrontFromDeg(g_indTool.rotation), b.y = RoadsGround(p.x, p.z);
         return true;
     }
-    const tbd::city::BuildingSnap r = tbd::city::SnapBesideRoad(g_roads.net, p, kWasteTypes[b.type].w, kWasteTypes[b.type].d, quarter, 0, 1.0f, 90.0f); // [snap] building_snap.h
+    const tbd::city::BuildingSnap r = tbd::city::SnapBesideRoadLatched(g_roads.net, p, kWasteTypes[b.type].w, kWasteTypes[b.type].d, quarter, 0, 1.0f, g_bsLatch,
+                                                                       BuildingSnapFast(), BuildingSnapReach()); // [snap tune] building_snap.h
     if (!r.snapped) return false;
     b.c = r.c, b.front = r.front;
     b.y = RoadsGround(r.roadPt.x, r.roadPt.z);
@@ -1275,7 +1276,7 @@ void IndustryCursor() {
         T.ghost.kind = (tbd::city::IndKind)T.kind;
         T.ghost.id = 0;
         if (BuildingFreePlace()) T.ghost.c = T.cur, T.ghost.front = tbd::city::FrontFromDeg(T.rotation), T.ghostShown = true; // [snap] dial out: free
-        else T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost, tbd::city::QuarterTurns(T.rotation));
+        else T.ghostShown = g_ind.Snap(g_roads.net, T.cur, T.ghost, tbd::city::QuarterTurns(T.rotation), &g_bsLatch, BuildingSnapFast(), BuildingSnapReach());
         if (T.ghostShown) {
             T.ghost.y = HubHeight(T.ghost);
             T.ghostOk = g_ind.Free(g_roads.net, T.ghost);

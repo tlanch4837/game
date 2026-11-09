@@ -293,6 +293,14 @@ public:
     std::vector<Segment> segs;
     uint64_t version = 1; // bumped on every change: the host rebuilds meshes when it moves
     GroundFn ground;      // for terrain-following ground roads (FollowY)
+    // [parallel] a narrow gap between two close parallel roads: a low (15 cm), mountable raised strip from a to b, w wide
+    // (the road tool adds them with crossings at the new road's ends, so the two roads stay one connected network).
+    // Drawn only while a road still runs along each side of it (MedianLive), so bulldozing either road drops it.
+    struct Median {
+        V2 a, b;
+        float w = 0, y = 0;
+    };
+    std::vector<Median> medians;
 
     Cubic Curve(const Segment& s) const { return {XZ(nodes[s.a].p), s.c1, s.c2, XZ(nodes[s.b].p)}; }
     Cubic Curve(int s) const { return Curve(segs[s]); }
@@ -1091,6 +1099,23 @@ inline void BuildCap(const Network& net, int n, MeshOut& out) {
 }
 
 // Everything: segments between their trims, then junction fills.
+// [parallel] A median still has a live road along each side (at its middle).
+inline bool MedianLive(const Network& net, const Network::Median& m) {
+    const V2 c = (m.a + m.b) * 0.5f, n = LeftOf(Norm(m.b - m.a));
+    for (float side : {1.0f, -1.0f}) {
+        const V2 q = c + n * (side * (m.w * 0.5f + 0.5f));
+        bool on = false;
+        for (size_t s = 0; s < net.segs.size() && !on; ++s) {
+            if (!net.segs[s].alive) continue;
+            float t, d;
+            net.Nearest((int)s, q, t, d);
+            on = d < net.Prof((int)s).Half();
+        }
+        if (!on) return false;
+    }
+    return true;
+}
+
 inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& out) {
     for (auto& v : out.byMat) v.clear();
     out.arrows.clear();
@@ -1127,6 +1152,8 @@ inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& ou
     }
     for (size_t s = 0; s < net.segs.size(); ++s)
         if (net.segs[s].alive) BuildSegment(net, (int)s, trims[s], ground, out);
+    for (const Network::Median& m : net.medians) // [parallel] one box each: 5 quads
+        if (MedianLive(net, m)) mesh::Box(out.byMat[(int)Mat::Grass], (m.a + m.b) * 0.5f, Norm(m.b - m.a), Len(m.b - m.a), m.w, m.y, m.y + 0.15f, {1, 1, 1}, 1.0f);
     for (size_t n = 0; n < net.nodes.size(); ++n)
         if (net.nodes[n].alive && !junctions[n].empty()) {
             const float g = ground ? ground(net.nodes[n].p.x, net.nodes[n].p.z) : 0.0f;

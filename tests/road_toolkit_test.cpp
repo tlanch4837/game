@@ -276,6 +276,71 @@ int main() {
         m.Tap(miniX, m.L.panelY + rk::kPad + rk::kB * 0.5f);
         CHECK(m.st.mini);
     }
+    // ================================================================ [road ui] compact: ~60 % strips on the bottom edge
+    for (int phone = 0; phone < 2; ++phone) {
+        Harness m;
+        if (phone) m.w = 2556, m.h = 1179, m.dpi = 3.0f, m.tablet = false, m.st.safe = {59, 24, 59, 21, 47};
+        m.st.mini = m.st.compact = m.st.dockAvail = m.st.dotAvail = true;
+        m.bottom = (phone ? 21.0f : 0.0f) + 4.0f; // the dock is tucked: right over the safe area
+        m.tool.Open();
+        m.Frame();
+        const float W = m.w / m.dpi, H = m.h / m.dpi;
+        CHECK(m.L.panelH == rk::kCH && m.L.palette);
+        CHECK(rk::kCB <= 0.7f * rk::kMB && rk::kCH <= 0.66f * rk::kMH); // about 60 % of the mini strips
+        if (!phone) CHECK(m.L.palY == m.L.panelY);                        // iPad: one 34 pt row
+        else CHECK(m.L.palY == m.L.panelY - rk::kCRowGap - rk::kCH);      // phone: the palette rides above
+        const float tall = H - m.L.top;
+        CHECK(tall <= m.bottom + (phone ? 2 * rk::kCH + rk::kCRowGap : rk::kCH) + 0.5f);
+        std::printf("compact kit (%s): %.0f pt from the bottom edge, all of it (was %.0f + the dock)\n", phone ? "phone" : "iPad", tall,
+                    phone ? 2 * rk::kMH + 8 : rk::kMH);
+        const Rect a = m.st.safe.Area(W, H);
+        CHECK(m.L.panelX >= a.x && m.L.panelY + m.L.panelH <= a.y + a.h + 0.01f && m.L.palX + m.L.palW <= a.x + a.w + 0.01f);
+        const std::vector<rk::MiniSlot> items = rk::MiniItems(m.tool, m.st, m.tablet);
+        auto slotX = [&](rk::MiniItem id) {
+            float x = m.L.panelX + rk::kCPad;
+            for (const rk::MiniSlot& it : rk::MiniItems(m.tool, m.st, m.tablet)) {
+                if (it.id == id) return x + it.w * 0.5f;
+                x += it.w + rk::kCGap;
+            }
+            return -1000.0f;
+        };
+        // every hit rect is at least 40 x 40 pt and none overlaps its neighbour
+        for (size_t i = 0; i + 1 < items.size(); ++i) {
+            const float c0 = slotX(items[i].id), c1 = slotX(items[i + 1].id);
+            CHECK(c1 - c0 >= 0.5f * (std::max(items[i].w, rk::kHit) + std::max(items[i + 1].w, rk::kHit)) - 0.01f);
+        }
+        CHECK(slotX(rk::kAngle) > 0 && slotX(rk::kDock) > 0);
+        const float sy = m.L.panelY + rk::kCPad + rk::kCB * 0.5f;
+        // a tap outside the 28 pt box but inside the 40 pt hit rect still lands
+        m.Tap(slotX(rk::kDown) + 18, sy - 18);
+        CHECK(m.tool.elevation == -5.0f);
+        m.Tap(slotX(rk::kUp) - 18, sy + 18);
+        CHECK(m.tool.elevation == 0.0f);
+        // the snap button: a tap is auto snap on / off (off = free placement), a hold opens the snap kinds
+        CHECK(m.tool.snapAll);
+        m.Tap(slotX(rk::kSnap), sy);
+        CHECK(!m.tool.snapAll && m.st.pop == 0);
+        m.Tap(slotX(rk::kSnap), sy);
+        CHECK(m.tool.snapAll);
+        m.Hold(slotX(rk::kSnap), sy, 45);
+        CHECK(m.tool.snapAll && m.st.pop == 2);
+        m.Tap(slotX(rk::kSnap), sy);
+        CHECK(m.st.pop == 0);
+        // the angle chip cycles the angle step
+        m.Tap(slotX(rk::kAngle), sy);
+        CHECK(m.tool.angleStep == 30.0f);
+        // the dock handle asks the host for the dock
+        m.q.Down(slotX(rk::kDock) * m.dpi, sy * m.dpi), m.Frame();
+        m.q.Up(slotX(rk::kDock) * m.dpi, sy * m.dpi), m.Frame();
+        CHECK(m.out.dock);
+        m.q.Leave(), m.Frame();
+        // a palette tile picks from its 40 pt tall hit rect
+        const float tabY = m.L.palY + rk::kCPad + rk::kCB * 0.5f;
+        const int before = m.tool.asset;
+        m.Tap(m.L.palX + rk::kCPad + rk::kCB + rk::kCGap + 2 + (rk::kCTileW + rk::kCTileGap) + rk::kCTileW * 0.5f, tabY + 17);
+        CHECK(m.tool.asset != before);
+        for (const Rect& r : m.g.ShownPanels()) CHECK(!m.st.safe.Intrudes({r.x / m.dpi, r.y / m.dpi, r.w / m.dpi, r.h / m.dpi}, W, H));
+    }
     // ---- [safe area] the strips keep out of a notched phone's insets
     {
         Harness m;

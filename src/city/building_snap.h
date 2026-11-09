@@ -119,6 +119,54 @@ inline BuildingSnap SnapBesideRoad(const Network& net, V2 cursor, float W, float
     return r;
 }
 
+// ---- [snap tune] the interactive snap (the user: "quite aggressive, snaps from far away"): modest and sticky, never yanking
+//   capture   the ghost's road-side EDGE (not the cursor, which sits on its middle) within kCaptureHalves road half widths
+//             of the kerb (sidewalk included), at least kCaptureMin m; `reach` (a finger's width in metres at the zoom,
+//             > 0) caps it lower when zoomed in
+//   hold      once snapped it stays snapped out to kReleaseScale x that (sliding along the road with the cursor)
+//   release   beyond that, or while the finger drags fast: free, and it does not re-capture until the cursor has left the
+//             release distance once (or comes in to half the capture distance)
+// The scripted placements (example towns, overlays) keep SnapBesideRoad's wide reach: it finds them a spot.
+constexpr float kCaptureHalves = 1.5f, kCaptureMin = 3.0f, kReleaseScale = 2.0f;
+struct BuildingSnapLatch {
+    bool held = false; // snapped last frame
+    bool cool = false; // released: no capture until the cursor left the release distance
+    float capture = 0; // the last capture distance (metres; the host shows it as the guide ring)
+};
+// The capture distance beside a road of half width `roadHalf` (reach <= 0: no finger cap).
+inline float CaptureRange(float roadHalf, float reach = -1.0f) {
+    const float cap = std::max(kCaptureMin, kCaptureHalves * roadHalf);
+    return reach > 0 ? std::clamp(reach, kCaptureMin, cap) : cap;
+}
+// How far the ghost's road-side edge is from the kerb for a candidate snap (negative: the ghost overlaps the road).
+inline float EdgeGap(const BuildingSnap& r, V2 cursor, float W, float D) {
+    return Dot2(cursor - r.roadPt, r.away) - r.roadHalf - HalfExtentAlong(r.front, W, D, r.away);
+}
+inline BuildingSnap SnapBesideRoadLatched(const Network& net, V2 cursor, float W, float D, int quarter, int entranceEdge, float gap,
+                                          BuildingSnapLatch& L, bool fast = false, float reach = -1.0f, const std::function<bool(int)>& ok = {}) {
+    BuildingSnap free;
+    free.c = cursor;
+    const BuildingSnap r = SnapBesideRoad(net, cursor, W, D, quarter, entranceEdge, gap, 0.5f * std::max(W, D) + 80.0f, ok); // the nearest candidate
+    if (!r.snapped) {
+        L.held = false, L.cool = false;
+        return free;
+    }
+    const float cap = CaptureRange(r.roadHalf, reach), g = EdgeGap(r, cursor, W, D);
+    L.capture = cap;
+    if (fast) { // a fast drag is heading somewhere else: let go
+        if (L.held) L.held = false, L.cool = true;
+        return free;
+    }
+    const float limit = L.held ? cap * kReleaseScale : L.cool ? cap * 0.5f : cap;
+    if (g <= limit) {
+        L.held = true, L.cool = false;
+        return r;
+    }
+    if (L.held) L.held = false, L.cool = true; // just left the hold
+    else if (L.cool && g > cap * kReleaseScale) L.cool = false; // left the release distance: capture again
+    return free;
+}
+
 // Road access: the first edge (the entrance edge first, then the others) whose middle has a qualifying road within reach
 // of its kerb. Returns the edge (-1: none); seg the road.
 inline int RoadAtEdge(const Network& net, V2 c, V2 front, float W, float D, int entranceEdge, float reach, int& seg) {

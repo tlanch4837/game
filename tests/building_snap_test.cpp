@@ -130,6 +130,58 @@ int main() {
         CHECK(std::fabs(s.c.x + (half + 0.5f + kHubD * 0.5f)) < 0.05f && std::fabs(s.c.z - 40) < 0.05f);
         CHECK(!iw.Snap(t.net, {-400, 40}, s, 0));
     }
+    // ------------------------------------------------------------------ [snap tune] the interactive snap: modest, sticky
+    {
+        RoadTool t;
+        t.BuildRoad(Cubic::Line({-300, 0}, {300, 0}), 0, 0, road);
+        const float W = 48.0f, D = 32.0f, ext = D * 0.5f; // facing the road: its depth is across
+        const float cap = CaptureRange(half);
+        CHECK(cap >= kCaptureMin && std::fabs(cap - std::max(kCaptureMin, 1.5f * half)) < 1e-4f);
+        CHECK(CaptureRange(half, 1.0f) == kCaptureMin && CaptureRange(half, 100.0f) == cap); // a finger caps it, never under 3 m
+        auto at = [&](float edgeGap) { return V2{10.0f, half + ext + edgeGap}; }; // the cursor (the ghost's middle) for a gap
+        BuildingSnapLatch L;
+        // far: the old helper still pulls it in (scripted placement), the interactive one stays free
+        CHECK(SnapBesideRoad(t.net, at(20), W, D).snapped);
+        CHECK(!SnapBesideRoadLatched(t.net, at(20), W, D, 0, 0, kBuildingSnapGap, L).snapped && !L.held);
+        // inside the capture distance: snapped, edge off the kerb, slid along with the cursor
+        BuildingSnap s = SnapBesideRoadLatched(t.net, at(cap - 0.5f), W, D, 0, 0, kBuildingSnapGap, L);
+        CHECK(s.snapped && L.held && std::fabs(s.c.z - (half + kBuildingSnapGap + ext)) < 0.05f && std::fabs(s.c.x - 10) < 0.05f);
+        // hold: out to twice the capture distance it stays
+        s = SnapBesideRoadLatched(t.net, at(cap * 1.8f), W, D, 0, 0, kBuildingSnapGap, L);
+        CHECK(s.snapped && L.held);
+        // release beyond it; coming back inside the capture distance does not re-capture right away
+        s = SnapBesideRoadLatched(t.net, at(cap * 2.2f), W, D, 0, 0, kBuildingSnapGap, L);
+        CHECK(!s.snapped && !L.held && L.cool);
+        CHECK(std::fabs(s.c.z - at(cap * 2.2f).z) < 1e-4f); // free: where the cursor is
+        s = SnapBesideRoadLatched(t.net, at(cap * 0.8f), W, D, 0, 0, kBuildingSnapGap, L);
+        CHECK(!s.snapped && L.cool);
+        s = SnapBesideRoadLatched(t.net, at(cap * 0.3f), W, D, 0, 0, kBuildingSnapGap, L); // right at the kerb: it takes it
+        CHECK(s.snapped && L.held);
+        // a fast drag lets go, and it stays free until the cursor has left the release distance once
+        s = SnapBesideRoadLatched(t.net, at(cap * 0.8f), W, D, 0, 0, kBuildingSnapGap, L, true);
+        CHECK(!s.snapped && L.cool);
+        CHECK(!SnapBesideRoadLatched(t.net, at(cap * 0.8f), W, D, 0, 0, kBuildingSnapGap, L).snapped);
+        CHECK(!SnapBesideRoadLatched(t.net, at(cap * 2.5f), W, D, 0, 0, kBuildingSnapGap, L).snapped && !L.cool);
+        CHECK(SnapBesideRoadLatched(t.net, at(cap * 0.8f), W, D, 0, 0, kBuildingSnapGap, L).snapped);
+        // the transport tool with the latch: the same modest capture; the dial (snapRoad off) stays free
+        TransportWorld w;
+        PlaceContext cx;
+        cx.net = &t.net;
+        const int tc = Index("Telecom Center");
+        BuildingSnapLatch L2;
+        PlanOptions o;
+        o.latch = &L2;
+        CHECK(!w.Plan(cx, tc, {20, half + 16 + cap + 6}, 0, o).roadSnapped); // used to snap from 28 m+ off the kerb
+        CHECK(w.Plan(cx, tc, {20, half + 16 + cap - 1}, 0, o).roadSnapped);
+        o.snapRoad = false;
+        CHECK(!w.Plan(cx, tc, {20, half + 16 + 1}, 0, o).roadSnapped);
+        // an industry hub with the latch: no longer from 60 m
+        IndustryWorld iw;
+        IndSite site;
+        BuildingSnapLatch L3;
+        CHECK(!iw.Snap(t.net, {10, half + kHubD * 0.5f + 30}, site, 0, &L3));
+        CHECK(iw.Snap(t.net, {10, half + kHubD * 0.5f + 1}, site, 0, &L3));
+    }
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;
 }
