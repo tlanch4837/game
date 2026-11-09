@@ -80,6 +80,7 @@
 #include "city/sim_goods_save.h"     // Phase 6 goods, companies, trade and their .tbdsim chunks (city_sim_p6.inl)
 #include "city/sim_gov_save.h"       // Phase 7 budget, policies, districts, progression and their .tbdsim chunks (city_sim_p7.inl)
 #include "city/sim_land_save.h"      // Phase 2 demand, land value, rent, levelling and their .tbdsim chunks (city_sim_p2.inl)
+#include "city/sim_transit_save.h"   // Phase 5 transit lines, mode choice, outside connections and their .tbdsim chunks (city_sim_p5.inl)
 #include "city/sim_preset.h"         // the sim's per-preset and thermal scaling (city_sim.inl SimApplyPreset)
 #include "gfx_settings.h"             // the player's graphics preset (the sim scales with it)
 #include "gui/road_toolbar.h"
