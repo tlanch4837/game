@@ -373,7 +373,51 @@ static void TestTuningTables() {
     CHECK(!tf.LoadFile(p.wstring(), nullptr, &a));
 }
 
+// The autosave's two steps (Snapshot on the main thread, Assemble on a worker) give Save()'s bytes, and BLDG's packed
+// rows are the field-by-field layout.
+static void TestSnapshotAssemble() {
+    SysA a;
+    SysB b;
+    a.minute = 77, a.col = {9, 8, 7};
+    b.name = "Snap", b.money = 3.5;
+    SimSaveRegistry reg;
+    RegisterAB(reg, a, b);
+    BuildingRegistry br;
+    br.BeginSync();
+    BuildingRow row;
+    row.kind = 3, row.cellX = -4, row.cellZ = 9, row.cell = 12, row.hood = 2, row.entranceNode = 40, row.level = 2, row.homes = 17;
+    for (int e = 0; e < kEduLevels; ++e) row.jobSlots[e] = (uint16_t)(e * 3 + 1);
+    br.Upsert(BOrigin::Lot, 0x1122334455ull, row);
+    br.Upsert(BOrigin::Utility, 5, BuildingRow());
+    br.EndSync();
+    SimChunkDef d;
+    d.fourcc = simchunk::BLDG;
+    d.save = [&br](ByteWriter& w) { WriteBuildings(w, br); };
+    d.load = [](ByteReader&, uint16_t) { return true; };
+    CHECK(reg.Register(d));
+    const std::vector<uint8_t> whole = reg.Save();
+    CHECK(SimSaveRegistry::Assemble(reg.Snapshot()) == whole);
+    // the packed rows against the field-by-field writer
+    ByteWriter packed, fields;
+    WriteBuildings(packed, br);
+    const HandlePool& p = br.Pool();
+    fields.PutVec(p.Gens()), fields.PutVec(p.AliveBits()), fields.PutVec(p.FreeList()), fields.U32(br.Capacity());
+    for (uint32_t i = 0; i < br.Capacity(); ++i) {
+        const BuildingRow r = i < br.rows.size() ? br.rows[i] : BuildingRow();
+        fields.U8((uint8_t)r.origin), fields.U64(r.originId), fields.I32(r.kind), fields.I32(r.cellX), fields.I32(r.cellZ), fields.I32(r.cell);
+        fields.I32(r.hood), fields.I32(r.entranceNode), fields.U8(r.level), fields.U16(r.homes);
+        for (int e = 0; e < kEduLevels; ++e) fields.U16(r.jobSlots[e]);
+    }
+    CHECK(packed.bytes == fields.bytes);
+    BuildingRegistry back;
+    ByteReader rd(packed.bytes);
+    CHECK(ReadBuildings(rd, back) && rd.AtEnd());
+    const BuildingId id = back.Find(BOrigin::Lot, 0x1122334455ull);
+    CHECK(id.Valid() && back.Get(id) && back.Get(id)->homes == 17 && back.Get(id)->jobSlots[4] == 13 && back.Get(id)->entranceNode == 40);
+}
+
 int main() {
+    TestSnapshotAssemble();
     TestCrcAndBytes();
     TestRoundTrip();
     TestUnknownSkipped();

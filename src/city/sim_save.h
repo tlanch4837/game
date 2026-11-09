@@ -244,16 +244,36 @@ public:
     const std::vector<SimChunkDef>& Defs() const { return defs_; }
     void Clear() { defs_.clear(); }
 
-    std::vector<uint8_t> Save() const {
-        ByteWriter w;
-        w.Raw(kSimMagic, 8);
-        w.U32(kSimFormatVersion);
-        w.U32((uint32_t)defs_.size());
+    std::vector<uint8_t> Save() const { return Assemble(Snapshot()); }
+
+    // Save in two steps, for the autosave: Snapshot runs every chunk's save (the main thread: it reads live state) and
+    // keeps the payloads; Assemble (any thread) adds the header, the chunk headers and the CRCs. Same bytes as Save().
+    struct ChunkImage {
+        uint32_t fourcc = 0;
+        uint16_t version = 1, flags = 0;
+        std::vector<uint8_t> payload;
+    };
+    std::vector<ChunkImage> Snapshot() const {
+        std::vector<ChunkImage> out;
+        out.reserve(defs_.size());
         for (const SimChunkDef& d : defs_) {
             ByteWriter p;
             if (d.save) d.save(p);
-            w.U32(d.fourcc), w.U16(d.version), w.U16(d.flags), w.U32((uint32_t)p.Size()), w.U32(Crc32(p.bytes));
-            w.Raw(p.bytes.data(), p.Size());
+            out.push_back({d.fourcc, d.version, d.flags, std::move(p.bytes)});
+        }
+        return out;
+    }
+    static std::vector<uint8_t> Assemble(const std::vector<ChunkImage>& chunks) {
+        size_t n = kSimHeaderBytes;
+        for (const ChunkImage& c : chunks) n += kSimChunkHeaderBytes + c.payload.size();
+        ByteWriter w;
+        w.bytes.reserve(n);
+        w.Raw(kSimMagic, 8);
+        w.U32(kSimFormatVersion);
+        w.U32((uint32_t)chunks.size());
+        for (const ChunkImage& c : chunks) {
+            w.U32(c.fourcc), w.U16(c.version), w.U16(c.flags), w.U32((uint32_t)c.payload.size()), w.U32(Crc32(c.payload));
+            w.Raw(c.payload.data(), c.payload.size());
         }
         return std::move(w.bytes);
     }
@@ -318,13 +338,22 @@ inline bool ReadHead(ByteReader& r, SimSaveHead& h) {
 // on disk). Load puts the same BuildingIds back as reserved rows; the next syncs claim them by key.
 inline void WriteBuildings(ByteWriter& w, const BuildingRegistry& reg) {
     const HandlePool& p = reg.Pool();
+    w.bytes.reserve(w.bytes.size() + 16 + (size_t)reg.Capacity() * (2 + 48)); // one allocation (the autosave copy runs on the main thread)
     w.PutVec(p.Gens()), w.PutVec(p.AliveBits()), w.PutVec(p.FreeList());
     w.U32(reg.Capacity()); // one row per pool slot (an empty registry has rows.size() 0 but slot 0 reserved)
+    // Each row packed field by field (no padding on disk) into one buffer, then appended once: the same bytes as
+    // U8 origin, U64 originId, I32 kind cellX cellZ cell hood entranceNode, U8 level, U16 homes, U16 jobSlots[5].
+    constexpr size_t kRowBytes = 1 + 8 + 6 * 4 + 1 + 2 + 2 * kEduLevels;
+    const BuildingRow empty;
     for (uint32_t i = 0; i < reg.Capacity(); ++i) {
-        const BuildingRow r = i < reg.rows.size() ? reg.rows[i] : BuildingRow();
-        w.U8((uint8_t)r.origin), w.U64(r.originId), w.I32(r.kind), w.I32(r.cellX), w.I32(r.cellZ), w.I32(r.cell), w.I32(r.hood);
-        w.I32(r.entranceNode), w.U8(r.level), w.U16(r.homes);
-        for (int e = 0; e < kEduLevels; ++e) w.U16(r.jobSlots[e]);
+        const BuildingRow& r = i < reg.rows.size() ? reg.rows[i] : empty;
+        uint8_t b[kRowBytes];
+        uint8_t* q = b;
+        auto put = [&q](const void* v, size_t n) { std::memcpy(q, v, n), q += n; };
+        const uint8_t origin = (uint8_t)r.origin;
+        put(&origin, 1), put(&r.originId, 8), put(&r.kind, 4), put(&r.cellX, 4), put(&r.cellZ, 4), put(&r.cell, 4), put(&r.hood, 4);
+        put(&r.entranceNode, 4), put(&r.level, 1), put(&r.homes, 2), put(r.jobSlots, 2 * kEduLevels);
+        w.Raw(b, kRowBytes);
     }
 }
 inline bool ReadBuildings(ByteReader& r, BuildingRegistry& reg) {

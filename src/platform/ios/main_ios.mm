@@ -429,6 +429,7 @@ static CGFloat WrapAngle(CGFloat a) {
     tbd::host::ResumeAudio(); // no-op before the game started or while the device runs
 }
 - (void)sceneWillResignActive:(UIScene*)scene { [_controller pauseFrames]; }
+- (void)sceneDidEnterBackground:(UIScene*)scene { tbd::host::EnterBackground(); } // the city is autosaved now
 
 - (void)sceneDidDisconnect:(UIScene*)scene {
     [_controller pauseFrames];

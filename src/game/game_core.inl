@@ -1949,6 +1949,7 @@ void RoadsWorldLabels() {
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
 #include "city_example.inl"  // [example map] the example map "Bayside" (the default Save 1; TBD_MAP=example)
 #include "city_sim.inl"      // the city sim scheduler: fixed 1 game minute ticks under a per-frame budget
+#include "city_sim_phases.inl" // the CS2 sim phase hub: .tbdsim save and autosave, P1 .. P7 hooks (docs/cs2_sim_roadmap.md)
 #include "city_radio.inl"    // the city radio: Elton reacts to what the player did, plus The Weekly Rundown
 #include "city_herds.inl"    // neighbourhoods, herds over the day and the visible cars made from them (src/city/sim_hoods.h ...)
 #include "city_overlays.inl" // info overlays: power / water / sewage / land value / traffic / coverage tint

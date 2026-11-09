@@ -20,6 +20,7 @@ int main(int argc, char**) {
         tbd::host::KeyDown(0, false, 0);
         tbd::host::KeyUp(0);
         tbd::host::Frame();
+        tbd::host::EnterBackground();
         tbd::host::Shutdown();
         return tbd::host::HasRenderer() ? 1 : 0;
     }

@@ -51,6 +51,7 @@ struct Sample {
     bool simActive = false;
     double simMs = 0.0, simAvgMs = 0.0, simBudgetMs = 0.0, simBacklog = 0.0;
     uint32_t simTicks = 0;
+    double simTotalMs = 0.0, simTotalAvgMs = 0.0; // all of SimSync: scheduler, CS2 phases, hub (city_sim.inl)
     std::vector<SimRow> sim;
     std::vector<std::pair<std::string, std::string>> simInfo; // label, value (demand, population, levels)
 };
@@ -278,6 +279,7 @@ public:
             const Vec3 simColor = smp.simMs <= smp.simBudgetMs + 0.25 ? cText : cWarn;
             row("SIM FRAME", Fmt("%.2f", smp.simMs) + " / " + Fmt("%.2f MS", smp.simBudgetMs), simColor);
             row("SIM AVERAGE", Fmt("%.2f MS", smp.simAvgMs), cText);
+            row("SIM TOTAL", Fmt("%.2f", smp.simTotalMs) + " / " + Fmt("%.2f MS/FRAME", smp.simTotalAvgMs), smp.simTotalAvgMs <= smp.simBudgetMs + 0.25 ? cText : cWarn);
             row("TICKS", Grouped(smp.simTicks) + "   BEHIND " + Fmt("%.0f MIN", smp.simBacklog), smp.simBacklog >= 2.0 ? cWarn : cText);
             for (const Sample::SimRow& sys : smp.sim) {
                 std::string label = sys.name;

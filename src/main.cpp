@@ -78,6 +78,9 @@
 #include "city/sim_flow.h"         // the city sim's flow traffic: vehicles per hour per road segment
 #include "city/sim_agents.h"       // cosmetic cars driven by the flow (not simulated)
 #include "city/sim_people.h"       // tracked people: materialized on click, consistent with the counters
+#include "city/sim_save.h"         // the CS2 sim's .tbdsim chunks and BuildingRegistry (city_sim_save.inl)
+#include "city/sim_tuning_table.h" // the CS2 phases' prefixed tuning (city_sim.inl g_simPhaseTune)
+#include "city/sim_calendar.h"     // minute -> day, life month, season (city_sim_save.inl)
 #include "city/sim_walkers.h"      // [walkers] people on the sidewalks (city_walkers.inl hosts them; included here: game_core.inl sits in a namespace)
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building
 #include "city/road_names.h"     // road / street / highway names, house numbers (chip under the road tool's cursor, F2 renames)
