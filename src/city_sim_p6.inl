@@ -178,8 +178,20 @@ tbd::city::SimFlags BitsOf(int32_t f) {
     return (f & kCoNoGoods ? kFlagNoGoods : 0u) | (f & kCoNoCustomers ? kFlagNoCustomers : 0u) | (f & kCoNoFreight ? kFlagNoFreight : 0u);
 }
 
+// The day's trade room: P5's freight capacity of the linked connections (yesterday's flows), plus a road connection's
+// for each dead-end edge road P6 uses on its own. Unlimited while P5 is off or has not booked a day yet.
+void SetTradeCap() {
+    world.tradeCap = -1;
+    if (g_simPhaseTune.move.enabled == 0.0 || SimTransitOutsideFlows().empty()) return;
+    size_t placed = 0;
+    for (const tbd::city::Outside& o : g_transit.outsides) placed += o.alive ? 1 : 0;
+    const int64_t edgeRoads = (int64_t)(world.outsides.size() > placed ? world.outsides.size() - placed : 0);
+    world.tradeCap = SimTransitCargoCapacity() + edgeRoads * tbd::city::OutsideCargoCap(0);
+}
+
 void RefreshSites() {
     BuildOutsides();
+    SetTradeCap();
     BuildSites();
     siteZones = g_zones.version;
     world.SetSites(sites, g_sim.Minute());

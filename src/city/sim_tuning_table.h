@@ -223,6 +223,7 @@ TBD_SIM_TUNING_TABLE(GoodsTuning, "goods.", TBD_SIM_TUNING_GOODS)
     X(waterFeePerResDay, 5.0)                                                                                               \
     X(feeHappyPerPoint, 0.0008)        /* happiness multiplier lost per fee point above 100 % (gained below)              */ \
     X(tradeTariffPermille, 20.0)       /* the city's share of the companies' export income (P6), permille                 */ \
+    X(profitTaxShare, 0.25)            /* share of a P6 company's positive daily profit its category's tax rate applies to */ \
     X(xpPerResident, 1.0)              /* XP per resident above the best population so far                                */ \
     X(xpPerBuilding, 5.0)              /* XP per service / transport building placed (first time its id is seen)          */ \
     X(xpHappyPerDay, 0.02)             /* daily XP per resident while the mean happiness is above 60 %                    */ \

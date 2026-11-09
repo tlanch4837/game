@@ -66,7 +66,7 @@ void FillSlot(tbd::gui::SimPanelSpec& sp, int slot) {
     sp.Bar("Coverage", (float)t.coverage, Num(t.coverage * 100.0) + " %", t.coverage < 0.5 ? -1 : t.coverage > 0.85 ? 1 : 0);
     if (t.vehicles) sp.Stat("Vehicles out", Num(t.busy) + " of " + Num(t.vehicles), t.busy >= t.vehicles ? -1 : 0);
     if (const char* u = UnitName(slot)) if (t.units) sp.Bar(u, (float)t.used / (float)t.units, Num((double)t.used) + " of " + Num((double)t.units), t.used >= t.units ? -1 : 0);
-    if (slot >= kServices && slot != kSvcHighSchool && slot != kSvcUniversity) sp.Slider("Budget", &funding[slot], 0.5f, 1.5f, 0.05f, "%.2f");
+    if (slot >= kServices && slot != kSvcHighSchool && slot != kSvcUniversity && SimGovServiceCapacity(slot) < 0.0f) sp.Slider("Budget", &funding[slot], 0.5f, 1.5f, 0.05f, "%.2f");
     else sp.Stat("Budget", Num(FundingOf(slot) * 100.0) + " % (Budget panel)");
 }
 void FillPanel(tbd::gui::SimPanelSpec& sp, void* user) {
@@ -81,7 +81,8 @@ void FillPanel(tbd::gui::SimPanelSpec& sp, void* user) {
         sp.Stat("Waiting on lots", Num(g.uncollected) + " t", g.piling ? -1 : 0);
         sp.Stat("Piling up / unserved", Num(g.piling) + " / " + Num(g.unserved) + " of " + Num(g.lots), g.piling ? -1 : 0);
         sp.Stat("Garbage trucks today", Num(std::count_if(w.trips.begin(), w.trips.end(), [](const SvcTrip& t) { return t.slot == kSvcGarbage; })));
-        sp.Slider("Budget", &funding[kSvcGarbage], 0.5f, 1.5f, 0.05f, "%.2f");
+        if (SimGovServiceCapacity(kSvcGarbage) < 0.0f) sp.Slider("Budget", &funding[kSvcGarbage], 0.5f, 1.5f, 0.05f, "%.2f");
+        else sp.Stat("Budget", Num(FundingOf(kSvcGarbage) * 100.0) + " % (Budget panel)");
         return;
     }
     for (int s : d.slots) if (s >= 0) FillSlot(sp, s);

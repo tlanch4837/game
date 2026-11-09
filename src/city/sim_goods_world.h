@@ -39,6 +39,13 @@ public:
     std::vector<int16_t> cellAvail;      // per CitySim cell: shops supplied 0..255, -1 no shop
     std::vector<SimEvent> events;        // pushed since the host last drained them
     int32_t bankruptTotal = 0, shortages = 0, noCustomers = 0, noFreight = 0;
+    int64_t tradeCap = -1;               // units a day the outside connections carry in and out (P5; -1 unlimited)
+    int64_t TradeRoom() const {          // what today's imports and exports leave of tradeCap
+        if (tradeCap < 0) return INT64_MAX;
+        int64_t n = 0;
+        for (int g = 0; g < kGoodCount; ++g) n += today.imported[(size_t)g] + today.exported[(size_t)g];
+        return std::max<int64_t>(0, tradeCap - n);
+    }
 
     void Clear() {
         const GoodsParams keep = p;
@@ -169,7 +176,8 @@ private:
             } else { // then the outside world, at a quarter more
                 const int o = NearestOutside(outsides, c.x, c.z);
                 if (o < 0) return;
-                units = std::min(need, p.truckUnits);
+                units = (int32_t)std::min<int64_t>(std::min(need, p.truckUnits), TradeRoom());
+                if (units <= 0) return; // the connections are full today
                 const int32_t cost = units * GoodPrice(g) * 125 / 100;
                 today.imported[gi] += units, today.importCost += cost, c.profitToday -= cost;
                 const OutsideLink& ol = outsides[(size_t)o];
@@ -190,7 +198,8 @@ private:
         const OutsideLink& ol = outsides[(size_t)o];
         int32_t surplus = c.stock[gi] - cap / 2;
         for (int t = 0; t < 3 && surplus > 0; ++t) {
-            const int32_t units = std::min(surplus, p.truckUnits), income = units * GoodPrice(g) * 90 / 100;
+            const int32_t units = (int32_t)std::min<int64_t>(std::min(surplus, p.truckUnits), TradeRoom()), income = units * GoodPrice(g) * 90 / 100;
+            if (units <= 0) break; // the connections are full today
             c.stock[gi] -= units, surplus -= units, c.profitToday += income, today.exportIncome += income;
             Ship(minute, g, units, cos.At(i).v, 0, c.node, ol.node, Dist2(ol.x, ol.z, c.x, c.z));
         }

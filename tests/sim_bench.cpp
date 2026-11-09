@@ -4,7 +4,10 @@
 // (bootstrapped from the lots, CitySim::externalPeople; the "life" systems and their save image), and the flow solve the
 // game runs on a worker; Phase 3's environment (the weather every 10 minutes, the hourly snapshot and apply on the main
 // thread, the pass itself as a worker line) and Phase 6's goods (the companies every game minute, the hourly site refresh,
-// the day's truck list); and the hub's merge of the shared flag table into the per-lot flags. Prints ms per system: the
+// the day's truck list); Phases 2, 4, 5 and 7 (sim_bench_phases.h: land, levelling, demand and rent; services, incidents,
+// seats, garbage and the coverage pass; transit; taxes and the ledger; S2's demand / growth and S3's coverage are not
+// registered, as in the game with those phases on); and the hub's merge of the shared flag table into the per-lot flags.
+// The .tbdsim copy still holds P0, P1, P3 and P6's chunks only. Prints ms per system: the
 // total over the day, per tick, the worst single call, and per frame at 30 fps and speed 3 (18 game minutes a real second),
 // then the worst whole tick (main thread). The roadmap's iPad gate is these numbers x 2 until calibrated on the device.
 // Build and run: tests\sim_bench.bat [lots]   (default 5000)
@@ -72,6 +75,8 @@ struct Bench {
     std::vector<GoodsSite> sites;
     std::vector<BuildingId> lotIds; // the hub's merge cache
 };
+
+#include "sim_bench_phases.h" // Phases 2, 4, 5, 7 on this city (sim-all: every phase in one day)
 
 // Phase 0's hub: the building ids from the lots.
 static void HubSync(Bench& b) {
@@ -248,18 +253,41 @@ int main(int argc, char** argv) {
     };
     // the systems of SimInit, in its order and at its periods (the periods are checked inside: one registration each)
     timed("cells", [](const SimTick&) { b.cells.Sync(b.zones.lots, b.zones.version); });
-    timed("demand", [](const SimTick& t) {
-        if (t.minute % 10) return;
-        b.growth.UpdateDemand(b.cells, b.tune, 10.0, &b.zones);
-        b.growth.ApplyGate(b.zones, b.tune);
+    // S2's demand and growth are not registered with P2 on (city_sim_growth.inl): P2's systems below replace them
+    namespace bp = bench_phases;
+    static bp::P2 p2;
+    static bp::P4 p4;
+    static bp::P5 p5;
+    static bp::P7 p7;
+    {
+        const double a = NowMs();
+        bp::P4Build(p4, b), bp::P4Buildings(p4, b);
+        double inst = 0;
+        const double cover = bp::P4Coverage(p4, b, inst);
+        bp::P5Lines(p5, b), bp::P5Zones(p5, b);
+        bp::P7Compose(p7, b);
+        bp::P2Snapshot(p2, b, 0), LandStep(p2.land, p2.in, LandParams(), p2.out);
+        std::printf("sim_bench: P4 %zu sites, %zu buildings, first coverage %.1f ms (worker) + %.2f ms install; P5 %zu lines; P7 %d hoods; set up in %.1f ms\n",
+                    p4.sites.size(), p4.w.bld.size(), cover, inst, p5.world.net.lines.size(), b.cells.Supercells(), NowMs() - a);
+    }
+    timed("P2 land.lots", [](const SimTick& t) { bp::P2Lots(p2, b, t.minute); });
+    timed("P2 demand", [](const SimTick& t) { if (t.minute % 10 == 4) bp::P2Demand(p2, b); });
+    timed("P2 land.rent", [](const SimTick& t) { if (t.minute % 15 == 11) bp::P2Rent(p2, b); });
+    timed("P2 land: snapshot", [](const SimTick& t) { if (t.minute % 60 == 30) bp::P2Snapshot(p2, b, t.minute); });
+    timed("P2 land pass (worker)", [](const SimTick& t) { if (t.minute % 60 == 30) LandStep(p2.land, p2.in, LandParams(), p2.out); });
+    timed("P4 svc", [](const SimTick& t) { bp::P4Minute(p4, b, t.minute); });
+    // the coverage pass (the game: on change, at most every 10 minutes; here every hour): the worker's part is this entry,
+    // the snapshot and the install are the main thread's ("P4 coverage: main")
+    timed("P4 coverage (worker)", [](const SimTick& t) {
+        if (t.minute % 60 != 10) return;
+        double mainMs = 0;
+        bp::P4Coverage(p4, b, mainMs);
+        const char* k = "P4 coverage: main";
+        b.ms[k] += mainMs, ++b.calls[k], b.worst[k] = std::max(b.worst[k], mainMs), b.tickMain += mainMs, b.carve = mainMs;
     });
-    timed("growth", [](const SimTick& t) {
-        if (t.minute % 10) return;
-        const int slice = (int)((t.minute / 10) % 6);
-        if (slice == 0) b.growth.UpdateLand(b.cells, b.tune);
-        b.growth.TickLots(b.zones, b.cells, b.tune, 60.0, slice, 6, &b.lotUtil);
-        b.growth.events.clear();
-    });
+    timed("P5 transit", [](const SimTick& t) { bp::P5Minute(p5, b, t.minute); });
+    timed("P7 gov", [](const SimTick& t) { if (t.minute % 60 == 0) bp::P7Hour(p7, b, t.minute); });
+    timed("P7 ledger", [](const SimTick& t) { if (t.minute % 1440 == 1439) bp::P7Day(p7, b); });
     timed("flow (worker)", [](const SimTick& t) { if (t.minute % 240 == 0) Flow(b); });
     timed("economy", [](const SimTick& t) {
         if (t.minute % 1440 == 1439) b.budget.Day(b.econ, b.cells, b.tune, DayUpkeep{}, (int64_t)b.cells.Population());
@@ -267,17 +295,7 @@ int main(int argc, char** argv) {
     timed("services", [](const SimTick& t) {
         if (t.minute % 10) return;
         ApplyUtilities(b.cells, b.zones, b.lotUtil);
-        ComputeSimFlags(b.zones, b.cells, b.growth, b.tune, b.lotUtil, b.flags);
-        if (t.minute % 60 == 0) {
-            std::vector<ServiceSource> src;
-            for (int k = 0; k < kServices; ++k) {
-                ServiceSource ss;
-                ss.at = {240.0f * (k + 1), 240.0f}, ss.kind = k, ss.radius = 600.0f, ss.comp = b.segComp.empty() ? -1 : b.segComp[0];
-                src.push_back(ss);
-            }
-            const float funding[kServices] = {1, 1, 1, 1, 1, 1};
-            ComputeCoverage(b.cells, b.zones, b.segComp, src, funding);
-        }
+        ComputeSimFlags(b.zones, b.cells, b.growth, b.tune, b.lotUtil, b.flags); // coverage: P4's (SimP4CoverageOwned)
     });
     // Phase 0's hub: the building ids (the game syncs on change, at most once a second: here every 10 minutes) ...
     timed("hub: buildings", [](const SimTick& t) {
@@ -338,7 +356,9 @@ int main(int argc, char** argv) {
             b.lotIds.assign(b.zones.lots.size(), BuildingId());
             for (size_t i = 0; i < b.zones.lots.size(); ++i) b.lotIds[i] = b.reg.Find(BOrigin::Lot, b.zones.lots[i].id);
         }
-        const SimFlags mask = SimFlagPhaseMask(3) | SimFlagPhaseMask(6);
+        SimFlags mask = 0; // every phase's bits but the ones ComputeSimFlags keeps (city_sim_phases.inl SimPhasesInit)
+        for (int ph = 1; ph <= 7; ++ph) mask |= SimFlagPhaseMask(ph);
+        mask &= ~(kFlagCurrentMask & ~SimFlagPhaseMask(6) & ~SimFlagPhaseMask(2));
         for (size_t i = 0; i < b.flags.size() && i < b.lotIds.size(); ++i) b.flags[i] = (b.flags[i] & ~mask) | (b.flagTable.Get(b.lotIds[i]) & mask);
     });
     // ... and the .tbdsim image (HEAD + BLDG + the P1, P3, P6 chunks) the autosave copies on the main thread, once a game hour here.
@@ -378,12 +398,14 @@ int main(int argc, char** argv) {
     const double t0 = NowMs();
     double worstTick = 0;
     int64_t worstMinute = -1, worstNoSaveMinute = -1;
-    double worstNoSave = 0;
+    double worstNoSave = 0, worstWarm = 0; // warm: after the first game hour (minute 0 runs every system's first call)
+    int64_t worstWarmMinute = -1;
     for (int m = 0; m < 1440; ++m) {
         b.tickMain = b.tickSave = 0;
         s.Frame(1.0);
         if (b.tickMain > worstTick) worstTick = b.tickMain, worstMinute = m;
         if (b.tickMain - b.tickSave > worstNoSave) worstNoSave = b.tickMain - b.tickSave, worstNoSaveMinute = m;
+        if (m >= 60 && b.tickMain > worstWarm) worstWarm = b.tickMain, worstWarmMinute = m;
     }
     const double total = NowMs() - t0;
     std::printf("sim_bench: %d lots, %llu residents, %llu jobs, %d supercells, %zu segments; one game day = %lld ticks in %.1f ms\n", lots,
@@ -406,5 +428,6 @@ int main(int argc, char** argv) {
     std::printf("  worst tick (main thread): %.3f ms at minute %lld (x2 iPad: %.3f ms); P6 %u companies, %zu trucks on the road, %zu truck pairs a day\n",
                 worstTick, (long long)worstMinute, worstTick * 2.0, b.goods.cos.pool.Live(), b.goods.ships.size(), b.goods.TrucksLast().size());
     std::printf("  worst tick without the autosave copy: %.3f ms at minute %lld (x2 iPad: %.3f ms)\n", worstNoSave, (long long)worstNoSaveMinute, worstNoSave * 2.0);
+    std::printf("  worst tick after the first hour: %.3f ms at minute %lld (x2 iPad: %.3f ms)\n", worstWarm, (long long)worstWarmMinute, worstWarm * 2.0);
     return 0;
 }

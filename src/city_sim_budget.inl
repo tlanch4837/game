@@ -52,6 +52,7 @@ void SimGovBeforeLedger();
 void SimGovAfterLedger();
 double SimGovUpkeepMul();       // the city-wide policies' and the tree's service upkeep multiplier
 int64_t SimGovPolicyCostDay();  // what the policies cost today, cents (shown with the services)
+int64_t SimTransitLineUpkeepDay(); // city_sim_p5.inl: the transit lines' vehicle running cost of the last day, cents
 extern bool g_simHudPush;       // city_sim.inl: the rates go back into the CS2 HUD's Budget panel
 
 // The day's upkeep split for the ledger (cents per day).
@@ -67,6 +68,7 @@ tbd::city::DayUpkeep SimDayUpkeep() {
         up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale * SimGovUpkeepMul() : 1.0);
     }
     up.services += SimGovPolicyCostDay();
+    up.services += (int64_t)std::llround((double)SimTransitLineUpkeepDay() * SimGovUpkeepMul()); // P5's line vehicles
     up.roads = RoadUpkeepPerDay(PaidLaneMetres(SimRoadLaneMetres(), g_cityMapLaneMetres), kRoadUpkeepPerLaneKmDay); // not the map's corridor
     return up;
 }

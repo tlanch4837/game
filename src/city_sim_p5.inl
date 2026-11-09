@@ -270,7 +270,7 @@ void Day(int64_t minute) {
     outside.Day(conns, d);
     immigrantsToday = emigrantsToday = 0;
     book.Day(world.net, world.ledger, world.p.fare * world.p.fareMul);
-    g_simEcon.treasury += book.FaresYesterday(); // fares only: the vehicles' running cost is shown, P7 owns expenses
+    g_simEcon.treasury += book.FaresYesterday(); // fares; the vehicles' running cost goes through the ledger (SimDayUpkeep)
     for (const LineDay& l : book.last)
         if (l.riders > 0 && l.served * 10 < l.riders * 9) g_simEvents.Push(SimEventType::LineCrowded, minute, 0, 0, (int64_t)l.id);
 }
@@ -344,6 +344,24 @@ int64_t SimTransitCargoCapacity() {
     return n;
 }
 const std::vector<tbd::city::OutsideFlow>& SimTransitOutsideFlows() { return sim_p5::outside.flows; }
+// P1 (city_sim_p1.inl): every evaluated commute link that has transit riders, as f(home supercell, job supercell,
+// transit share 0..1, transit minutes door to door). Nothing while P5 is off or before the first parking pass (:40).
+uint64_t SimTransitVersion() { return g_simPhaseTune.move.enabled != 0.0 ? sim_p5::world.version : 0; }
+void SimTransitForEachCommute(const std::function<void(int, int, float, float)>& f) {
+    using namespace sim_p5;
+    if (g_simPhaseTune.move.enabled == 0.0 || world.links.empty() || superZone.empty()) return;
+    std::unordered_map<int, int> zoneSuper; // zone index -> supercell
+    for (size_t s = 0; s < superZone.size(); ++s)
+        if (superZone[s] >= 0) zoneSuper[superZone[s]] = (int)s;
+    for (const tbd::city::TransitLink& l : world.links) {
+        const uint16_t ts = l.share[tbd::city::kModeTransit];
+        if (!l.evaluated || ts == 0 || !(l.out.minutes > 0.0f)) continue;
+        const auto a = zoneSuper.find(l.from), b = zoneSuper.find(l.to);
+        if (a != zoneSuper.end() && b != zoneSuper.end()) f(a->second, b->second, (float)ts / 1000.0f, l.out.minutes);
+    }
+}
+// city_sim_budget.inl SimDayUpkeep: the lines' running cost of the last booked day, charged with the services (cents).
+int64_t SimTransitLineUpkeepDay() { return g_simPhaseTune.move.enabled != 0.0 ? sim_p5::book.UpkeepYesterday() : 0; }
 // P1 may read: where yesterday's immigrants arrived (one flow per connection, its point and count).
 const tbd::city::OutsideWorld& SimTransitOutside() { return sim_p5::outside; }
 
@@ -373,7 +391,7 @@ void FillTransit(tbd::gui::SimPanelSpec& p, void*) {
     for (int m = 0; m < kModeCount; ++m) parts.push_back({TravelModeName(m), world.Share(m), kCol[m]});
     p.Stacked("How people travel", parts);
     p.Stat("Fares yesterday", "+" + Money(book.FaresYesterday()), book.FaresYesterday() > 0 ? 1 : 0);
-    p.Stat("Vehicle running cost", Money(book.UpkeepYesterday()) + " a day (not charged yet)");
+    p.Stat("Vehicle running cost", Money(book.UpkeepYesterday()) + " a day (charged with the services)");
     p.Slider("Fare per boarding", &fareSlider, 0.0f, 5.0f, 0.25f, "%.2f");
     std::vector<std::pair<std::string, std::string>> rows;
     for (size_t l = 0; l < world.net.lines.size(); ++l) {

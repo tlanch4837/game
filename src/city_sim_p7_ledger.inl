@@ -62,6 +62,14 @@ void SimGovBeforeLedger() {
     if (g_simPhaseTune.goods.enabled != 0.0) {
         const double tariff = T().tradeTariffPermille * (gov.progress.Has(1u << 4) ? 1.5 : 1.0); // Trade Agreements
         inc.trade = (int64_t)std::llround((double)std::max<int64_t>(0, sim_p6::world.last.exportIncome) * tariff / 1000.0 * 100.0);
+        // the companies' profit tax: yesterday's positive profit (whole currency) at its category's rate x profitTaxShare
+        static const int kCatOf[4] = {3, 3, 1, 2}; // CompanyKind Raw, Processor, Shop, Office -> SimEconomy cat
+        double profit[4] = {0, 0, 0, 0};
+        sim_p6::world.cos.ForEach([&](uint32_t, const CompanyRec& c) {
+            if (c.closedDays <= 0 && c.profitLast > 0 && c.kind >= 0 && c.kind < 4) profit[kCatOf[c.kind]] += c.profitLast;
+        });
+        for (int k = 1; k < 4; ++k)
+            inc.cat[k] += (int64_t)std::llround(profit[k] * g_simEcon.taxRate10[k] / 1000.0 * std::clamp(T().profitTaxShare, 0.0, 1.0) * 100.0);
     }
     inc.policyCost = gov.last.policyCost; // SimDayUpkeep's (it ran just before, inside this ledger)
     gov.last = inc;
@@ -87,6 +95,17 @@ void SimGovAfterLedger() {
 }
 
 double SimGovUpkeepMul() { return sim_p7::on ? sim_p7::gov.ModsFor(0).serviceUpkeep : 1.0; }
+uint64_t SimGovModsVersion() { return sim_p7::on ? sim_p7::gov.modsVersion : 0; }
+// P4: a service's capacity and efficiency multiplier (city policies x the Budget panel's slider); -1 while P7 is off.
+float SimGovServiceCapacity(int slot) {
+    using namespace sim_p7;
+    if (!on) return -1.0f;
+    static uint64_t key = ~0ull;
+    static tbd::city::PolicyMods m;
+    const uint64_t k = gov.ComposeKey(0, 0);
+    if (k != key) key = k, m = gov.ModsFor(0);
+    return std::clamp(m.ServiceCapacity(slot), 0.25f, 2.0f);
+}
 int64_t SimGovPolicyCostDay() {
     using namespace sim_p7;
     if (!on) return 0;

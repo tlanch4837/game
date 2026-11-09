@@ -16,6 +16,11 @@ void Fresh() {
     const SvcParams keep = w.P;
     w = SvcWorld(), w.P = keep, w.seed = Seed(), w.events = &g_simEvents;
     w.delay = [](CellKey k) { const auto it = delay.find(PackKey(k)); return it == delay.end() ? 1.0f : it->second; };
+    w.rateMul = [](int c, int type) { // P7's policies of the cell's hood (cov cells are in CitySim order)
+        const auto& ch = herds_host::hoods.cellHood;
+        const PolicyMods& m = g_cellFactors.Mods(c >= 0 && (size_t)c < ch.size() ? ch[(size_t)c] : -1);
+        return type == kIncCrime ? m.crimeRate : type == kIncFire ? m.fireRate : type == kIncSick ? m.sicknessRate : 1.0f;
+    };
     seats = SvcSeatPass(), garb.Clear(), garbLoaded.clear(), garbFac.clear(), tookHour.clear();
     for (SvcGarbStats& s : garbHour) s = SvcGarbStats();
     job.reset(), lotsJob.reset(), links.clear();

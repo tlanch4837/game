@@ -16,6 +16,7 @@
 tbd::city::LifeSim g_life;
 tbd::city::SimEventRing g_simEvents;  // the phases' shared event ring (sim_events.h): producers push, news / radio read
 tbd::city::CellFactors g_cellFactors; // the phases' shared factor table (sim_factors.h): each field has one writer phase
+uint64_t g_simAbandonVersion = 0;     // P2 bumps it when a lot is abandoned, recovers or goes: P1 re-syncs its homes
 
 namespace herds_host { // city_herds.inl (included after the phase hub) owns these; P1 reads the hoods and the link table
 extern tbd::city::SimHoods hoods;
@@ -34,9 +35,9 @@ tbd::city::LifeChunks in;      // the .tbdsim chunks read on load
 uint8_t inMask = 0;            // which of the four came in (1 CITZ, 2 HHLD, 4 OCCU, 8 MIGR)
 tbd::city::LifeChunks image;   // one snapshot's image (CITZ's save makes it, the other three copy theirs)
 struct Sig {
-    uint64_t reg = ~0ull, zones = ~0ull, hoods = ~0ull;
+    uint64_t reg = ~0ull, zones = ~0ull, hoods = ~0ull, abandon = ~0ull;
     size_t cells = ~(size_t)0;
-    bool operator==(const Sig& o) const { return reg == o.reg && zones == o.zones && hoods == o.hoods && cells == o.cells; }
+    bool operator==(const Sig& o) const { return reg == o.reg && zones == o.zones && hoods == o.hoods && cells == o.cells && abandon == o.abandon; }
 } synced;
 uint64_t lastSyncMs = 0;
 double syncMs = 0.0, applyMs = 0.0; // last costs (the F3 line)
@@ -58,6 +59,38 @@ float TravelMinutes(int a, int b) {
     return std::isfinite(m) ? std::min(m, 600.0f) : 600.0f;
 }
 
+} // namespace sim_p1
+uint64_t SimTransitVersion(); // city_sim_p5.inl: the mode model's link results (0 while P5 is off)
+void SimTransitForEachCommute(const std::function<void(int, int, float, float)>& f);
+namespace sim_p1 {
+// P5's per-link commute: hood pairs whose supercells have transit riders get the share-weighted mix of road and transit
+// minutes in `travel` (their road minutes kept in mixedRoad, put back before the next mix). Hourly at most, on change.
+std::vector<std::pair<size_t, float>> mixedRoad;
+uint64_t mixKey = ~0ull;
+void MixTransit() {
+    const uint64_t key = SimTransitVersion() * 1000003ull ^ travelKey;
+    if (key == mixKey || !travelHoods) return;
+    mixKey = key;
+    for (size_t k = mixedRoad.size(); k-- > 0;) if (mixedRoad[k].first < travel.size()) travel[mixedRoad[k].first] = mixedRoad[k].second;
+    mixedRoad.clear();
+    const auto& hs = herds_host::hoods.hoods;
+    if ((int)hs.size() != travelHoods) return;
+    std::unordered_map<int, std::vector<int>> superHoods; // supercell -> hoods centred there
+    for (int h = 0; h < travelHoods; ++h)
+        if (!hs[(size_t)h].cells.empty()) superHoods[g_citySim.SuperOf(hs[(size_t)h].cells[0])].push_back(h);
+    SimTransitForEachCommute([&](int sa, int sb, float share, float tmin) {
+        const auto a = superHoods.find(sa), b = superHoods.find(sb);
+        if (a == superHoods.end() || b == superHoods.end()) return;
+        for (int ha : a->second)
+            for (int hb : b->second) {
+                const size_t i = (size_t)ha * (size_t)travelHoods + (size_t)hb;
+                const float road = std::isfinite(travel[i]) ? std::min(travel[i], 600.0f) : 600.0f;
+                mixedRoad.push_back({i, travel[i]});
+                travel[i] = road * (1.0f - share) + std::min(tmin, 600.0f) * share;
+            }
+    });
+}
+
 // The records' views into CitySim (cells and links) and the HUD totals.
 void Apply() {
     if (!cellsReady) return;
@@ -76,8 +109,18 @@ void SyncBuildings() {
     const double t0 = Now();
     const auto& hs = herds_host::hoods;
     LifeFillRows(g_simBuildings, g_citySim, g_zones.lots, [&hs](int c) { return (size_t)c < hs.cellHood.size() ? hs.cellHood[(size_t)c] : -1; });
+    // P2's abandoned lots stand empty: no homes and no jobs, so the sync below moves their people out and nobody moves in
+    int abandoned = 0;
+    for (uint32_t i = 1; i < g_simBuildings.Capacity(); ++i) {
+        const BuildingId id = g_simBuildings.At(i);
+        BuildingRow* r = g_simBuildings.Get(id);
+        if (!r || r->alive != 1 || r->origin != BOrigin::Lot || !g_simFlagTable.Has(id, kFlagAbandoned)) continue;
+        r->homes = 0, ++abandoned;
+        for (int e = 0; e < kEduLevels; ++e) r->jobSlots[e] = 0;
+    }
     g_life.SyncBuildings(g_simBuildings, [](const BuildingRow& r) { return r.origin == BOrigin::Lot ? LifeJobKind(r.kind) : -1; });
-    synced = {g_simBuildings.version, g_zones.version, hs.generation, g_citySim.cells.cells.size()};
+    if (synced.abandon != g_simAbandonVersion && abandoned) tbd::Log("Sim: P1 %d abandoned buildings stand empty", abandoned);
+    synced = {g_simBuildings.version, g_zones.version, hs.generation, g_simAbandonVersion, g_citySim.cells.cells.size()};
     lastSyncMs = tbd::platform::TickCountMs();
     syncMs = Now() - t0;
 }
@@ -109,6 +152,7 @@ void TravelStep() {
         return;
     }
     travel.swap(building), travelHoods = buildHoods, travelKey = key;
+    mixedRoad.clear(), mixKey = ~0ull; // a clean road matrix: the transit mix is redone at the next hour
     g_life.TravelChanged();
     static int logged = -1; // the hoods rebuild often while a city grows: log a new count only
     if (travelHoods != logged) logged = travelHoods, tbd::Log("Sim: P1 hood travel times for %d hoods", travelHoods);
@@ -120,6 +164,7 @@ void Tick(const tbd::city::SimTick& t) {
     g_life.Tick(t.minute);
     if (t.minute % 10 == 5) Apply();
     if (t.minute % 30 == 17) g_life.WriteFactors(g_cellFactors);
+    if (t.minute % 60 == 47) MixTransit(); // after P5's parking pass (:40): its link results of the hour
 }
 
 // "life.<name>" values of tuning.json into the citizen sim (the phase table holds only enabled and instantFill).
@@ -165,7 +210,7 @@ void SimP1Frame(float /*realDt*/) {
     // The load's lots are back: the registry claims their saved ids by key at the next sync (forced below). Rows that
     // never come back stay reserved (LifeSyncBuildings keeps them) until P0 releases them; then their people move out.
     if (waitLots) return;
-    const Sig sig{g_simBuildings.version, g_zones.version, herds_host::hoods.generation, g_citySim.cells.cells.size()};
+    const Sig sig{g_simBuildings.version, g_zones.version, herds_host::hoods.generation, g_simAbandonVersion, g_citySim.cells.cells.size()};
     const bool first = !cellsReady || bootstrap;
     if (first || (!(sig == synced) && now - lastSyncMs >= 1000)) { // ~2 ms at 15k lots: the registry's own cadence
         if (first) SimBuildingsSync(true); // the registry has every lot now
@@ -225,6 +270,7 @@ void SimP1Load(const tbd::city::SimLoadReport& rep) {
     g_life.w.cal = g_simCalendar;
     g_life.Reset(CitySeed());
     cellsReady = false, bootstrap = false, synced = Sig(), travelKey = buildKey = ~0ull, travelHoods = 0;
+    mixedRoad.clear(), mixKey = ~0ull;
     if (inMask == 15 && bldgOk) {
         if (LifeLoad(g_life, in)) tbd::Log("Sim: P1 loaded %u citizens in %u households", g_life.w.cit.Live(), g_life.w.hh.Live());
         else tbd::Log("Sim: P1 chunks did not check out: citizens start fresh"), bootstrap = true;

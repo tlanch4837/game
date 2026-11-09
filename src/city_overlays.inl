@@ -198,11 +198,45 @@ void OverlaysHud() { tbd::gui::OverlayHudFrame(g_gui, g_overlayHud, 8.0f + 5 * 6
 //   sim|herds               neighbourhoods, herds, children and their cost (city_herds.inl)
 //   sim|follow[|off]        promote the car nearest the camera target and follow it
 //   sim|clock|<hour>        set the game clock to that hour of the current day
+//   sim|phases              one line of every phase's numbers (the cross-phase soak check)
+//   sim|panel|<id>          open a sim phase panel by id ("p7.budget"; empty closes)
 int g_simRemoteBudget = -1; // read by SimHudFill's caller: open (1) / close (0) the Budget panel once
+int g_simRemotePanel = -2;  // read there too: open that SimPanelRegistry index (-1 closes) once
+void SimPhasesReport(std::string& out) {
+    using namespace tbd::city;
+    char b[1024];
+    double cov = 0, land = 0;
+    int cells = 0;
+    for (size_t c = 0; c < g_citySim.sim.size(); ++c) {
+        if (!g_citySim.sim[c].Population()) continue;
+        const CellFactor& f = g_cellFactors.At((int)c);
+        cov += (f.coverage[kSvcFire] + f.coverage[kSvcPolice] + f.coverage[kSvcHealth] + f.coverage[kSvcSchool]) / 4.0, land += g_citySim.sim[c].landValue, ++cells;
+    }
+    if (cells) cov /= cells, land /= cells;
+    int64_t imp = 0, exp = 0;
+    for (int g = 0; g < kGoodCount; ++g) imp += sim_p6::world.last.imported[(size_t)g], exp += sim_p6::world.last.exported[(size_t)g];
+    const auto& mm = sim_p5::world.modeMille;
+    const double trips = (double)(mm[0] + mm[1] + mm[2] + mm[3]) / 1000.0;
+    std::snprintf(b, sizeof(b),
+                  "day %d | P1 pop %u hh %u working %llu jobs %llu homes %llu | P2 demand R %.2f C %.2f O %.2f I %.2f land %.1f abandoned %d (total %llu) "
+                  "| P4 cov %.0f incidents %u | P5 lines %zu trips %.0f transit %.1f%% fares %lld upkeep %lld outside %zu cap %lld "
+                  "| P6 companies %u bankrupt %d import %lld export %lld tradeCap %lld | P7 treasury %lld income %lld expenses %lld happy %d level %d",
+                  g_clock.Day(), g_life.w.Population(), g_life.w.hh.Live(), (unsigned long long)g_simTotals.working, (unsigned long long)g_simTotals.jobs,
+                  (unsigned long long)g_simTotals.homes, g_simGrowth.demand[0], g_simGrowth.demand[1], g_simGrowth.demand[2], g_simGrowth.demand[3], land,
+                  sim_p2::lots.AbandonedNow(), (unsigned long long)sim_p2::lots.abandonedTotal, cov, sim_p4::w.inc.Live(), sim_p5::world.net.lines.size(), trips,
+                  trips > 0 ? (double)mm[kModeTransit] / 10.0 / trips : 0.0, (long long)(sim_p5::book.FaresYesterday() / 100),
+                  (long long)(sim_p5::book.UpkeepYesterday() / 100), sim_p5::outside.flows.size(), (long long)SimTransitCargoCapacity(), sim_p6::world.cos.pool.Live(),
+                  (int)sim_p6::world.bankruptTotal, (long long)imp, (long long)exp, (long long)sim_p6::world.tradeCap, (long long)(g_simEcon.treasury / 100),
+                  (long long)(g_simEcon.LastIncome() / 100), (long long)((g_simBudget.LastExpenses() + g_simBudget.lastRepayment) / 100),
+                  (int)sim_p7::gov.happy.Permille(), sim_p7::gov.progress.level);
+    out = b;
+}
 bool SimRemote(const std::vector<std::string>& a, std::string& out) {
     using namespace tbd::city;
     const std::string sub = a.size() > 1 ? a[1] : "stats";
     const std::string arg = a.size() > 2 ? a[2] : "";
+    if (sub == "phases") { SimPhasesReport(out); return true; }
+    if (sub == "panel") { g_simRemotePanel = arg.empty() ? -1 : tbd::gui::FindSimPanel(arg.c_str()); out = "panel " + std::to_string(g_simRemotePanel); return true; }
     if (sub == "stats") {
         int counts[kFlagCount] = {};
         for (uint32_t f : g_simFlags)

@@ -56,9 +56,14 @@ uint64_t delayFrom = ~0ull;
 
 double Now() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 uint64_t Seed() { return (uint64_t)(uint32_t)g_engine.terrain.params.seed ^ 0x5E4Cull; }
-// The funding of a slot: the budget's six sliders for the legacy services (schools of all levels share one), P4's own
-// for the rest.
+} // namespace sim_p4
+float SimGovServiceCapacity(int slot); // city_sim_p7_ledger.inl: policy x Budget panel slider per slot, -1 while P7 is off
+namespace sim_p4 {
+// The funding of a slot: with P7 on, its Budget panel slider (all twelve) times the city's service capacity policy;
+// else the budget's six sliders for the legacy services (schools of all levels share one), P4's own for the rest.
 float FundingOf(int slot) {
+    const float gov = SimGovServiceCapacity(slot);
+    if (gov >= 0.0f) return gov;
     if (slot == kSvcHighSchool || slot == kSvcUniversity) return g_simFunding[kSchool];
     return slot >= 0 && slot < kServices ? g_simFunding[slot] : slot >= 0 && slot < kServicesV2 ? funding[slot] : 1.0f;
 }

@@ -58,6 +58,7 @@ bool loadedHasPending = false;
 } // namespace sim_p2
 
 bool SimP2On() { return g_simPhaseTune.land.enabled != 0.0; }
+uint64_t SimGovModsVersion(); // city_sim_p7.inl: bumps when the policy mods per hood were recomposed (0 while P7 is off)
 
 void SimP2ApplyTuning(const tbd::city::LandTuning& t) {
     using namespace sim_p2;
@@ -106,7 +107,9 @@ void WriteCell(int ci) {
     g_citySim.sim[(size_t)ci].landValue = v;
     g_cellFactors.Fit(g_citySim.sim.size());
     const int tier = (size_t)ci < cellDensity.size() ? cellDensity[(size_t)ci] : kDensityRow;
-    g_cellFactors.cells[(size_t)ci].rentBurden = RentBurden(rp, v, tier);
+    const auto& ch = herds_host::hoods.cellHood; // P7's rent policy of the cell's hood (1 = none)
+    const float policy = g_cellFactors.Mods((size_t)ci < ch.size() ? ch[(size_t)ci] : -1).rent;
+    g_cellFactors.cells[(size_t)ci].rentBurden = RentBurden(rp, v, tier, policy);
 }
 void WriteAllCells() {
     for (size_t c = 0; c < g_citySim.sim.size(); ++c) WriteCell((int)c);
@@ -200,6 +203,10 @@ uint8_t LotBits(const tbd::city::Lot& l, size_t li) {
     if (f & kFlagPolluted) b |= kLotInPolluted;
     if (f & kFlagHighRent) b |= kLotInHighRent;
     if (id.Valid() && closed.count(id.v)) b |= kLotInClosed;
+    if (SimP1On() && id.Valid() && !(f & kFlagAbandoned)) { // P1's records: someone lives or works here
+        const LifeBuilding* L = g_life.w.B(id.v);
+        if (L && (L->used + L->stat > 0 || (L->Slots() && L->filled[0] + L->filled[1] + L->filled[2] + L->filled[3] + L->filled[4] > 0))) b |= kLotInOccupied;
+    }
     return b;
 }
 tbd::city::LotInputs LotIn(const tbd::city::Lot& l, size_t li) {
@@ -212,8 +219,9 @@ tbd::city::LotInputs LotIn(const tbd::city::Lot& l, size_t li) {
 // The utilities solve or a phase's flags changed: only the lots whose bits differ from what they were judged with get
 // re-judged. The comparison itself is spread: at most 600 lots a tick from where it stopped (a pass restarts on a change).
 size_t diffCursor = ~(size_t)0;
-void DiffLotBits() {
+void DiffLotBits(int64_t minute) {
     if (bitsUtil != g_simFlagsVersion || bitsTable != g_simFlagTable.version) bitsUtil = g_simFlagsVersion, bitsTable = g_simFlagTable.version, diffCursor = 0;
+    if (minute % 60 == 20 && SimP1On()) diffCursor = 0; // P1's occupancy (kLotInOccupied) has no version: an hourly pass
     if (diffCursor >= g_zones.lots.size()) return;
     const size_t end = std::min(g_zones.lots.size(), diffCursor + 600);
     for (; diffCursor < end; ++diffCursor) {
@@ -248,8 +256,8 @@ void DrainLotEvents(int64_t minute) {
     for (const LotEvent& e : lots.events) {
         const BuildingId b = LotBuilding(e.lot);
         g_simEvents.Push(kType[(int)e.type], minute, b.v, 0, e.type == LotEventType::Demolished ? -1 : e.level);
-        if (e.type == LotEventType::Abandoned) g_simFlagTable.Write(b, kFlagAbandoned, kFlagAbandoned);
-        if (e.type == LotEventType::Recovered || e.type == LotEventType::Demolished) g_simFlagTable.Write(b, kFlagAbandoned, 0);
+        if (e.type == LotEventType::Abandoned) g_simFlagTable.Write(b, kFlagAbandoned, kFlagAbandoned), ++g_simAbandonVersion;
+        if (e.type == LotEventType::Recovered || e.type == LotEventType::Demolished) g_simFlagTable.Write(b, kFlagAbandoned, 0), ++g_simAbandonVersion;
         if (logged++ < 3) tbd::Log("Sim P2: lot %llu %s (L%d)", (unsigned long long)e.lot, kText[(int)e.type], e.level);
     }
     g_simGrowth.levelUps = lots.levelUps, g_simGrowth.levelDowns = lots.levelDowns, g_simGrowth.abandoned = lots.abandonedTotal;
@@ -260,7 +268,7 @@ void DrainLotEvents(int64_t minute) {
 void SimP2LotsTick(int64_t minute) {
     namespace s = sim_p2;
     const double t0 = g_sim.nowMs();
-    s::DiffLotBits();
+    s::DiffLotBits(minute);
     s::lots.Tick(g_zones, minute, g_simGrowth.demand, [](const tbd::city::Lot& l, size_t li) { return s::LotIn(l, li); });
     if (!s::lots.events.empty()) s::DrainLotEvents(minute);
     // the debug check: one group of lots a tick re-judged from scratch, over checkHours (0 off)
@@ -271,6 +279,8 @@ void SimP2LotsTick(int64_t minute) {
             tbd::city::LotInputs in;
             in.land = s::cur->field.CellCount() ? s::cur->field.At(l.c.x, l.c.z) : s::CellValue(tbd::city::CellKeyAt(l.c.x, l.c.z));
             in.bits = s::LotBits(l, li);
+            const auto it = s::lotBits.find(l.id); // occupancy is sampled hourly (DiffLotBits): judge it as it was sampled
+            if (it != s::lotBits.end()) in.bits = (uint8_t)((in.bits & ~tbd::city::kLotInOccupied) | (it->second & tbd::city::kLotInOccupied));
             return in;
         }, (size_t)(minute % 60), groups);
         if (bad) s::checkMismatch += bad, tbd::Log("Sim P2: check: %d lots judged on stale inputs (minute %lld)", bad, (long long)minute);
@@ -585,6 +595,9 @@ void SimP2Init() {
 void SimP2Frame(float /*realDt*/) {
     namespace s = sim_p2;
     s::ReadEvents();
+    static uint64_t modsKey = ~0ull; // P7's policies or the hoods changed: every cell's rent follows its hood's rent mod
+    const uint64_t mk = SimGovModsVersion() * 1000003ull ^ herds_host::hoods.generation;
+    if (mk != modsKey) modsKey = mk, s::writtenCells = 0;
     if (g_citySim.sim.size() < s::writtenCells) s::writtenCells = 0; // the cells were cleared
     if (g_citySim.sim.size() > s::writtenCells) {
         for (size_t c = s::writtenCells; c < g_citySim.sim.size(); ++c) s::WriteCell((int)c);
@@ -632,7 +645,7 @@ void SimP2Load(const tbd::city::SimLoadReport& rep) {
     for (uint32_t b : g_p2LoadedHigh) g_simFlagTable.Write(BuildingId(b), kFlagHighRent, kFlagHighRent);
     g_p2LoadedHigh.clear();
     for (const auto& kv : s::lots.st) // P2's abandoned bit from the lot states
-        if (kv.second.abandoned) g_simFlagTable.Write(s::LotBuilding(kv.first), kFlagAbandoned, kFlagAbandoned);
+        if (kv.second.abandoned) g_simFlagTable.Write(s::LotBuilding(kv.first), kFlagAbandoned, kFlagAbandoned), ++g_simAbandonVersion;
     if (ok(simchunk::GROW)) g_simGrowth.levelUps = s::lots.levelUps, g_simGrowth.levelDowns = s::lots.levelDowns, g_simGrowth.abandoned = s::lots.abandonedTotal;
     else s::lots.levelUps = g_simGrowth.levelUps, s::lots.levelDowns = g_simGrowth.levelDowns, s::lots.abandonedTotal = g_simGrowth.abandoned;
     if (ok(simchunk::GROW) || ok(simchunk::LAND)) tbd::Log("Sim P2: %d lots, %zu land cells loaded%s", s::lots.Tracked(), s::cur->value.size(), s::job ? ", a land pass pending" : "");

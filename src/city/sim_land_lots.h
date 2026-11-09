@@ -52,7 +52,9 @@ struct LotParams {
 };
 
 enum LotCond : uint8_t { kLotNeutral = 0, kLotGood = 1, kLotBad = 2 };
-enum LotInBits : uint8_t { kLotInPower = 1, kLotInWater = 2, kLotInSewage = 4, kLotInPolluted = 8, kLotInHighRent = 16, kLotInClosed = 32 };
+// kLotInOccupied: people live or work in it (P1's records). Low demand for its category makes only an EMPTY lot bad: an
+// occupied building is not abandoned because the city has more of its kind than it wants (that only stops new ones).
+enum LotInBits : uint8_t { kLotInPower = 1, kLotInWater = 2, kLotInSewage = 4, kLotInPolluted = 8, kLotInHighRent = 16, kLotInClosed = 32, kLotInOccupied = 64 };
 
 // What a lot's condition depends on, besides its category's demand.
 struct LotInputs {
@@ -63,7 +65,8 @@ struct LotInputs {
 inline uint8_t LotCondition(const LotParams& p, int level, const LotInputs& in, double demand) {
     const bool power = !p.utilitiesRequired || (in.bits & kLotInPower), water = !p.utilitiesRequired || (in.bits & kLotInWater);
     const bool sewage = !p.utilitiesRequired || (in.bits & kLotInSewage);
-    if (!power || !water || demand < p.badDemand || (int)in.land < p.DownLand(level) || (in.bits & kLotInClosed)) return kLotBad;
+    const bool unwanted = demand < p.badDemand && !(in.bits & kLotInOccupied);
+    if (!power || !water || unwanted || (int)in.land < p.DownLand(level) || (in.bits & kLotInClosed)) return kLotBad;
     if (sewage && demand > 0.0 && (int)in.land >= p.UpLand(level) && !(in.bits & (kLotInHighRent | kLotInPolluted))) return kLotGood;
     return kLotNeutral;
 }

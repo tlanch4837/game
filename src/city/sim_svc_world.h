@@ -58,6 +58,7 @@ public:
     uint64_t seed = 1;
     SimEventRing* events = nullptr;
     std::function<float(CellKey)> delay; // traffic: x the free-flow minutes (1: empty roads); null = 1
+    std::function<float(int cell, int type)> rateMul; // policies (P7 PolicyMods): x a cell's crime / fire / sick rate; null = 1
     // the applied coverage (the pass's input and output) and its lookups
     SvcCovIn cov;
     SvcCovOut out;

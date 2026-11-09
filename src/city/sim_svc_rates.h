@@ -77,8 +77,10 @@ inline void SvcVisitGroup(SvcWorld& w, size_t group, int64_t minute, CellFactors
         const CellFactor& f = factors ? factors->At(c) : kNeutral;
         const SvcCellRates rt = SvcRatesOf(w, c, f);
         SplitMix64 r(SimSeed(w.seed ^ PackKey(k), (uint64_t)day, 0x1C1Dull));
-        const float lam[3] = {rt.crime, rt.fire, rt.sick};
         static const uint8_t kType[3] = {kIncCrime, kIncFire, kIncSick};
+        float lam[3] = {rt.crime, rt.fire, rt.sick};
+        if (w.rateMul)
+            for (int t = 0; t < 3; ++t) lam[t] *= std::max(0.0f, w.rateMul(c, kType[t]));
         for (int t = 0; t < 3; ++t) {
             const int n = SvcPoisson(r, lam[t]);
             for (int j = 0; j < n; ++j) {
