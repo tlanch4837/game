@@ -45,6 +45,10 @@ struct PolicyMods {
     float transitFare = 1.0f, carUse = 1.0f, heavyTraffic = 1.0f;
     float rent = 1.0f, taxResidential = 1.0f, taxCommercial = 1.0f, taxIndustrial = 1.0f, taxOffice = 1.0f;
     float happiness = 1.0f, leisure = 1.0f;
+    // P7: the Budget panel's per-service slider (50 .. 150 % -> 0.5 .. 1.5), by ServiceV2 slot. A service's capacity and
+    // efficiency multiplier is ServiceCapacity(svc) (the policy multiplier times the budget); its upkeep scales the same.
+    float serviceBudget[kServicesV2] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float ServiceCapacity(int svc) const { return serviceCapacity * (svc >= 0 && svc < kServicesV2 ? serviceBudget[svc] : 1.0f); }
 };
 
 class CellFactors {

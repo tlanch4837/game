@@ -183,7 +183,18 @@ TBD_SIM_TUNING_TABLE(GoodsTuning, "goods.", TBD_SIM_TUNING_GOODS)
 
 // ---- P7 budget, policies, districts, milestones (gov.) ----------------------------------------------------------------
 #define TBD_SIM_TUNING_GOV(X)                                                                                               \
-    X(enabled, 1.0)
+    X(enabled, 1.0)                                                                                                         \
+    X(resTaxableShare, 0.005)          /* share of a household's monthly wages the residential rate applies to (the old  */ \
+                                       /* per-resident yield at 10 %)                                                     */ \
+    X(powerFeePerResDay, 6.0)          /* cents per resident a day at a 100 % fee, served cells only                      */ \
+    X(waterFeePerResDay, 5.0)                                                                                               \
+    X(feeHappyPerPoint, 0.0008)        /* happiness multiplier lost per fee point above 100 % (gained below)              */ \
+    X(tradeTariffPermille, 20.0)       /* the city's share of the companies' export income (P6), permille                 */ \
+    X(xpPerResident, 1.0)              /* XP per resident above the best population so far                                */ \
+    X(xpPerBuilding, 5.0)              /* XP per service / transport building placed (first time its id is seen)          */ \
+    X(xpHappyPerDay, 0.02)             /* daily XP per resident while the mean happiness is above 60 %                    */ \
+    X(xpLevelBase, 400.0)              /* XP to the first level; each level needs xpLevelGrowth times the last            */ \
+    X(xpLevelGrowth, 1.35)
 TBD_SIM_TUNING_TABLE(GovTuning, "gov.", TBD_SIM_TUNING_GOV)
 
 // All seven, read from one text. `unknown` gets the prefixed names no table knows (names with no phase prefix are

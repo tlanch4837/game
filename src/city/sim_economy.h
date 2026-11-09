@@ -33,10 +33,20 @@ public:
     void Reset(const SimTuning& t) {
         treasury = (int64_t)t.startingMoney;
         for (int c = 0; c < kCats; ++c) taxRate10[c] = 100, lastIncome[c] = 0;
-        lastUpkeep = 0, lastDay = -1, days = 0;
+        lastUpkeep = 0, lastDay = -1, days = 0, hasPreset = false, lastOther = 0;
     }
 
-    int64_t LastIncome() const { return lastIncome[0] + lastIncome[1] + lastIncome[2] + lastIncome[3]; }
+    // Phase 7 (sim_gov_tax.h) hands the day's income in before Day: residential tax from the households' wages by education
+    // level, C / O / I with the district policies, and other income (service fees, trade). Without a preset Day keeps the
+    // per-resident / per-job formula below (old tests, P7 off).
+    bool hasPreset = false;
+    int64_t preset[kCats] = {}, presetOther = 0, lastOther = 0;
+    void PresetIncome(const int64_t (&in)[kCats], int64_t other) {
+        for (int c = 0; c < kCats; ++c) preset[c] = in[c];
+        presetOther = other, hasPreset = true;
+    }
+
+    int64_t LastIncome() const { return lastIncome[0] + lastIncome[1] + lastIncome[2] + lastIncome[3] + lastOther; }
     int64_t LastNet() const { return LastIncome() - lastUpkeep; }
 
     // Income of one day from the cells' counters, cents per category.
@@ -61,7 +71,12 @@ public:
 
     // One game day: income in, upkeep (cents per day, already scaled by funding) out.
     void Day(const CitySim& s, const SimTuning& t, int64_t upkeepPerDay) {
-        DayIncome(s, t, lastIncome);
+        if (hasPreset) {
+            for (int c = 0; c < kCats; ++c) lastIncome[c] = preset[c];
+            lastOther = presetOther, hasPreset = false;
+        } else {
+            DayIncome(s, t, lastIncome), lastOther = 0;
+        }
         lastUpkeep = std::max<int64_t>(0, upkeepPerDay);
         treasury += LastIncome() - lastUpkeep;
         ++days;

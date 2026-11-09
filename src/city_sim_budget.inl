@@ -47,6 +47,13 @@ void SimNews(const char* trigger) {
     if (g_simNews.Post(trigger, text, tone)) tbd::Log("News [%s]: %s", trigger, text.c_str());
 }
 
+// Phase 7's ledger hooks (city_sim_p7.inl; they do nothing while gov.enabled is 0).
+void SimGovBeforeLedger();
+void SimGovAfterLedger();
+double SimGovUpkeepMul();       // the city-wide policies' and the tree's service upkeep multiplier
+int64_t SimGovPolicyCostDay();  // what the policies cost today, cents (shown with the services)
+extern bool g_simHudPush;       // city_sim.inl: the rates go back into the CS2 HUD's Budget panel
+
 // The day's upkeep split for the ledger (cents per day).
 tbd::city::DayUpkeep SimDayUpkeep() {
     using namespace tbd::city;
@@ -57,8 +64,9 @@ tbd::city::DayUpkeep SimDayUpkeep() {
         if (!b.alive || b.state != BState::Done) continue;
         const BuildingDef& d = Defs()[b.def];
         const int kind = SimServiceKind(d);
-        up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale : 1.0);
+        up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale * SimGovUpkeepMul() : 1.0);
     }
+    up.services += SimGovPolicyCostDay();
     up.roads = RoadUpkeepPerDay(PaidLaneMetres(SimRoadLaneMetres(), g_cityMapLaneMetres), kRoadUpkeepPerLaneKmDay); // not the map's corridor
     return up;
 }
@@ -171,8 +179,10 @@ void SimRegisterEconomy() {
     g_simEcon.Reset(g_simTune);
     g_sim.Register("economy", 1440, 1, [](const tbd::city::SimTick& t) {
         if (t.minute < g_simLedgerFrom + 1440) return; // a fresh city's first (partial) day: no ledger yet
+        SimGovBeforeLedger(); // Phase 7: the day's taxes from the households, fees and trade (city_sim_p7.inl)
         g_simBudget.Day(g_simEcon, g_citySim, g_simTune, SimDayUpkeep(), (int64_t)g_simTotals.population); // SimEconomy::Day inside
         SimBudgetEvents();
+        SimGovAfterLedger(); // the statistics sample, XP
     });
 }
 
@@ -224,9 +234,14 @@ void SimBudgetHudFill(tbd::gui::CityHud& hud) {
     }
 }
 // After the HUD drew: the panel's sliders into the sim.
+// Only a slider the player moved in that panel is taken: the Phase 7 panels (city_sim_p7_panels.inl) write the same rates,
+// and the HUD gets them back through g_simHudPush.
 void SimHudRead(const tbd::gui::CityHud& hud) {
-    for (int c = 0; c < 4; ++c) g_simEcon.taxRate10[c] = (int)std::lround(std::clamp(hud.tax[c], 0.0f, 30.0f) * 10.0f);
-    for (int k = 0; k < tbd::city::kServices; ++k) g_simFunding[k] = std::round(std::clamp(hud.funding[k], 50.0f, 150.0f)) / 100.0f;
+    static float lastTax[4] = {-1, -1, -1, -1}, lastFund[tbd::city::kServices] = {-1, -1, -1, -1, -1, -1};
+    for (int c = 0; c < 4; ++c)
+        if (hud.tax[c] != lastTax[c]) lastTax[c] = hud.tax[c], g_simEcon.taxRate10[c] = (int)std::lround(std::clamp(hud.tax[c], 0.0f, 30.0f) * 10.0f);
+    for (int k = 0; k < tbd::city::kServices; ++k)
+        if (hud.funding[k] != lastFund[k]) lastFund[k] = hud.funding[k], g_simFunding[k] = std::round(std::clamp(hud.funding[k], 50.0f, 150.0f)) / 100.0f;
     if (hud.bv.takeLoan >= 0 && g_simBudget.TakeLoan(hud.bv.takeLoan, g_simEcon)) Toast("LOAN TAKEN"), SimBudgetEvents();
     if (hud.bv.repayLoan >= 0) {
         for (size_t i = 0; i < g_simBudget.loans.size(); ++i)
