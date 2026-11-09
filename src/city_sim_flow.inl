@@ -37,6 +37,7 @@ void SimDirtyRoadCells() {
 }
 
 void SimAppendTownTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips); // city_herds.inl (town traffic)
+float SimTransitCommuteCarShare(int homeSuper, int jobSuper, float fallback);                 // city_sim_p5.inl (mode choice)
 
 // The trips of the peak hour: commutes from the supercell links, shopping from homes to commercial (gravity).
 void SimBuildTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips) {
@@ -66,9 +67,12 @@ void SimBuildTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& 
         node[(size_t)s] = t < 0.5f ? sg.a : sg.b;
         if (node[(size_t)s] >= g.nodes) node[(size_t)s] = -1;
     }
-    const float commute = (float)(g_simTune.flowCarShare * g_simTune.flowPeakShare);
+    // the commuters who drive: Phase 5's mode choice per link (car + taxi share; city_sim_p5.inl), the old constant
+    // until it has looked at the link
+    const float carShare = (float)g_simTune.flowCarShare, peak = (float)g_simTune.flowPeakShare;
     g_citySim.ForEachLink([&](int h, int j, int32_t n) {
         if (h == j || node[(size_t)h] < 0 || node[(size_t)j] < 0 || node[(size_t)h] == node[(size_t)j]) return;
+        const float commute = SimTransitCommuteCarShare(h, j, carShare) * peak;
         trips.push_back({node[(size_t)h], node[(size_t)j], (float)n * commute, (int)(SimSeed(7, (uint64_t)h * 131 + (uint64_t)j) % 3)});
     });
     for (int h = 0; h < nsc; ++h) {
