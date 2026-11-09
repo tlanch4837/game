@@ -102,6 +102,7 @@
 #include "scene_io.h"
 #include "stats.h"
 #include "sun.h"
+#include "max_look.h"
 #include "terrain.h"
 #include "tools.h"
 #include "water.h"

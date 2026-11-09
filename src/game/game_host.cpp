@@ -100,6 +100,7 @@
 #include "scene_io.h"
 #include "stats.h"
 #include "sun.h"
+#include "max_look.h"         // Graphics: MAX over the scene's sun (game_core.inl SetMaxGraphics)
 #include "terrain.h"
 #include "tools.h"
 #include "water.h"
