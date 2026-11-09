@@ -222,6 +222,7 @@
             if (_toolDrag) tbd::host::PointerMove((float)_fingerNow.x, (float)_fingerNow.y); // the tool's ground point follows the moving view
         }
     }
+    tbd::host::SetThermalState((int)[NSProcessInfo processInfo].thermalState); // the sim's budget shrinks when the device heats up
     tbd::host::Frame();
 }
 

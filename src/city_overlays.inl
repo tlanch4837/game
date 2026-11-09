@@ -212,6 +212,11 @@ bool SimRemote(const std::vector<std::string>& a, std::string& out) {
                       (unsigned long long)g_simTotals.population, g_simMilestones.Level(), g_simMilestones.Current().name, (long long)(g_simEcon.treasury / 100),
                       g_zones.lots.size(), counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], g_simBudget.loans.size(), (int)g_simBudget.bankrupt);
         out = b;
+        // the phases' bits, the weather, and the sim's cost (F3 SIM TOTAL: all of SimSync per frame)
+        std::snprintf(b, sizeof(b), " | polluted %d flooded %d noisy %d nogoods %d nofreight %d | weather %s %s | sim total %.3f ms avg (last %.3f), scheduler %.3f ms avg",
+                      counts[14], counts[15], counts[20], counts[12], counts[25], SimEnvChip().c_str(), SimEnvSeasonName(), g_simTotalAvgMs, g_simTotalMs,
+                      g_sim.AvgFrameMs());
+        out += b;
         return true;
     }
     if (sub == "overlay") {

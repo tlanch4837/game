@@ -76,6 +76,8 @@
 #include "city/sim_factors.h"        // the phases' shared CellFactors (sim roadmap 3.2)
 #include "city/sim_env_save.h"       // Phase 3 environment and its .tbdsim chunks (city_sim_p3.inl)
 #include "city/sim_goods_save.h"     // Phase 6 goods, companies, trade and their .tbdsim chunks (city_sim_p6.inl)
+#include "city/sim_preset.h"         // the sim's per-preset and thermal scaling (city_sim.inl SimApplyPreset)
+#include "gfx_settings.h"             // the player's graphics preset (the sim scales with it)
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
 #include "city/city_interact.h" // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)
@@ -171,6 +173,8 @@ void tbd::host::Init(const std::wstring& assetsRoot) {
 }
 
 void tbd::host::ResumeAudio() { tbd::audio::Resume(); }
+
+void tbd::host::SetThermalState(int state) { SimSetThermal(state); } // city_sim.inl: the sim's budget follows it
 
 void tbd::host::EnterBackground() {
     if (g_engine.renderer) SimEnterBackground(); // city_sim_save.inl: an autosave, written before this returns

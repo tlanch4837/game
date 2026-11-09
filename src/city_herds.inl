@@ -33,7 +33,8 @@ tbd::city::RouteCache trees;
 tbd::city::ChildSystem children;
 tbd::city::TownTraffic town; // local trips, outside connections, parked cars
 std::vector<tbd::city::V2> townFlagged; // the road outside connections' points (reused)
-constexpr int kMaxParked = 240;         // parked cars drawn near the camera
+constexpr int kMaxParked = 240;         // parked cars drawn near the camera (at most; the preset lowers it: g_simPreset)
+float densityBase = 1.0f;               // TBD_HERD_DENSITY or sim|herds|density; the preset scales it (g_simPreset.carDensity)
 bool registered = false, enabled = true, tableReady = false;
 uint64_t generation = ~0ull;
 double childMs = 0, childAvgMs = 0, releaseMs = 0, moveAvgMs = 0, hoodMs = 0;
@@ -164,7 +165,7 @@ void HerdsRelease(const tbd::city::SimTick& t) {
     // connections): freight node links, drawn as cars like the rest (goods.truckDrawShare scales them)
     const std::vector<NodeLink>& trucks = SimGoodsTruckLinks();
     const std::vector<NodeLink>* nodes = &town.links;
-    const float share = (float)std::clamp(g_simPhaseTune.goods.truckDrawShare, 0.0, 4.0);
+    const float share = (float)std::clamp(g_simPhaseTune.goods.truckDrawShare, 0.0, 4.0) * g_simPreset.truckShare;
     if (!trucks.empty() && share > 0.0f && g_simPhaseTune.goods.enabled != 0.0) {
         nodeLinks.assign(town.links.begin(), town.links.end());
         truckLinksDrawn = 0;
@@ -195,7 +196,7 @@ void Init() {
     g_sim.Register("hoods", 10, 1, HoodsTick); // with the herds off too: its town traffic feeds the flow's cosmetic cars
     if (!enabled) return;
     herds.seed = children.params.citySeed = 0x5EED;
-    children.params.densityScale = (float)sim_host::EnvDouble("TBD_HERD_DENSITY", 1.0); // visible cars per vehicle in the herds
+    densityBase = (float)sim_host::EnvDouble("TBD_HERD_DENSITY", 1.0); // visible cars per vehicle in the herds (x the preset's)
     g_sim.Register("herds", tbd::city::kWindowMinutes, 1, HerdsRelease);
     g_sim.Register("herdmove", 1, 1, HerdsMove);
     children.tenant = [](const tbd::city::Herd& h, bool home, uint64_t rnd, tbd::city::TenantSlot& out) {
@@ -228,6 +229,7 @@ void HerdsSync(float realDt) {
     frameDt = realDt;
     if (!tableReady || g_engine.camera.distance > 1400.0f) return;
     children.params.models = std::max(1, (int)g_simCars.size());
+    children.params.densityScale = densityBase * g_simPreset.carDensity; // the preset and the thermal state (city/sim_preset.h)
     const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
     const double dt = g_clock.paused ? 0.0 : (double)realDt * (1.0 + 0.5 * g_clock.speed);
     children.params.radius = std::clamp(g_engine.camera.distance * 1.2f, 150.0f, 700.0f);
@@ -256,7 +258,7 @@ void HerdsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
     children.Collect(moving, parked, focus);
     // curbside cars: home at night, work by day; a spot that changes in view fades
-    town.Parked(focus, children.params.radius, g_clock.minutes, parked, kMaxParked, g_clock.paused ? 0.0f : frameDt);
+    town.Parked(focus, children.params.radius, g_clock.minutes, parked, std::min(kMaxParked, g_simPreset.maxParked), g_clock.paused ? 0.0f : frameDt);
     moving.insert(moving.end(), parked.begin(), parked.end());
     // the near ones cast shadows like the cosmetic cars (city_sim.inl SimAgentsCasters draws these rows next frame)
     g_simCarShadowRows.resize(g_simCars.size());
@@ -297,7 +299,7 @@ bool HerdsRemote(const std::string& sub, const std::string& arg, std::string& ou
     using namespace tbd::city;
     char b[900];
     if (sub == "density") {
-        children.params.densityScale = (float)std::clamp(atof(arg.c_str()), 0.05, 4.0);
+        densityBase = (float)std::clamp(atof(arg.c_str()), 0.05, 4.0);
         out = "density " + arg;
         return true;
     }

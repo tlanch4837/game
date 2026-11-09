@@ -38,6 +38,26 @@ const char* SimEnvSeasonName();
 bool SimEnvSunny();
 bool g_simLoadInProgress = false; // SimSync: the reset being settled came with a load (P1 bootstraps after its lots)
 
+// ---- the sim's share of the graphics preset and the device's thermal state (city/sim_preset.h)
+tbd::city::SimPresetScale g_simPreset; // what SimApplyPreset last applied (the herds host reads the drawing caps)
+int g_simThermal = 0;                  // 0 nominal .. 3 critical: iOS ProcessInfo.thermalState (game_host.cpp), TBD_THERMAL on Windows
+void SimSetThermal(int state) { g_simThermal = std::clamp(state, 0, 3); }
+// Per frame, cheap: applies only when the preset or the thermal state changed. TBD_SIM_BUDGET_MS still overrides the budget.
+void SimApplyPreset() {
+    static const int envThermal = (int)[] { char v[16] = {}; return tbd::platform::GetEnvA("TBD_THERMAL", v, sizeof(v)) > 0 ? atoi(v) : -1; }();
+    static const bool envBudget = tbd::platform::GetEnvA("TBD_SIM_BUDGET_MS", nullptr, 0) > 0;
+    const int thermal = envThermal >= 0 ? envThermal : g_simThermal;
+    int preset = tbd::gfx::userSet ? tbd::gfx::g.preset : tbd::gfx::kHigh; // no settings file yet: the High preset (gfx_settings.h)
+    if (preset == tbd::gfx::kCustom) preset = std::clamp(tbd::gfx::g.look - 1, 0, 3); // Custom: by its lighting tier
+    static int seenPreset = -1, seenThermal = -1;
+    if (preset == seenPreset && thermal == seenThermal) return;
+    seenPreset = preset, seenThermal = thermal;
+    g_simPreset = tbd::city::SimPresetFor(preset, thermal);
+    if (!envBudget) g_sim.budgetMs = g_simPreset.budgetMs;
+    tbd::Log("Sim: preset %d, thermal %d: budget %.2f ms a frame, cars x%.2f, %d parked, trucks x%.2f", preset, thermal, g_sim.budgetMs,
+             g_simPreset.carDensity, g_simPreset.maxParked, g_simPreset.truckShare);
+}
+
 void SimLoadTuning() {
     g_simTune = tbd::city::SimTuning();
     g_simPhaseTune = tbd::city::PhaseTuning();
@@ -342,6 +362,7 @@ void SimSync(float realDt) {
 
 void SimSyncFrame(float realDt) {
     SimInit();
+    SimApplyPreset();
     static uint64_t generation = 0;
     const bool reset = generation != g_cityGeneration;
     if (reset) { // new map or a load wiped the city

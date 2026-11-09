@@ -28,6 +28,9 @@ void ResumeAudio();
 // The app went to the background (iOS sceneDidEnterBackground): the city is autosaved at once (city_sim_save.inl), since
 // the OS may suspend or end the app from here on. Nothing happens on the title screen.
 void EnterBackground();
+// The device's thermal state (iOS ProcessInfo.thermalState: 0 nominal, 1 fair, 2 serious, 3 critical): the city sim's
+// per-frame budget and the cars it draws shrink at serious and critical (city/sim_preset.h). Cheap; call every frame.
+void SetThermalState(int state);
 
 // Pointer input in device pixels. Touch: one finger is the left button; two-finger pan and pinch drive the camera.
 enum class Button { Left = 0, Right = 1, Middle = 2 };

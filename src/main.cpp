@@ -88,6 +88,8 @@
 #include "city/sim_factors.h"        // the phases' shared CellFactors (sim roadmap 3.2)
 #include "city/sim_env_save.h"       // Phase 3 environment and its .tbdsim chunks (city_sim_p3.inl)
 #include "city/sim_goods_save.h"     // Phase 6 goods, companies, trade and their .tbdsim chunks (city_sim_p6.inl)
+#include "city/sim_preset.h"         // the sim's per-preset and thermal scaling (city_sim.inl SimApplyPreset)
+#include "gfx_settings.h"             // the player's graphics preset (the sim scales with it)
 #include "gui/road_toolbar.h"    // the city road tool (src/city): CS2-style road building
 #include "city/road_names.h"     // road / street / highway names, house numbers (chip under the road tool's cursor, F2 renames)
 #include "city/city_interact.h"  // [interact] pick, bulldoze + undo, the zone world plane, the rotate dial (city_interact.inl)

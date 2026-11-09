@@ -112,6 +112,18 @@ int main() {
         CHECK(r.unserved[0] == 0 && r.unserved[1] == 0 && r.unserved[2] == 0);
         // the road view: the whole road is live for all three
         for (int k = 0; k < kUtilKinds; ++k) CHECK(r.segLive[k][0]);
+        // the weather moves the turbine's output: Resupply (no geometry) gives what a full Solve gives
+        for (float scale : {0.0f, 0.3f, 2.0f, 1.0f}) {
+            u.windScale = scale;
+            UtilReport a = r, b;
+            CHECK(u.Resupply(z, a));
+            u.Solve(t.net, z, b);
+            CHECK(a.supply[0] == b.supply[0] && a.used[0] == b.used[0] && a.unserved[0] == b.unserved[0] && a.segLive[0] == b.segLive[0]);
+            int same = 0;
+            for (size_t i = 0; i < a.lots.size(); ++i) same += a.lots[i].elec == b.lots[i].elec;
+            CHECK(same == (int)a.lots.size());
+            if (scale == 0.0f) CHECK(a.unserved[0] == houses);
+        }
     }
 
     // ------------------------------------------------------------------ supply runs out; backup covers a shortfall

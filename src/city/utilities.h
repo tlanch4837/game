@@ -378,6 +378,14 @@ public:
             if (!l.alive || !l.Built()) continue;
             if (!l.hasRoad) out.lots[z].road = false, ++out.noRoad;
         }
+        // the road segment under each line end: a scan of every segment per end, so it is kept while the roads and the
+        // utility world stay the same (a growing city re-solves for its new lots many times a minute)
+        if (endSegNet_ != net.version || endSegUtil_ != version || endSeg_.size() != (size_t)(2 * L)) {
+            endSegNet_ = net.version, endSegUtil_ = version;
+            endSeg_.assign((size_t)(2 * L), -1);
+            for (int i = 0; i < L; ++i)
+                if (lines[i].alive) endSeg_[(size_t)(2 * i)] = UtilRoadNear(net, lines[i].a, 6.0f), endSeg_[(size_t)(2 * i + 1)] = UtilRoadNear(net, lines[i].b, 6.0f);
+        }
         // lines: which road segments, sources and lots each end touches (per kind the same geometry)
         const float lotPad = 6.0f;
         for (int k = 0; k < kUtilKinds; ++k) {
@@ -396,7 +404,7 @@ public:
                 for (int e = 0; e < 2; ++e) {
                     const V2 p = e ? ln.b : ln.a;
                     const int me = endBase + 2 * i + e;
-                    const int s = UtilRoadNear(net, p, 6.0f);
+                    const int s = endSeg_[(size_t)(2 * i + e)];
                     if (s >= 0) dsu.Join(me, s);
                     for (int j = 0; j < B; ++j) // a source: the end lies on (or a few metres off) its lot
                         if (items[j].alive && UtilDefs()[items[j].def].kind == kind &&
@@ -420,6 +428,16 @@ public:
                 if (l.alive && l.hasRoad && l.frontSeg >= 0 && l.frontSeg < S && CarriesUtilities(net, l.frontSeg)) dsu.Join(lotBase + z, l.frontSeg);
             }
             if (kind == Util::Electricity && conductRange > 0.0f) Conduct(zones, B, srcBase, lotBase, dsu);
+            if (kind == Util::Electricity) { // the networks, kept for Resupply (the weather moves solar and wind output)
+                elec_.total = total;
+                elec_.src.assign((size_t)B, -1), elec_.lot.assign((size_t)Z, -1), elec_.seg.assign((size_t)S, -1), elec_.line.assign((size_t)L, -1);
+                for (int i = 0; i < B; ++i) elec_.src[(size_t)i] = dsu.Find(srcBase + i);
+                for (int z = 0; z < Z; ++z) elec_.lot[(size_t)z] = dsu.Find(lotBase + z);
+                for (int s = 0; s < S; ++s)
+                    if (CarriesUtilities(net, s)) elec_.seg[(size_t)s] = dsu.Find(s);
+                for (int i = 0; i < L; ++i)
+                    if (lines[i].alive && lines[i].kind == kind) elec_.line[(size_t)i] = dsu.Find(endBase + 2 * i);
+            }
             // supply and demand per network
             std::vector<float> supply(total, 0.0f), backup(total, 0.0f), demand(total, 0.0f);
             for (int i = 0; i < B; ++i) {
@@ -464,8 +482,57 @@ public:
         }
     }
 
+    // Only the sources' output changed (solarScale / windScale): the electricity networks of the last Solve serve their
+    // lots again with the new supply. O(sources + lots + segments), no geometry: the same result Solve would give.
+    // False when the last Solve does not match these lists (the caller then solves).
+    bool Resupply(const ZoneGrid& zones, UtilReport& out) const {
+        const int B = (int)items.size(), Z = (int)zones.lots.size(), L = (int)lines.size();
+        if (elec_.total <= 0 || elec_.src.size() != (size_t)B || elec_.lot.size() != (size_t)Z || elec_.line.size() != (size_t)L ||
+            out.lots.size() != (size_t)Z)
+            return false;
+        const int k = (int)Util::Electricity, total = elec_.total;
+        std::vector<float> supply(total, 0.0f), backup(total, 0.0f), demand(total, 0.0f), avail(total, 0.0f);
+        out.supply[k] = out.demand[k] = out.used[k] = 0.0f, out.unserved[k] = 0;
+        for (int i = 0; i < B; ++i) {
+            if (!items[i].alive) continue;
+            const UtilDef& D = UtilDefs()[items[i].def];
+            if (D.kind != Util::Electricity) continue;
+            const float sup = D.supply * OutputScale(D);
+            (D.backup ? backup : supply)[elec_.src[(size_t)i]] += sup;
+            out.supply[k] += D.backup ? 0.0f : sup;
+        }
+        for (int z = 0; z < Z; ++z) {
+            const Lot& l = zones.lots[z];
+            if (!l.alive || !l.Built()) continue;
+            const float dem = UtilDemandPerCell(Util::Electricity, l.type) * (float)(l.w * l.d);
+            demand[elec_.lot[(size_t)z]] += dem, out.demand[k] += dem;
+        }
+        for (int r = 0; r < total; ++r)
+            if (supply[r] > 0 || backup[r] > 0) avail[r] = supply[r] + (demand[r] > supply[r] ? backup[r] : 0.0f);
+        for (int z = 0; z < Z; ++z) {
+            const Lot& l = zones.lots[z];
+            if (!l.alive || !l.Built()) continue;
+            const int r = elec_.lot[(size_t)z];
+            const float dem = UtilDemandPerCell(Util::Electricity, l.type) * (float)(l.w * l.d);
+            const bool ok = avail[r] + 1e-6f >= dem;
+            if (ok) avail[r] -= dem, out.used[k] += dem;
+            else ++out.unserved[k];
+            out.lots[z].elec = ok;
+        }
+        out.segLive[k].assign(elec_.seg.size(), 0);
+        for (size_t s = 0; s < elec_.seg.size(); ++s)
+            if (elec_.seg[s] >= 0) out.segLive[k][s] = (supply[elec_.seg[s]] > 0 || backup[elec_.seg[s]] > 0) ? 1 : 0;
+        for (int i = 0; i < L; ++i)
+            if (elec_.line[(size_t)i] >= 0) out.lineLive[i] = (supply[elec_.line[(size_t)i]] > 0 || backup[elec_.line[(size_t)i]] > 0) ? 1 : 0;
+        return true;
+    }
+
 private:
     uint64_t nextId_ = 1;
+    std::vector<int> endSeg_;                  // per line end: the segment UtilRoadNear found (cached, see Solve)
+    uint64_t endSegNet_ = ~0ull, endSegUtil_ = ~0ull;
+    struct ElecNets { int total = 0; std::vector<int> src, lot, seg, line; }; // DSU roots of the last Solve's electricity pass
+    ElecNets elec_;
 
     struct Dsu {
         std::vector<int> p;
@@ -570,9 +637,13 @@ private:
 // cache. The city sim reads its per-lot result (sim_coverage.h ApplyUtilities) without solving again.
 struct UtilSolveCache {
     uint64_t net = ~0ull, zones = ~0ull, util = ~0ull, output = ~0ull;
-    uint64_t solves = 0;
+    uint64_t solves = 0, resupplies = 0; // resupplies: re-served with new solar / wind output only (no geometry)
     bool Update(UtilWorld& w, const Network& n, const ZoneGrid& z, UtilReport& out) {
         if (net == n.version && zones == z.version && util == w.version && output == w.outputVersion) return false;
+        if (net == n.version && zones == z.version && util == w.version && w.Resupply(z, out)) { // only the weather's output moved
+            output = w.outputVersion, ++solves, ++resupplies;
+            return true;
+        }
         net = n.version, zones = z.version, output = w.outputVersion;
         w.Solve(n, z, out);
         util = w.version;

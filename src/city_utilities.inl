@@ -246,7 +246,19 @@ void UtilSync(float realDt) {
     UtilDemo();
     const float minutes = realDt * g_clock.Rate();
     if (minutes > 0) g_util.Tick(minutes);
-    g_utilSolve.Update(g_util, g_roads.net, g_zones, g_utilReport); // only when roads, zones or utilities changed
+    { // only when roads, zones or utilities changed (or, cheaply, the weather moved solar and wind output)
+        const uint64_t net0 = g_utilSolve.net, zones0 = g_utilSolve.zones, util0 = g_utilSolve.util, re0 = g_utilSolve.resupplies;
+        const auto t0 = std::chrono::steady_clock::now();
+        if (g_utilSolve.Update(g_util, g_roads.net, g_zones, g_utilReport) && g_utilSolve.resupplies == re0) {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            static uint64_t lastLog = 0;
+            const uint64_t now = tbd::platform::TickCountMs();
+            if (ms > 20.0 && now - lastLog > 5000) // a slow full solve, at most every 5 s: what changed
+                lastLog = now, tbd::Log("Utilities: full solve %.1f ms (%s%s%s), %zu lots, %zu lines, %zu sources", ms, net0 != g_utilSolve.net ? "roads " : "",
+                                        zones0 != g_utilSolve.zones ? "zones " : "", util0 != g_utilSolve.util ? "utilities" : "", g_zones.lots.size(),
+                                        g_util.lines.size(), g_util.items.size());
+        }
+    }
     bool changed = false;
     for (uint64_t id : g_util.removed) { // demolished (bulldozed, or 15 days without a road): the building goes
         auto it = g_utilEntity.find(id);
