@@ -27,7 +27,7 @@ inline float LifeSchoolScale(const LifeWorld& w, uint32_t ci, int svc) {
     const LifeBuilding* L = LifeHomeOf(w, ci);
     const CellFactor& f = w.Factor(L ? L->cell : -1);
     const int cov = std::max((int)f.coverage[svc], svc == kSvcSchool ? 0 : (int)f.coverage[kSvcSchool] / 2);
-    return 0.5f + (float)cov / 255.0f;
+    return std::min(1.0f / 0.97f, 0.75f + 0.5f * (float)cov / 255.0f);
 }
 
 inline void LifeGraduate(LifeWorld& w, uint32_t ci, int edu) {

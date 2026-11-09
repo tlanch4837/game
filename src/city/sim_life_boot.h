@@ -174,10 +174,11 @@ inline int32_t LifeSavingsFor(int wealth, int size) { static const int32_t k[4] 
 
 // Fills building b with `people` residents in the old fixed split, as households (about 2.5 people, at least one adult
 // or senior each, couples where there are heads to spare). Deterministic from (city seed, building id).
-inline void LifeFillBuilding(LifeWorld& w, uint32_t b, uint32_t people) {
+// agePct overrides the old 20/65/15 age split (tests use the census structure 22/61/17).
+inline void LifeFillBuilding(LifeWorld& w, uint32_t b, uint32_t people, const int (*agePct)[3] = nullptr) {
     static const int kAge[3] = {20, 65, 15}, kEdu[3] = {30, 50, 20}, kWealth[4] = {25, 35, 30, 10};
     uint32_t age[3], edu[3], wealth[4];
-    LifeSplit(people, kAge, age);
+    LifeSplit(people, agePct ? *agePct : kAge, age);
     LifeSplit(age[1], kEdu, edu);
     LifeSplit(people, kWealth, wealth);
     struct P { uint8_t band, edu; };

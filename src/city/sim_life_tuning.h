@@ -16,9 +16,9 @@ namespace city {
     X(float, moveInRate, 0.12f)      /* share of free home capacity that fills per month at attractiveness 1 */  \
     X(float, attractHappy, 64.0f)    /* happiness points (over 128) that double attractiveness */               \
     X(float, attractJobs, 4.0f)      /* weight of (vacancies - seekers) / adults on attractiveness */           \
-    X(float, fertility, 2.05f)       /* children per woman over ages 18..44 */                                  \
-    X(float, mortA, 0.00004f)        /* Gompertz yearly death hazard a * exp(b * age) */                        \
-    X(float, mortB, 0.088f)                                                                                      \
+    X(float, fertility, 1.55f)       /* children per woman over ages 18..44 */                                  \
+    X(float, mortA, 0.00005f)        /* Gompertz yearly death hazard a * exp(b * age) */                        \
+    X(float, mortB, 0.09f)                                                                                      \
     X(float, mortFloor, 0.0006f)     /* yearly background hazard at any age */                                  \
     X(int, maxAge, 105)                                                                                          \
     X(float, partnerRate, 0.04f)     /* chance a single adult 20..45 pairs up per month (needs a match) */      \
