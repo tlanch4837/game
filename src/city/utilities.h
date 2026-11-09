@@ -16,6 +16,7 @@
 //
 // Platform free: the host feeds the road network, the zone grid and the ground, and draws the results.
 #pragma once
+#include <cstring>
 #include <algorithm>
 #include <array>
 #include <unordered_map>
@@ -218,6 +219,17 @@ public:
     // Cities: Skylines 1 style conduction: a building passes electricity to buildings (and sources) within this many metres
     // of its lot, so a block touching a powered one is powered too, roads or not. 0 = off (roads and lines only).
     float conductRange = 0.0f;
+    // The weather's share of the catalog output of solar and wind sources (the catalog `supply` is the average; the city
+    // sim's Phase 3 sets these from the sun and the wind now, relative to their running mean). outputVersion bumps on a
+    // change, so UtilSolveCache solves again.
+    float solarScale = 1.0f, windScale = 1.0f;
+    uint64_t outputVersion = 0;
+    float OutputScale(const UtilDef& D) const {
+        if (D.kind != Util::Electricity || !D.shortName) return 1.0f;
+        if (std::strcmp(D.shortName, "Solar") == 0) return solarScale;
+        if (std::strcmp(D.shortName, "Wind") == 0) return windScale;
+        return 1.0f;
+    }
 
     // ------------------------------------------------------------------------------------------ placing a source
     // The best placement for def with the cursor at p. With snapRoad the building jumps to the nearest utility road within
@@ -414,8 +426,9 @@ public:
                 if (!items[i].alive) continue;
                 const UtilDef& D = UtilDefs()[items[i].def];
                 if (D.kind != kind) continue;
-                (D.backup ? backup : supply)[dsu.Find(srcBase + i)] += D.supply;
-                out.supply[k] += D.backup ? 0.0f : D.supply;
+                const float sup = D.supply * OutputScale(D); // solar and wind follow the weather
+                (D.backup ? backup : supply)[dsu.Find(srcBase + i)] += sup;
+                out.supply[k] += D.backup ? 0.0f : sup;
             }
             for (int z = 0; z < Z; ++z) {
                 const Lot& l = zones.lots[z];
@@ -556,11 +569,11 @@ private:
 // Solves only when the road network, the zone grid or the utilities changed since the last solve; the report is the
 // cache. The city sim reads its per-lot result (sim_coverage.h ApplyUtilities) without solving again.
 struct UtilSolveCache {
-    uint64_t net = ~0ull, zones = ~0ull, util = ~0ull;
+    uint64_t net = ~0ull, zones = ~0ull, util = ~0ull, output = ~0ull;
     uint64_t solves = 0;
     bool Update(UtilWorld& w, const Network& n, const ZoneGrid& z, UtilReport& out) {
-        if (net == n.version && zones == z.version && util == w.version) return false;
-        net = n.version, zones = z.version;
+        if (net == n.version && zones == z.version && util == w.version && output == w.outputVersion) return false;
+        net = n.version, zones = z.version, output = w.outputVersion;
         w.Solve(n, z, out);
         util = w.version;
         ++solves;

@@ -7,34 +7,26 @@
 //              efficiency of the cell's power and water, the road node of its entrance; the residents; the outside
 //              connections (placed ones and dead-end roads at the map edge)
 //   system     "goods", every game minute (it works on 5-minute boundaries, a twelfth of the companies each time)
-//   flags      P6's bits (no goods, no customers, cannot ship) per BuildingId, merged into the per-lot g_simFlags after
-//              every services pass (it rewrites them); P6 takes the no customers bit over from ComputeSimFlags
-//   factor     goodsAvailable per CitySim cell (SimGoodsWriteFactors, for P0's shared CellFactors)
-//   trucks     yesterday's trucks between road nodes as freight NodeLinks (SimGoodsTruckLinks) for the herds
+//   flags      P6's bits (no goods, no customers, cannot ship) in the hub's shared g_simFlagTable (by BuildingId); the
+//              hub merges them into the per-lot g_simFlags; P6 takes the no customers bit over from ComputeSimFlags
+//   factor     goodsAvailable per CitySim cell into the shared g_cellFactors (SimGoodsWriteFactors, hourly)
+//   events     into the shared g_simEvents
+//   trucks     yesterday's trucks between road nodes as freight NodeLinks (SimGoodsTruckLinks), drawn by the herds host
 //   hubs       a raw company's stock shows on its hub (IndSite::stock, tonnes): the hubs' stock now has consumers
 //   UI         the Production panel (p6.goods) and the Goods overlay
 //   save       COMP GOOD TRAD (sim_goods_save.h)
-// Tuning: g_simPhaseTune.goods.enabled; the rest are GoodsParams' compiled defaults for now.
-
-// game_core.inl sits in an anonymous namespace (the shells include it there), and the hosts' include lists (main.cpp,
-// game_host.cpp, probe_game.cpp) are frozen to the phases: so P6 steps out of that namespace for its headers. Once
-// Phase 0 adds these two lines to the hosts' lists, this block becomes the two includes alone (they are guarded).
-} // namespace (anonymous)
-#include "city/sim_factors.h"
-#include "city/sim_goods_save.h"
-namespace {
+// Tuning: the "goods." keys of tuning.json (sim_tuning_table.h GoodsTuning) override GoodsParams' compiled defaults.
+// The headers (sim_factors.h, sim_goods_save.h) come from the host TUs.
 
 namespace sim_p6 {
 tbd::city::GoodsWorld world;
-tbd::city::SimFlagTable flags;           // P6's bits per BuildingId
-tbd::city::SimEventRing events;          // P6's events (CompanyBankrupt, CompanyOpened, GoodsShortage, Import, Export)
+tbd::city::SimFlagTable& flags = g_simFlagTable; // the shared table; P6 writes only kMask (its bits)
+tbd::city::SimEventRing& events = g_simEvents;    // P6's events (CompanyBankrupt, CompanyOpened, GoodsShortage, Import, Export)
 std::vector<tbd::city::GoodsSite> sites;
 std::vector<tbd::city::NodeLink> truckLinks;
 std::vector<int32_t> hubCompany;         // per g_ind.sites index: the CompanyId raw of its raw company (0 none)
 uint64_t sitesFor = ~0ull;               // registry version the sites were built from
 int64_t sitesMinute = -1000000;
-uint64_t simFlagsSeen = ~0ull;
-size_t lotsSeen = 0;
 double tickMs = 0, tickAvgMs = 0, tickWorstMs = 0;
 
 std::vector<int32_t> siteLot;  // per site: its index in g_zones.lots (-1 a hub), valid while g_zones.version == siteZones
@@ -196,27 +188,16 @@ void RefreshSites() {
     sitesFor = g_simBuildings.version, sitesMinute = g_sim.Minute();
 }
 
-// P6's bits onto the BuildingIds (the table) and the per-lot flags the icons and the info card read.
+// P6's bits onto the BuildingIds of the shared table (the hub merges the table into the per-lot flags the icons and
+// the info card read), and goodsAvailable into the shared factors: once per hourly summary of the world.
+void SimGoodsWriteFactorsShared();
 void MergeFlags() {
     using namespace tbd::city;
-    bool table = false, lots = false;
-    if (flagsEpochSeen != flagsEpoch) {
-        flags.ClearAll(kMask);
-        world.cos.ForEach([&](uint32_t, const CompanyRec& c) { table |= flags.Write(BuildingId((uint32_t)c.building), kMask, BitsOf(c.flags)); });
-        flags.Prune(g_simBuildings);
-        flagsEpochSeen = flagsEpoch, table = true;
-    }
-    if (!table && simFlagsSeen == g_simFlagsVersion && lotsSeen == g_simFlags.size()) return;
-    if (siteZones == g_zones.version && g_simFlags.size() == g_zones.lots.size()) {
-        for (size_t k = 0; k < sites.size(); ++k) {
-            const int32_t lot = siteLot[k];
-            if (lot < 0 || (size_t)lot >= g_simFlags.size()) continue;
-            const SimFlags next = (g_simFlags[(size_t)lot] & ~kMask) | flags.Get(BuildingId(sites[k].building));
-            if (next != g_simFlags[(size_t)lot]) g_simFlags[(size_t)lot] = next, lots = true;
-        }
-    }
-    if (lots) ++g_simFlagsVersion;
-    simFlagsSeen = g_simFlagsVersion, lotsSeen = g_simFlags.size();
+    if (flagsEpochSeen == flagsEpoch) return;
+    flags.ClearAll(kMask);
+    world.cos.ForEach([&](uint32_t, const CompanyRec& c) { flags.Write(BuildingId((uint32_t)c.building), kMask, BitsOf(c.flags)); });
+    flagsEpochSeen = flagsEpoch;
+    SimGoodsWriteFactorsShared();
 }
 
 // Yesterday's trucks as freight node links (vehicles a day) for the herds.
@@ -255,6 +236,33 @@ void SimGoodsWriteFactors(tbd::city::CellFactors& f) {
         if (f.cells[c].goodsAvailable != v) f.cells[c].goodsAvailable = v, changed = true;
     }
     if (changed) ++f.version;
+}
+void sim_p6::SimGoodsWriteFactorsShared() { SimGoodsWriteFactors(g_cellFactors); }
+
+// The building inspector's goods rows (city_interact.inl): the company in this building. False: none (or P6 off).
+bool SimGoodsInspect(tbd::city::BuildingId b, std::vector<std::pair<std::string, std::string>>& rows) {
+    using namespace tbd::city;
+    if (g_simPhaseTune.goods.enabled == 0.0 || !b.Valid()) return false;
+    const CompanyRec* c = sim_p6::world.cos.Get(sim_p6::world.cos.Find(b.v));
+    if (!c) return false;
+    static const char* const kKind[] = {"raw goods", "industry", "shop", "office"};
+    char t[160];
+    if (c->closedDays > 0) std::snprintf(t, sizeof(t), "%s, bankrupt (closed %d days)", kKind[c->kind & 3], c->closedDays);
+    else std::snprintf(t, sizeof(t), "%s, %d of %d workers, cash %d, profit %+d yesterday", kKind[c->kind & 3], c->workers, c->jobs, c->cash, c->profitLast);
+    rows.push_back({"Company", t});
+    std::string st;
+    for (int g = 0; g < kGoodCount; ++g)
+        if (c->stock[(size_t)g] > 0 || c->incoming[(size_t)g] > 0) {
+            std::snprintf(t, sizeof(t), "%s%s %.1f t", st.empty() ? "" : ", ", GoodName((Good)g), c->stock[(size_t)g] / 10.0);
+            st += t;
+            if (c->incoming[(size_t)g] > 0) std::snprintf(t, sizeof(t), " (+%.1f t coming)", c->incoming[(size_t)g] / 10.0), st += t;
+        }
+    const Good out = CompanyOutput(*c);
+    if (st.empty()) st = "empty";
+    rows.push_back({"Goods in stock", st});
+    std::snprintf(t, sizeof(t), "%.1f t made, %.1f t sold yesterday%s%s", c->madeLast / 10.0, c->soldLast / 10.0, out != Good::None ? " - makes " : "", out != Good::None ? GoodName(out) : "");
+    rows.push_back({"Production", t});
+    return true;
 }
 
 // ---- UI: the Production panel and the Goods overlay
@@ -307,8 +315,22 @@ float OverlayCell(void*, int cell, float, float) {
 }
 } // namespace sim_p6
 
+// The "goods." keys (sim_tuning_table.h GoodsTuning; defaults = GoodsParams' compiled values) into the world's params.
+void SimP6ApplyTuning(const tbd::city::GoodsTuning& t, tbd::city::GoodsParams& p) {
+    auto i32 = [](double v, int lo) { return (int32_t)std::max<double>(lo, std::min(1e9, std::round(v))); };
+    p = tbd::city::GoodsParams();
+    p.workerMilliPerHour = i32(t.workerMilliPerHour, 0), p.rawScale = i32(t.rawScale, 0), p.stockHours = i32(t.stockHours, 1);
+    p.outCapHours = i32(t.outCapHours, 1), p.truckUnits = i32(t.truckUnits, 1), p.truckMetresPerMinute = i32(t.truckMetresPerMinute, 1);
+    p.loadMinutes = i32(t.loadMinutes, 0), p.matchRadiusM = i32(t.matchRadiusM, 0), p.exportAtPercent = i32(t.exportAtPercent, 1);
+    p.residentMilliPerHour = i32(t.residentMilliPerHour, 0), p.wagePerDay = i32(t.wagePerDay, 0);
+    p.retailMarkupPercent = i32(t.retailMarkupPercent, 0), p.officeValuePerDay = i32(t.officeValuePerDay, 0);
+    p.bankruptDays = i32(t.bankruptDays, 1), p.reopenDays = i32(t.reopenDays, 0), p.noCustomersPercent = i32(t.noCustomersPercent, 0);
+    p.noGoodsPercent = i32(t.noGoodsPercent, 0), p.startCash = i32(t.startCash, 0);
+}
+
 // ---- the hooks
 void SimP6Init() {
+    SimP6ApplyTuning(g_simPhaseTune.goods, sim_p6::world.p);
     g_sim.Register("goods", 1, 1, [](const tbd::city::SimTick& t) {
         const double a = g_sim.nowMs();
         sim_p6::world.Tick(t.minute);
@@ -333,7 +355,7 @@ void SimP6Frame(float /*realDt*/) {
 void SimP6Save(tbd::city::SimSaveRegistry& reg) {
     using namespace tbd::city;
     auto fresh = [] {
-        sim_p6::world.Clear(), sim_p6::flags.Clear(), sim_p6::truckLinks.clear(), sim_p6::sites.clear(), sim_p6::siteLot.clear();
+        sim_p6::world.Clear(), sim_p6::flags.ClearAll(sim_p6::kMask), sim_p6::truckLinks.clear(), sim_p6::sites.clear(), sim_p6::siteLot.clear();
         sim_p6::sitesFor = ~0ull, sim_p6::sitesMinute = -1000000, sim_p6::seedPending = true, sim_p6::flagsEpochSeen = ~0u;
     };
     SimChunkDef comp, good, trad;

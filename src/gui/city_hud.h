@@ -71,6 +71,9 @@ struct CityHud {
     // in, from the city sim (city_sim.inl SimHudFill); -1 while the sim has nothing to show
     long long population = -1, money = -1; // money in whole currency units
     long long adults = 0, working = 0, jobs = 0;
+    // in: the weather chip beside the clock (sim Phase 3, city_sim.inl SimHudFill); empty: the old season estimate
+    std::string weather, weatherSeason; // "12 C Rain", "Spring"
+    bool weatherSunny = true;            // draw the sun (else a cloud)
     // the Budget panel (Economy button, or the money cell): in/out with the city sim (city_sim.inl SimHudFill / SimHudRead)
     bool budget = false;
     float tax[4] = {10, 10, 10, 10};                  // percent: residential, commercial, office, industrial
@@ -163,10 +166,18 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
         {
             const Rect r = {x, row.y, weatherW, cell};
             g.Draw().Rect(r.x, r.y, r.x + r.w, r.y + r.h, th.well, th.well, th.widgetRadius, th.border, th.wellBorder);
-            DrawSun(g.Draw(), r.x + cell * 0.5f, r.y + r.h * 0.5f, cell * 0.28f, Rgba(255, 205, 90));
-            std::snprintf(buf, sizeof(buf), "%.0f C", temp);
-            g.TextIn({r.x + cell, r.y, std::round(70.0f * s), r.h}, buf, th.textBright, 0.0f, th.fontSize);
-            g.TextIn({r.x + cell + std::round(70.0f * s), r.y, r.w - cell - std::round(70.0f * s), r.h}, season, th.text, 0.5f, th.fontSize);
+            if (h.weather.empty() || h.weatherSunny) DrawSun(g.Draw(), r.x + cell * 0.5f, r.y + r.h * 0.5f, cell * 0.28f, Rgba(255, 205, 90));
+            else {
+                const float cx = r.x + cell * 0.5f, cy = r.y + r.h * 0.5f, rr = cell * 0.16f; // a cloud
+                g.Draw().Circle(cx - rr * 0.8f, cy + rr * 0.2f, rr, Rgba(200, 210, 225));
+                g.Draw().Circle(cx + rr * 0.6f, cy + rr * 0.1f, rr * 1.15f, Rgba(200, 210, 225));
+                g.Draw().Circle(cx, cy - rr * 0.5f, rr * 1.1f, Rgba(215, 222, 235));
+            }
+            if (h.weather.empty()) std::snprintf(buf, sizeof(buf), "%.0f C", temp);
+            else std::snprintf(buf, sizeof(buf), "%s", h.weather.c_str());
+            const float tw = std::round((h.weather.empty() ? 70.0f : 120.0f) * s);
+            g.TextIn({r.x + cell, r.y, tw, r.h}, buf, th.textBright, 0.0f, th.fontSize);
+            g.TextIn({r.x + cell + tw, r.y, r.w - cell - tw, r.h}, h.weather.empty() ? season : h.weatherSeason.c_str(), th.text, 0.5f, th.fontSize);
         }
         x += weatherW + gap;
         // right side, built from the right edge: money, population; the city name takes the middle

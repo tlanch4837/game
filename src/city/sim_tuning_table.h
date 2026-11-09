@@ -122,8 +122,28 @@ TBD_SIM_TUNING_TABLE(LifePhaseTuning, "life.", TBD_SIM_TUNING_LIFE) // not LifeT
 TBD_SIM_TUNING_TABLE(LandTuning, "land.", TBD_SIM_TUNING_LAND)
 
 // ---- P3 pollution, weather, water (env.) ------------------------------------------------------------------------------
+// Defaults are sim_env.h EnvParams' compiled values; city_sim_p3.inl copies them in (SimP3ApplyTuning).
 #define TBD_SIM_TUNING_ENV(X)                                                                                               \
-    X(enabled, 1.0)
+    X(enabled, 1.0)                                                                                                         \
+    X(airKeep, 0.75)                   /* share of air pollution kept per game hour */                                      \
+    X(groundKeep, 0.985)               /* ground pollution kept per game hour (lingers) */                                  \
+    X(waterKeep, 0.80)                 /* water pollution kept per game hour */                                             \
+    X(airSteps, 2.0)                   /* most downwind steps an hour */                                                    \
+    X(waterSteps, 3.0)                                                                                                      \
+    X(windStepMs, 5.0)                 /* one downwind step per this many m/s */                                            \
+    X(airLimit, 90.0)                  /* flag thresholds, factor steps 0..255 */                                           \
+    X(groundLimit, 80.0)                                                                                                    \
+    X(waterLimit, 60.0)                                                                                                     \
+    X(noiseLimit, 55.0)                                                                                                     \
+    X(waterNatural, 6000.0)            /* groundwater table with no pumping (0..10000) */                                   \
+    X(waterRelax, 0.03)                /* share of the gap to natural closed per hour */                                    \
+    X(rechargePerMm, 40.0)                                                                                                  \
+    X(summerDryPerHour, 12.0)                                                                                               \
+    X(infilMmH, 6.0)                                                                                                        \
+    X(drainMmH, 3.0)                   /* storm drains per tile per hour */                                                 \
+    X(drainShare, 0.04)                                                                                                     \
+    X(floodMm, 300.0)                  /* depth that counts as flooded */                                                   \
+    X(pumpDrawPerUnit, 0.005)
 TBD_SIM_TUNING_TABLE(EnvTuning, "env.", TBD_SIM_TUNING_ENV)
 
 // ---- P4 services, incidents, garbage (svc.) ---------------------------------------------------------------------------
@@ -137,8 +157,28 @@ TBD_SIM_TUNING_TABLE(SvcTuning, "svc.", TBD_SIM_TUNING_SVC)
 TBD_SIM_TUNING_TABLE(MoveTuning, "move.", TBD_SIM_TUNING_MOVE)
 
 // ---- P6 companies, goods, trade (goods.) ------------------------------------------------------------------------------
+// Defaults are sim_goods.h GoodsParams' compiled values; city_sim_p6.inl copies them in (SimP6ApplyTuning).
 #define TBD_SIM_TUNING_GOODS(X)                                                                                             \
-    X(enabled, 1.0)
+    X(enabled, 1.0)                                                                                                         \
+    X(workerMilliPerHour, 500.0)       /* units x 1000 a worker makes an hour */                                            \
+    X(rawScale, 10.0)                                                                                                       \
+    X(stockHours, 12.0)                                                                                                     \
+    X(outCapHours, 24.0)                                                                                                    \
+    X(truckUnits, 200.0)               /* one truck: 20 t */                                                                \
+    X(truckMetresPerMinute, 600.0)                                                                                          \
+    X(loadMinutes, 10.0)                                                                                                    \
+    X(matchRadiusM, 6000.0)                                                                                                 \
+    X(exportAtPercent, 75.0)                                                                                                \
+    X(residentMilliPerHour, 40.0)                                                                                           \
+    X(wagePerDay, 60.0)                                                                                                     \
+    X(retailMarkupPercent, 140.0)                                                                                           \
+    X(officeValuePerDay, 140.0)                                                                                             \
+    X(bankruptDays, 4.0)                                                                                                    \
+    X(reopenDays, 3.0)                                                                                                      \
+    X(noCustomersPercent, 35.0)                                                                                             \
+    X(noGoodsPercent, 15.0)                                                                                                 \
+    X(startCash, 2000.0)                                                                                                    \
+    X(truckDrawShare, 1.0)             /* share of yesterday's trucks the herds draw as vehicles */
 TBD_SIM_TUNING_TABLE(GoodsTuning, "goods.", TBD_SIM_TUNING_GOODS)
 
 // ---- P7 budget, policies, districts, milestones (gov.) ----------------------------------------------------------------

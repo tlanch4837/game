@@ -32,6 +32,10 @@ bool SimP1On();
 bool SimP1LotLines(uint64_t lot, std::string& title, std::vector<std::string>& lines);
 void SimP1LotsBack();
 void SimP1SavedPerson(uint64_t homeLot);
+// Phase 3 (city_sim_p3.inl): the weather chip of the clock.
+std::string SimEnvChip();
+const char* SimEnvSeasonName();
+bool SimEnvSunny();
 bool g_simLoadInProgress = false; // SimSync: the reset being settled came with a load (P1 bootstraps after its lots)
 
 void SimLoadTuning() {
@@ -70,6 +74,11 @@ inline double EnvDouble(const char* name, double fallback) {
 std::vector<uint8_t> g_simLotUtil; // per lot (zones.lots order): LotUtil flags from the last utilities solve
 std::vector<uint32_t> g_simFlags;  // per lot (zones.lots order): SimFlag bits (sim_flags.h, uint32), for the icons, overlays and info card
 uint64_t g_simFlagsVersion = 0;    // bumped when g_simFlags changed
+// The phases' shared flags by BuildingId (sim_flags.h, roadmap 3.5): each phase writes only its own bits (P3 polluted,
+// noisy, flooded; P6 no goods, no customers, cannot ship). The hub (city_sim_phases.inl) merges the bits of the phases
+// that are on into the per-lot g_simFlags after every services pass and whenever the table changes.
+tbd::city::SimFlagTable g_simFlagTable;
+void SimMergeTableFlags(std::vector<uint32_t>& perLot); // city_sim_phases.inl: the table's phase bits onto zones.lots order
 float g_simFunding[tbd::city::kServices] = {1, 1, 1, 1, 1, 1}; // S4's budget sliders scale the service radii
 uint64_t g_simCoverageRuns = 0;
 
@@ -263,6 +272,7 @@ void SimOnCityReset() {
     g_simNotes.clear();
     g_simMilestoneQuietUntil = g_clock.minutes + 30.0; // a loaded city's population arrives over the next ticks
     g_simFlags.clear();
+    g_simFlagTable.Clear(); // the phases' bits (they also clear their own masks in their fresh hooks)
     g_simTotals = {};
     g_simLotUtil.clear();
     g_simPeople = tbd::city::SimPeople();
@@ -447,6 +457,7 @@ void SimHudFill(tbd::gui::CityHud& hud) {
     hud.adults = (long long)g_simTotals.adults;
     hud.working = (long long)g_simTotals.working;
     hud.jobs = (long long)g_simTotals.jobs;
+    hud.weather = SimEnvChip(), hud.weatherSeason = SimEnvSeasonName(), hud.weatherSunny = SimEnvSunny(); // P3's weather now
     SimBudgetHudFill(hud); // money, the milestone banner, the Budget panel and the locks (city_sim_budget.inl)
     SimInfoFill(hud);
     hud.citizenTitle = g_simCitizenTitle;

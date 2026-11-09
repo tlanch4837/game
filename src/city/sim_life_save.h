@@ -22,22 +22,23 @@ constexpr uint16_t kLifeChunkVersion = 1;
 
 struct LifeChunks { std::vector<uint8_t> citz, hhld, occu, migr; };
 
+// Appends without zero-filling first (insert, not resize + memcpy): the autosave runs this on the main thread, and the
+// callers reserve each chunk once (LifeSave), so a save is one pass over the columns.
 struct LifeWriter {
     std::vector<uint8_t>& out;
     template <class T>
     void Pod(const T& v) {
         static_assert(std::is_trivially_copyable<T>::value, "pod");
-        const size_t at = out.size();
-        out.resize(at + sizeof(T));
-        std::memcpy(out.data() + at, &v, sizeof(T));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
+        out.insert(out.end(), p, p + sizeof(T));
     }
     template <class T>
     void Vec(const std::vector<T>& v) {
         static_assert(std::is_arithmetic<T>::value, "arithmetic columns only (no padding)");
         Pod((uint32_t)v.size());
-        const size_t at = out.size();
-        out.resize(at + v.size() * sizeof(T));
-        if (!v.empty()) std::memcpy(out.data() + at, v.data(), v.size() * sizeof(T));
+        if (v.empty()) return;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(v.data());
+        out.insert(out.end(), p, p + v.size() * sizeof(T));
     }
 };
 
@@ -125,6 +126,9 @@ inline void LifeRebuildViews(LifeWorld& w) {
 inline void LifeSave(const LifeSim& s, LifeChunks& out) {
     const LifeWorld& w = s.w;
     out = LifeChunks();
+    // one allocation per chunk (upper bounds: 33 B a citizen and 39 B a household of columns plus the pools' 6 B)
+    out.citz.reserve(256 + (size_t)w.cit.Capacity() * 48), out.hhld.reserve(256 + (size_t)w.hh.Capacity() * 56);
+    out.occu.reserve(16 + w.bld.size() * 64);
     { LifeWriter o{out.citz}; LifeSavePool(o, w.cit.pool);
 #define TBD_W(c) o.Vec(w.cit.c);
       TBD_LIFE_CIT_COLS(TBD_W)

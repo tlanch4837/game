@@ -102,6 +102,7 @@ struct Model {
     std::vector<Category> cats;
     // the status shown
     std::string money = "$0", pop = "0", happy = "0%", date = "Day 1", popUp, moneyUp;
+    std::string weather; // the clock's weather chip ("12 C Rain", sim Phase 3); empty: none
     float moneyBar = 0.5f, popBar = 0.5f, happyBar = 0.8f; // 0..1 fills of the PC bar's pills
     int alerts = 0;
     int speed = 1;       // 1..3
@@ -562,7 +563,15 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             const float aw = k.spdFont * 0.62f, ah = k.spdFont * 0.68f, gap = -0.5f;
             const float total = m.speed * aw + (m.speed - 1) * gap;
             for (int i = 0; i < m.speed; ++i) P.Arrow(sx + (k.spdW - total) * 0.5f + i * (aw + gap), sy + (spdH - ah) * 0.5f, aw, ah, kInk);
-            const float dw = std::max(P.TextW(m.date, k.dtFont), pauseW + 3 + k.spdW);
+            float chipW = 0; // the weather chip beside the speed pill
+            if (!m.weather.empty()) {
+                const float wf = k.spdFont * 0.95f;
+                chipW = P.TextW(m.weather, wf) + 10;
+                P.Box(sx + k.spdW + 3, sy, chipW, spdH, 6, Rgba(255, 255, 255, 20));
+                P.Text(m.weather, sx + k.spdW + 8, sy + spdH * 0.5f, wf, kBarInk);
+                chipW += 3;
+            }
+            const float dw = std::max(P.TextW(m.date, k.dtFont), pauseW + 3 + k.spdW + chipW);
             lx += dw + k.rr + 2;
         }
         P.Box(lx - 0.5f, midY - (barH - 16) * 0.5f, 1, barH - 16, 0, Rgba(255, 255, 255, 34)); // divider

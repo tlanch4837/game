@@ -2,8 +2,11 @@
 // ticks) through the real scheduler with the systems SimInit registers (cells, demand, growth, economy, services) plus the
 // Phase 0 hub's own work (the building registry sync and the .tbdsim image the autosave copies), Phase 1's citizen records
 // (bootstrapped from the lots, CitySim::externalPeople; the "life" systems and their save image), and the flow solve the
-// game runs on a worker. Prints ms per system: the total over the day, per tick, and per frame at 30 fps and speed 3
-// (18 game minutes a real second). The roadmap's iPad gate is these numbers x 2 until calibrated on the device.
+// game runs on a worker; Phase 3's environment (the weather every 10 minutes, the hourly snapshot and apply on the main
+// thread, the pass itself as a worker line) and Phase 6's goods (the companies every game minute, the hourly site refresh,
+// the day's truck list); and the hub's merge of the shared flag table into the per-lot flags. Prints ms per system: the
+// total over the day, per tick, the worst single call, and per frame at 30 fps and speed 3 (18 game minutes a real second),
+// then the worst whole tick (main thread). The roadmap's iPad gate is these numbers x 2 until calibrated on the device.
 // Build and run: tests\sim_bench.bat [lots]   (default 5000)
 #include <chrono>
 #include <cmath>
@@ -23,6 +26,8 @@
 #include "city/sim_save.h"
 #include "city/sim_life_cells.h"
 #include "city/sim_life_save.h"
+#include "city/sim_env_save.h"
+#include "city/sim_goods_save.h"
 
 using namespace tbd::city;
 
@@ -46,6 +51,26 @@ struct Bench {
     uint64_t lifeReg = ~0ull; // the registry version the records last synced
     std::map<std::string, double> ms; // per system, over the day
     std::map<std::string, int> calls;
+    std::map<std::string, double> worst; // per system, the most one call took
+    double tickMain = 0;                 // this tick's main-thread ms (systems without "worker" in their name)
+    std::map<std::string, double> copyBy; // the autosave copy per chunk, over the day
+    double tickSave = 0; // ... of which the autosave copy (the game copies every 10 real minutes, not every hour)
+    double carve = 0;                    // ms of the current call that ran as a worker's part (not main thread)
+    // Phase 3
+    EnvSim env;
+    EnvParams envP;
+    EnvInput envBase;  // the sources, pumps and cells (the game rebuilds it every hour; here a copy of it is the snapshot)
+    EnvResult envOut;  // the pass that lands at the next hour
+    bool envPending = false;
+    WeatherChain wx;
+    EnvWeather weather;
+    SimCalendar cal;
+    SimFlagTable flagTable; // the hub's shared table (P3 and P6 bits)
+    SimEventRing ring;
+    // Phase 6
+    GoodsWorld goods;
+    std::vector<GoodsSite> sites;
+    std::vector<BuildingId> lotIds; // the hub's merge cache
 };
 
 // Phase 0's hub: the building ids from the lots.
@@ -119,6 +144,73 @@ static void Flow(Bench& b) {
     if (!trips.empty()) b.solver.Solve(g, trips);
 }
 
+// Phase 3 (city_sim_p3.inl SimP3BuildInput): industry and commerce lots, one road source per 32 m tile of every segment
+// (a fixed load here; the game takes the flow), a power plant, pumps, the CitySim cells and their heights (flat, gently
+// sloped). The input is built once; each hour copies it (the snapshot the game hands the worker).
+static void BuildEnv(Bench& b) {
+    EnvInput& in = b.envBase;
+    const auto& types = ZoneTypes();
+    for (const Lot& l : b.zones.lots) {
+        const ZoneCat cat = types[(size_t)l.type].cat;
+        if (cat == ZoneCat::Industrial) in.sources.push_back(EnvIndustryLotSource(l.c.x, l.c.z, l.level, l.w * l.d));
+        else if (cat == ZoneCat::Commercial) in.sources.push_back(EnvCommercialLotSource(l.c.x, l.c.z, l.w * l.d));
+    }
+    int si = 0;
+    for (const Segment& sg : b.net.segs) {
+        const V2 a = XZ(b.net.nodes[(size_t)sg.a].p), c = XZ(b.net.nodes[(size_t)sg.b].p);
+        const int n = std::max(1, (int)(Len(c - a) / kFieldTile));
+        for (int i = 0; i < n; ++i) {
+            const V2 p = a + (c - a) * ((i + 0.5f) / n);
+            in.sources.push_back(EnvRoadSource(p.x, p.z, 300.0f + 40.0f * (float)(si++ % 30), 0.8f));
+        }
+    }
+    in.sources.push_back(EnvUtilitySource(60.0f, 60.0f, 4));
+    for (int i = 0; i < 4; ++i) in.pumps.push_back({200.0f + 300.0f * i, 400.0f, 4000.0f, true});
+    for (const CityCell& cell : b.cells.cells.cells) {
+        in.cityKeys.push_back(cell.key), in.cityWaterOk.push_back(1);
+        auto& t = in.heights.Cell(cell.key);
+        for (int i = 0; i < kFieldRes * kFieldRes; ++i) t[(size_t)i] = 10.0f + 0.002f * (float)((cell.key.x * 4 + i % 4) * (cell.key.z * 4 + i / 4) % 997);
+    }
+}
+
+// Phase 6 (city_sim_p6.inl BuildSites): a company per industrial, commercial and office lot (BuildingId order), workers
+// from the cells, five raw hubs, one outside connection at node 0; the entrance is the block corner nearest the lot.
+static void BuildGoods(Bench& b) {
+    const auto& types = ZoneTypes();
+    const int B1 = (int)std::lround(std::sqrt((double)b.net.nodes.size())); // nodes per side
+    b.sites.clear();
+    int64_t residents = (int64_t)b.cells.Population();
+    for (const Lot& l : b.zones.lots) {
+        const ZoneCat cat = types[(size_t)l.type].cat;
+        GoodsSite s;
+        int kind;
+        if (cat == ZoneCat::Industrial) s.kind = CompanyKind::Processor, s.recipe = (uint8_t)RecipeForLot(l.id), kind = kJobIndustrial;
+        else if (cat == ZoneCat::Commercial) s.kind = CompanyKind::Shop, kind = kJobCommercial;
+        else if (cat == ZoneCat::Office) s.kind = CompanyKind::Office, kind = kJobOffice;
+        else continue;
+        s.building = b.reg.Find(BOrigin::Lot, l.id).v;
+        s.jobs = LotCapacity(l).jobs[kind];
+        s.x = (int32_t)l.c.x, s.z = (int32_t)l.c.z;
+        s.node = std::clamp((int)std::lround(l.c.z / 120.0f), 0, B1 - 1) * B1 + std::clamp((int)std::lround(l.c.x / 120.0f), 0, B1 - 1);
+        s.cell = b.cells.cells.Find(CellKeyAt(l.c.x, l.c.z));
+        if (s.cell >= 0) {
+            const CellSim& cs = b.cells.sim[(size_t)s.cell];
+            s.workers = cs.jobCap[kind] ? (uint16_t)((uint32_t)s.jobs * cs.employed[kind] / cs.jobCap[kind]) : 0;
+            s.localResidents = (int32_t)cs.Population();
+        }
+        b.sites.push_back(s);
+    }
+    const Good raws[5] = {Good::Grain, Good::Livestock, Good::Timber, Good::Oil, Good::Ore};
+    for (int i = 0; i < 5; ++i) {
+        GoodsSite s;
+        s.building = Handle::Make(0xF00000u + (uint32_t)i, 1).v, s.kind = CompanyKind::Raw, s.raw = raws[i];
+        s.rawMilliPerHour = 60 * 10 * 1000 / 24, s.x = 120 * i, s.z = 0, s.node = i;
+        b.sites.push_back(s);
+    }
+    b.goods.residents = residents;
+    b.goods.outsides.assign(1, {-2000, 0, 0});
+}
+
 int main(int argc, char** argv) {
     const int lots = argc > 1 ? std::max(1, std::atoi(argv[1])) : 5000;
     static Bench b; // big: not on the stack
@@ -134,13 +226,24 @@ int main(int argc, char** argv) {
     b.life.Bootstrap();
     LifeApplyCells(b.life.w, b.cells);
     std::printf("sim_bench: P1 bootstrap %.1f ms: %u citizens, %u households\n", NowMs() - boot0, b.life.w.cit.Live(), b.life.w.hh.Live());
+    const double setup0 = NowMs();
+    BuildEnv(b);
+    BuildGoods(b);
+    b.goods.SetSites(b.sites, 0);
+    std::printf("sim_bench: P3 %zu sources, %zu cells; P6 %zu sites; set up in %.1f ms\n", b.envBase.sources.size(), b.envBase.cityKeys.size(), b.sites.size(),
+                NowMs() - setup0);
     SimScheduler s;
     s.budgetMs = 1e9; // the bench measures, it never defers
     auto timed = [&](const char* name, std::function<void(const SimTick&)> fn) {
-        s.Register(name, 1, 1, [name, fn](const SimTick& t) {
+        const bool worker = std::string(name).find("worker") != std::string::npos;
+        s.Register(name, 1, 1, [name, fn, worker](const SimTick& t) {
             const double t0 = NowMs();
             fn(t);
-            b.ms[name] += NowMs() - t0, ++b.calls[name];
+            const double d = NowMs() - t0 - b.carve; // carve: a worker's part measured inside the call
+            b.carve = 0;
+            b.ms[name] += d, ++b.calls[name], b.worst[name] = std::max(b.worst[name], d);
+            if (!worker) b.tickMain += d;
+            if (std::string(name) == "hub: .tbdsim copy") b.tickSave += d;
         });
     };
     // the systems of SimInit, in its order and at its periods (the periods are checked inside: one registration each)
@@ -191,40 +294,117 @@ int main(int argc, char** argv) {
         if (t.minute % 10 == 5) LifeApplyCells(b.life.w, b.cells);
         if (t.minute % 30 == 17) b.life.WriteFactors(b.factors);
     });
-    // ... and the .tbdsim image (HEAD + BLDG + the P1 records) the autosave copies on the main thread, once a game hour here.
+    // Phase 3: the weather every 10 minutes; every hour the previous pass lands (factors, flags, events, the overlay index)
+    // and the snapshot for the next one is copied (main thread); the pass itself is the worker's.
+    timed("env: weather", [](const SimTick& t) {
+        if (t.minute % 10) return;
+        b.wx = WeatherChain::Replay(SimCalendar::FloorDiv(t.minute, kWeatherStepMinutes), 7, b.cal, &b.wx);
+        b.weather = WeatherAt(b.wx, t.minute, 7, b.cal);
+    });
+    static EnvInput envJob;
+    static EnvSim envState;
+    timed("env: hourly apply", [](const SimTick& t) {
+        if (t.minute % 60) return;
+        if (b.envPending) {
+            b.env = std::move(envState);
+            WriteEnvFactors(b.envOut, b.factors);
+            WriteEnvFlags(b.envOut, b.reg, b.flagTable);
+            PushEnvEvents(b.envOut, b.ring);
+            std::unordered_map<uint64_t, int> index;
+            for (size_t i = 0; i < b.envOut.keys.size(); ++i) index[PackKey(b.envOut.keys[i])] = (int)i;
+        }
+        envJob = b.envBase, envJob.minute = t.minute, envJob.weather = b.weather;
+        if (t.minute > 0) envJob.heights.Clear(); // only the first pass brings the heights (the game: new cells only)
+        envState = b.env;
+    });
+    timed("env: pass (worker)", [](const SimTick& t) {
+        if (t.minute % 60) return;
+        b.envOut = EnvResult();
+        envState.Step(envJob, b.envP, b.envOut);
+        b.envPending = true;
+    });
+    // Phase 6: the companies every game minute (5-minute boundaries inside), the sites every hour, the trucks once a day
+    timed("goods", [](const SimTick& t) { b.goods.Tick(t.minute); });
+    timed("goods: sites", [](const SimTick& t) {
+        if (t.minute % 60 != 30) return;
+        BuildGoods(b);
+        b.goods.SetSites(b.sites, t.minute);
+    });
+    timed("goods: trucks", [](const SimTick& t) { if (t.minute % 1440 == 2) (void)b.goods.TrucksLast(); });
+    // the hub: the shared flag table's P3 and P6 bits onto the per-lot flags, with every services pass (city_sim_phases.inl)
+    timed("hub: flag merge", [](const SimTick& t) {
+        if (t.minute % 10) return;
+        if (b.lotIds.size() != b.zones.lots.size()) {
+            b.lotIds.assign(b.zones.lots.size(), BuildingId());
+            for (size_t i = 0; i < b.zones.lots.size(); ++i) b.lotIds[i] = b.reg.Find(BOrigin::Lot, b.zones.lots[i].id);
+        }
+        const SimFlags mask = SimFlagPhaseMask(3) | SimFlagPhaseMask(6);
+        for (size_t i = 0; i < b.flags.size() && i < b.lotIds.size(); ++i) b.flags[i] = (b.flags[i] & ~mask) | (b.flagTable.Get(b.lotIds[i]) & mask);
+    });
+    // ... and the .tbdsim image (HEAD + BLDG + the P1, P3, P6 chunks) the autosave copies on the main thread, once a game hour here.
     size_t imageBytes = 0;
     timed("hub: .tbdsim copy", [&imageBytes](const SimTick& t) {
         if (t.minute % 60) return;
         SimSaveRegistry chunks;
         chunks.Register({simchunk::HEAD, 1, 0, [](ByteWriter& w) { WriteHead(w, SimSaveHead{}); }, nullptr, nullptr});
         chunks.Register({simchunk::BLDG, 1, 0, [](ByteWriter& w) { WriteBuildings(w, b.reg); }, nullptr, nullptr});
-        chunks.Register({simchunk::CITZ, 1, 0, [](ByteWriter& w) { // Phase 1: the four chunks as one here (the game writes four)
-            LifeChunks c;
-            LifeSave(b.life, c);
-            for (const std::vector<uint8_t>* v : {&c.citz, &c.hhld, &c.occu, &c.migr}) w.Raw(v->data(), v->size());
-        }, nullptr, nullptr});
-        const std::vector<SimSaveRegistry::ChunkImage> snap = chunks.Snapshot(); // the main thread's part
+        // Phase 1 as the game writes it (city_sim_p1.inl): CITZ makes the image of all four, each chunk takes its part over
+        static LifeChunks img;
+        chunks.Register({simchunk::CITZ, 1, 0, [](ByteWriter& w) { LifeSave(b.life, img); w.bytes = std::move(img.citz); }, nullptr, nullptr});
+        chunks.Register({simchunk::HHLD, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.hhld); }, nullptr, nullptr});
+        chunks.Register({simchunk::OCCU, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.occu); }, nullptr, nullptr});
+        chunks.Register({simchunk::MIGR, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.migr); }, nullptr, nullptr});
+        // Phase 3 and Phase 6 (city_sim_p3.inl, city_sim_p6.inl)
+        chunks.Register({simchunk::POLL, 1, 0, [](ByteWriter& w) { EnvSavePoll(w, EnvSaveView{&b.env, &b.envOut, nullptr, nullptr}); }, nullptr, nullptr});
+        chunks.Register({simchunk::WTHR, 1, 0, [](ByteWriter& w) { EnvWeatherState st; st.chain = b.wx; EnvSaveWeather(w, st); }, nullptr, nullptr});
+        chunks.Register({simchunk::WATR, 1, 0, [](ByteWriter& w) { EnvSaveWater(w, EnvSaveView{&b.env, &b.envOut, nullptr, nullptr}); }, nullptr, nullptr});
+        chunks.Register({simchunk::COMP, 1, 0, [](ByteWriter& w) { WriteGoodsComp(w, b.goods); }, nullptr, nullptr});
+        chunks.Register({simchunk::GOOD, 1, 0, [](ByteWriter& w) { WriteGoodsGood(w, b.goods); }, nullptr, nullptr});
+        chunks.Register({simchunk::TRAD, 1, 0, [](ByteWriter& w) { WriteGoodsTrad(w, b.goods); }, nullptr, nullptr});
+        std::vector<SimSaveRegistry::ChunkImage> snap; // the main thread's part (SimSaveRegistry::Snapshot, timed per chunk)
+        for (const SimChunkDef& d : chunks.Defs()) {
+            const double c0 = NowMs();
+            ByteWriter pw;
+            d.save(pw);
+            snap.push_back({d.fourcc, d.version, d.flags, std::move(pw.bytes)});
+            b.copyBy[FourCCName(d.fourcc)] += NowMs() - c0;
+        }
         const double a0 = NowMs();
         imageBytes = SimSaveRegistry::Assemble(snap).size(); // the worker's part (framing, CRCs): not in the total
         const double assemble = NowMs() - a0;
-        b.ms["hub: .tbdsim (worker)"] += assemble, ++b.calls["hub: .tbdsim (worker)"], b.ms["hub: .tbdsim copy"] -= assemble;
+        b.ms["hub: .tbdsim (worker)"] += assemble, ++b.calls["hub: .tbdsim (worker)"], b.carve = assemble;
+        b.worst["hub: .tbdsim (worker)"] = std::max(b.worst["hub: .tbdsim (worker)"], assemble);
     });
     const double t0 = NowMs();
-    for (int m = 0; m < 1440; ++m) s.Frame(1.0);
+    double worstTick = 0;
+    int64_t worstMinute = -1, worstNoSaveMinute = -1;
+    double worstNoSave = 0;
+    for (int m = 0; m < 1440; ++m) {
+        b.tickMain = b.tickSave = 0;
+        s.Frame(1.0);
+        if (b.tickMain > worstTick) worstTick = b.tickMain, worstMinute = m;
+        if (b.tickMain - b.tickSave > worstNoSave) worstNoSave = b.tickMain - b.tickSave, worstNoSaveMinute = m;
+    }
     const double total = NowMs() - t0;
     std::printf("sim_bench: %d lots, %llu residents, %llu jobs, %d supercells, %zu segments; one game day = %lld ticks in %.1f ms\n", lots,
                 (unsigned long long)b.cells.Population(), (unsigned long long)b.cells.JobCap(), b.cells.Supercells(), b.net.segs.size(),
                 (long long)s.Minute(), total);
-    std::printf("  %-20s %10s %8s %12s %14s\n", "system", "day ms", "calls", "ms/tick", "ms/frame@x3");
+    std::printf("  %-22s %10s %8s %12s %10s %14s\n", "system", "day ms", "calls", "ms/tick", "worst ms", "ms/frame@x3");
     double sum = 0;
     for (const auto& [name, v] : b.ms) {
         const bool worker = name.find("worker") != std::string::npos;
         if (!worker) sum += v;
         // speed 3: 18 game minutes a real second = 0.6 ticks a frame at 30 fps
-        std::printf("  %-20s %10.2f %8d %12.4f %14.4f\n", name.c_str(), v, b.calls[name], v / 1440.0, v / 1440.0 * 0.6);
+        std::printf("  %-22s %10.2f %8d %12.4f %10.3f %14.4f\n", name.c_str(), v, b.calls[name], v / 1440.0, b.worst[name], v / 1440.0 * 0.6);
     }
-    std::printf("  %-20s %10.2f %8s %12.4f %14.4f   (main thread; x2 = the iPad gate: %.4f ms/frame)\n", "TOTAL", sum, "", sum / 1440.0, sum / 1440.0 * 0.6,
+    std::printf("  %-22s %10.2f %8s %12.4f %10s %14.4f   (main thread; x2 = the iPad gate: %.4f ms/frame)\n", "TOTAL", sum, "", sum / 1440.0, "", sum / 1440.0 * 0.6,
                 sum / 1440.0 * 0.6 * 2.0);
-    std::printf("  .tbdsim image (HEAD + BLDG + CITZ HHLD OCCU MIGR): %zu bytes\n", imageBytes);
+    std::printf("  .tbdsim image (HEAD BLDG, P1 CITZ HHLD OCCU MIGR, P3 POLL WTHR WATR, P6 COMP GOOD TRAD): %zu bytes\n", imageBytes);
+    std::printf("  autosave copy per save (main thread, ms):");
+    for (const auto& [k, v] : b.copyBy) std::printf(" %s %.3f", k.c_str(), v / 24.0);
+    std::printf("\n");
+    std::printf("  worst tick (main thread): %.3f ms at minute %lld (x2 iPad: %.3f ms); P6 %u companies, %zu trucks on the road, %zu truck pairs a day\n",
+                worstTick, (long long)worstMinute, worstTick * 2.0, b.goods.cos.pool.Live(), b.goods.ships.size(), b.goods.TrucksLast().size());
+    std::printf("  worst tick without the autosave copy: %.3f ms at minute %lld (x2 iPad: %.3f ms)\n", worstNoSave, (long long)worstNoSaveMinute, worstNoSave * 2.0);
     return 0;
 }

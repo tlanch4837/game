@@ -6,20 +6,10 @@
 //                roads by flow), pumps and city cells, run EnvSim::Step on a worker, and apply the PREVIOUS hour's result
 //                (factors air noise ground water, flags polluted noisy flooded, flood events). A pass the worker has not
 //                finished by then is computed on the main thread from the same input, so the result never depends on timing.
-// Tables P3 writes: CellFactors (its four columns), SimFlagTable (its bits), SimEventRing (flood, storm, season). The hub
-// has no shared instances of those yet, so they are P3-local here behind three pointers (g_p3Factors, g_p3Flags,
-// g_p3Events); a Phase 0 follow-up points them at the shared ones.
-
-// game_core.inl (and so this file) sits inside `namespace {` in main.cpp, game_host.cpp and probe_game.cpp, and those
-// translation units do not include the P3 headers yet. The headers must be seen at file scope (they open tbd::city), so
-// the anonymous namespace is closed around the includes and reopened. Phase 0 follow-up: include "city/sim_env_save.h"
-// in the three translation units beside sim_save.h, then these lines go (the includes become no-ops meanwhile).
-} // namespace
-#include <atomic>
-#include <memory>
-
-#include "city/sim_env_save.h"
-namespace {
+// Tables P3 writes: the hub's shared CellFactors (its four columns: g_cellFactors), SimFlagTable (its bits:
+// g_simFlagTable, merged into the per-lot g_simFlags by the hub) and SimEventRing (flood, storm, season: g_simEvents),
+// behind three pointers (g_p3Factors, g_p3Flags, g_p3Events). The headers (sim_env_save.h) come from the host TUs.
+// Tuning: the "env." keys of tuning.json (sim_tuning_table.h EnvTuning) override EnvParams' compiled defaults.
 
 namespace sim_p3 {
 using namespace tbd::city;
@@ -29,9 +19,6 @@ EnvResult curResult;      // what the factors, flags and overlays show
 std::unordered_map<uint64_t, int> resultIndex; // PackKey(cell) -> index into curResult (overlays, inspector)
 EnvWeatherState wx;       // chain, last season, last kind (WTHR)
 EnvWeather weather;       // now (every 10 game minutes)
-CellFactors factorsLocal;
-SimFlagTable flagsLocal;
-SimEventRing eventsLocal;
 std::vector<float> airHistory; // the city's mean air, one per game hour (the panel's sparkline), at most 48
 double buildMs = 0, stepMs = 0, applyMs = 0; // last hourly snapshot, worker pass, apply (main-thread ms)
 int syncFallbacks = 0;    // passes the worker had not finished in time (computed on the main thread)
@@ -57,14 +44,25 @@ uint64_t Seed() { return (uint64_t)(uint32_t)g_engine.terrain.params.seed; }
 float Sea() { return g_engine.terrain.params.enabled && g_engine.terrain.params.mapKind >= 1 ? tbd::IslandMap::kSeaLevel : -1e9f; }
 } // namespace sim_p3
 
-tbd::city::CellFactors* g_p3Factors = &sim_p3::factorsLocal; // Phase 0 follow-up: the hub's shared CellFactors
-tbd::city::SimFlagTable* g_p3Flags = &sim_p3::flagsLocal;     // ... its SimFlagTable (by BuildingId)
-tbd::city::SimEventRing* g_p3Events = &sim_p3::eventsLocal;   // ... its SimEventRing
+tbd::city::CellFactors* g_p3Factors = &g_cellFactors; // the hub's shared tables (P1 file / city_sim.inl)
+tbd::city::SimFlagTable* g_p3Flags = &g_simFlagTable;  // by BuildingId; P3 writes only SimFlagPhaseMask(3)
+tbd::city::SimEventRing* g_p3Events = &g_simEvents;
 
 // Getters for the other systems (utilities.h output, the clock chip, the inspector): read only.
 const tbd::city::EnvWeather& SimEnvWeather() { return sim_p3::weather; }
 float SimEnvSolarFactor() { return sim_p3::weather.solar; }    // 0..1, 0 at night
 float SimEnvWindFactor() { return sim_p3::weather.windPower; } // 0..1, the turbine curve
+bool SimEnvOn() { return g_simPhaseTune.env.enabled != 0.0; }
+// The clock's weather chip for both HUDs: "12 C Rain" (empty with P3 off). Season: SimEnvSeasonName.
+std::string SimEnvChip() {
+    if (!SimEnvOn()) return std::string();
+    const tbd::city::EnvWeather& w = sim_p3::weather;
+    char b[48];
+    std::snprintf(b, sizeof(b), "%.0f C %s", w.tempC, tbd::city::WeatherName(w.kind, w.snow));
+    return b;
+}
+const char* SimEnvSeasonName() { return tbd::city::SeasonName(sim_p3::weather.season); }
+bool SimEnvSunny() { return sim_p3::weather.kind == tbd::city::kWxClear || sim_p3::weather.cloud < 0.35f; }
 // The P3 factors of a CitySim cell (neutral when none): the inspector's pollution row.
 tbd::city::EnvCellOut SimEnvCell(int cell) {
     if (cell < 0 || (size_t)cell >= g_citySim.cells.cells.size()) return tbd::city::EnvCellOut();
@@ -303,17 +301,45 @@ tbd::city::EnvSaveView SimP3SaveView() {
     return v;
 }
 
+// The "env." keys (sim_tuning_table.h EnvTuning; their defaults are EnvParams' compiled values) into the params.
+void SimP3ApplyTuning(const tbd::city::EnvTuning& t, tbd::city::EnvParams& p) {
+    auto u8 = [](double v) { return (uint8_t)std::clamp((int)std::lround(v), 0, 255); };
+    p = tbd::city::EnvParams();
+    p.poll.airKeep = t.airKeep, p.poll.groundKeep = t.groundKeep, p.poll.waterKeep = t.waterKeep;
+    p.poll.airSteps = std::clamp((int)t.airSteps, 0, 8), p.poll.waterSteps = std::clamp((int)t.waterSteps, 0, 8);
+    p.poll.windStepMs = std::max(0.1, t.windStepMs);
+    p.airLimit = u8(t.airLimit), p.groundLimit = u8(t.groundLimit), p.waterLimit = u8(t.waterLimit), p.noiseLimit = u8(t.noiseLimit);
+    p.water.natural = std::clamp((int)t.waterNatural, 0, 10000), p.water.relax = t.waterRelax;
+    p.water.rechargePerMm = t.rechargePerMm, p.water.summerDryPerHour = t.summerDryPerHour, p.water.infilMmH = t.infilMmH;
+    p.water.drainMmH = t.drainMmH, p.water.drainShare = t.drainShare, p.water.floodMm = std::max(1, (int)t.floodMm);
+    p.water.pumpDrawPerUnit = t.pumpDrawPerUnit;
+}
+
 // ---- the five hooks (frozen signatures, called by city_sim_phases.inl)
 void SimP3Init() {
     namespace s = sim_p3;
-    s::params = tbd::city::EnvParams(); // the compiled table (sim_env.h); only env.enabled comes from tuning.json so far
+    SimP3ApplyTuning(g_simPhaseTune.env, s::params); // tuning.json's env. keys over EnvParams' compiled table
     g_sim.Register("env.weather", 10, 1, [](const tbd::city::SimTick& t) { SimP3Weather(t.minute); });
     g_sim.Register("env", 60, 1, [](const tbd::city::SimTick& t) { SimP3Hour(t.minute); });
     SimP3RegisterOverlays();
     tbd::Log("Sim P3: environment up (pollution fields on %.0f m tiles, weather chain, water table, floods)", (double)tbd::city::kFieldTile);
 }
 
-void SimP3Frame(float /*realDt*/) {} // all of P3 runs in its two scheduler systems
+// Per frame: the power utilities follow the weather (utilities.h UtilWorld::solarScale / windScale). The catalog output
+// is the average, so a source gives factor / running mean of the factor (over about three game days), in 0.1 steps
+// (each change re-solves the networks).
+void SimP3Frame(float /*realDt*/) {
+    static int64_t seenStep = INT64_MIN;
+    static double meanSolar = 0.0, meanWind = 0.0, n = 0.0;
+    const int64_t step = tbd::city::SimCalendar::FloorDiv(g_sim.Minute(), 10);
+    if (step == seenStep) return;
+    seenStep = step;
+    const double a = 1.0 / std::min(n += 1.0, 432.0); // the running mean of the first samples, then three days' EMA
+    meanSolar += (SimEnvSolarFactor() - meanSolar) * a, meanWind += (SimEnvWindFactor() - meanWind) * a;
+    auto scale = [](double f, double mean) { return (float)(std::round(std::clamp(mean > 0.02 ? f / mean : 1.0, 0.0, 3.0) * 10.0) / 10.0); };
+    const float sol = scale(SimEnvSolarFactor(), meanSolar), wnd = scale(SimEnvWindFactor(), meanWind);
+    if (sol != g_util.solarScale || wnd != g_util.windScale) g_util.solarScale = sol, g_util.windScale = wnd, ++g_util.outputVersion;
+}
 
 void SimP3Save(tbd::city::SimSaveRegistry& reg) {
     using namespace tbd::city;

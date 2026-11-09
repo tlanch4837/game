@@ -75,6 +75,9 @@
 #include "city/sim_life_save.h"      // Phase 1 citizens, households, jobs, migration and their .tbdsim chunks (city_sim_p1.inl)
 #include "city/sim_life_views.h"     // Phase 1 Population panel, building inspector, active tier
 #include "city/sim_life_cells.h"     // Phase 1 records into CitySim cells and links
+#include "city/sim_factors.h"        // the phases' shared CellFactors (sim roadmap 3.2)
+#include "city/sim_env_save.h"       // Phase 3 environment and its .tbdsim chunks (city_sim_p3.inl)
+#include "city/sim_goods_save.h"     // Phase 6 goods, companies, trade and their .tbdsim chunks (city_sim_p6.inl)
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
 #include "city/city_interact.h" // [interact]

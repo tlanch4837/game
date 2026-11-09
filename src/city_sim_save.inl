@@ -29,6 +29,7 @@ uint64_t lastSyncMs = 0;
 bool waiting = false;          // a load's BLDG rows are reserved: released after the lots came back
 bool lotsBack = false;         // GameSync put the load's grown lots back (SimLotsRestored)
 uint64_t releaseDeadlineMs = 0; // or this long after the load at the latest (a save without grown lots)
+uint64_t lotsBackGen = ~0ull;  // g_cityGeneration when GameSync last put a load's lots back (it may run before the apply)
 } // namespace sim_save
 
 // BuildingRegistry from the zones, transport, utility and industry lists: only when one of them changed, at most once a
@@ -62,7 +63,7 @@ void SimBuildingsSync(bool force) {
     if (ss::waiting && ss::releaseDeadlineMs && now >= ss::releaseDeadlineMs) // the lots never came back (no G records)
         ss::waiting = ss::lotsBack = false, ss::releaseDeadlineMs = 0, g_simBuildings.ReleaseUnclaimed();
 }
-void SimBuildingsLotsBack() { sim_save::lotsBack = sim_save::waiting; }
+void SimBuildingsLotsBack() { sim_save::lotsBack = sim_save::waiting, sim_save::lotsBackGen = g_cityGeneration; }
 
 // P0's chunks: HEAD (the clock and seeds) and BLDG (the building ids).
 void SimSaveRegisterP0() {

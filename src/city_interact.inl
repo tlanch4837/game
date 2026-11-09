@@ -423,6 +423,20 @@ void AreaRows(tbd::gui::InfoCardData& d, float x, float z) { // the city cell's 
     if (ci < 0 || (size_t)ci >= g_citySim.sim.size()) return;
     const tbd::city::CellSim& c = g_citySim.sim[(size_t)ci];
     d.rows.push_back({"Block", Fmt("happiness %.0f%%, land value %.0f", c.happiness / 2.55, c.landValue)});
+    if (SimEnvOn()) { // sim Phase 3: the block's pollution (0 .. 255 factor steps) and any flood
+        const tbd::city::EnvCellOut e = SimEnvCell(ci);
+        char pb[96];
+        std::snprintf(pb, sizeof(pb), "air %d, noise %d, ground %d, tap water %d", e.air, e.noise, e.ground, e.water);
+        std::string p = pb;
+        if (e.floodMm) p += Fmt(", flooded %.1f m", e.floodMm / 1000.0);
+        d.rows.push_back({"Pollution", p});
+    }
+}
+// sim Phase 6: the company of a building (its rows in the card)
+void GoodsRows(tbd::gui::InfoCardData& d, tbd::city::BOrigin o, uint64_t id) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (SimGoodsInspect(g_simBuildings.Find(o, id), rows))
+        for (auto& r : rows) d.rows.push_back({r.first, r.second});
 }
 
 // The card's text from the sim, honest: only what it keeps.
@@ -459,6 +473,7 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
             d.rows.push_back({"Problems", p});
         }
         AreaRows(d, l.c.x, l.c.z);
+        GoodsRows(d, BOrigin::Lot, l.id);
         if (g_simCitizenTitle.rfind("Lot " + std::to_string(l.id), 0) == 0)
             for (const std::string& line : g_simCitizenLines) d.notes.push_back(line);
         break;
@@ -473,6 +488,8 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
         d.sub = std::string(kKind[k]) + (D.backup ? " - backup" : "");
         d.rows.push_back({"Status", b.Condemned() ? Fmt("condemned: no road, down in %.0f days", std::ceil(b.DemolishInMinutes() / kDayMinutes)) : b.hasRoad ? "operating" : "no road beside it"});
         d.rows.push_back({"Capacity", Fmt("%.0f ", D.supply) + kUnit[k]});
+        if (g_util.OutputScale(D) != 1.0f || (D.shortName && (std::strcmp(D.shortName, "Solar") == 0 || std::strcmp(D.shortName, "Wind") == 0)))
+            d.rows.push_back({"Output now", Fmt("%.0f ", D.supply * g_util.OutputScale(D)) + kUnit[k] + (std::strcmp(D.shortName, "Solar") == 0 ? " (sun)" : " (wind)")});
         d.rows.push_back({"City network", Fmt("%.0f of %.0f used", g_utilReport.used[k], g_utilReport.supply[k]) + std::string(" ") + kUnit[k]});
         d.rows.push_back({"Demand", Fmt("%.0f ", g_utilReport.demand[k]) + kUnit[k] + (g_utilReport.unserved[k] ? Fmt(", %.0f lots short", g_utilReport.unserved[k]) : "")});
         d.rows.push_back({"Upkeep", MoneyStr(D.upkeep) + " a month"});
@@ -502,7 +519,9 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
             d.rows.push_back({"Output", Fmt("%.1f t a month", s.perMonth)});
             d.rows.push_back({"Stock", Fmt("%.1f t waiting", s.stock)});
             d.rows.push_back({"Needs", t.resName});
+            GoodsRows(d, BOrigin::Industry, s.id);
         }
+        AreaRows(d, s.c.x, s.c.z);
         break;
     }
     case PickKind::Waste: {

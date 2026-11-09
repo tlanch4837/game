@@ -241,6 +241,7 @@ void FillStatus(tbd::gui::CityHud& hud) {
     const int day = g_clock.Day() - 1;
     std::snprintf(b, sizeof(b), "%s %d \xC2\xB7 Y%d", kMonths[(day / 30) % 12], day % 30 + 1, day / 360 + 1);
     M.date = b;
+    M.weather = SimEnvChip(); // sim Phase 3's weather now (city_sim_p3.inl)
     M.speed = g_clock.speed + 1, M.paused = g_clock.paused && !g_menuPaused;
     M.city = hud.cityName;
     static int alertFrame = 0;

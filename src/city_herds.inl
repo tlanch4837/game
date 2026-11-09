@@ -44,6 +44,8 @@ std::vector<tbd::city::CarInstance> moving, parked;
 std::vector<float> rows;
 uint32_t carsDrawn = 0;
 float frameDt = 0; // HerdsSync's real seconds, for the curbside cars' fades in HerdsDraw
+std::vector<tbd::city::NodeLink> nodeLinks; // town.links + the goods trucks (HerdsRelease, reused)
+double truckLinksDrawn = 0;                 // truck vehicles-a-day fed to the herds (summed per window; the stats line)
 
 double Now() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
@@ -158,7 +160,24 @@ void HerdsRelease(const tbd::city::SimTick& t) {
     const int tod = (int)std::fmod(g_clock.minutes, 1440.0);
     if (tod < kWindowMinutes) herds.NewDay();
     picker.BeginWindow(t.minute / kWindowMinutes);
-    herds.ReleaseHerds(t.minute, tod, hoods.hoods, commute, school, shop, [](int a, int b, RouteChoice* out) { return picker.Pick(a, b, out); }, &town.links);
+    // the town's node links plus Phase 6's trucks of yesterday (company to company, to and from the outside
+    // connections): freight node links, drawn as cars like the rest (goods.truckDrawShare scales them)
+    const std::vector<NodeLink>& trucks = SimGoodsTruckLinks();
+    const std::vector<NodeLink>* nodes = &town.links;
+    const float share = (float)std::clamp(g_simPhaseTune.goods.truckDrawShare, 0.0, 4.0);
+    if (!trucks.empty() && share > 0.0f && g_simPhaseTune.goods.enabled != 0.0) {
+        nodeLinks.assign(town.links.begin(), town.links.end());
+        truckLinksDrawn = 0;
+        for (const NodeLink& l : trucks) {
+            if (l.fromNode < 0 || l.toNode < 0 || l.fromNode >= table.nodes || l.toNode >= table.nodes) continue;
+            NodeLink k = l;
+            k.n *= share;
+            nodeLinks.push_back(k);
+            truckLinksDrawn += k.n;
+        }
+        nodes = &nodeLinks;
+    }
+    herds.ReleaseHerds(t.minute, tod, hoods.hoods, commute, school, shop, [](int a, int b, RouteChoice* out) { return picker.Pick(a, b, out); }, nodes);
     releaseMs = Now() - t0;
 }
 
@@ -350,8 +369,9 @@ bool HerdsRemote(const std::string& sub, const std::string& arg, std::string& ou
              g_clock.Hour(), g_clock.Minute());
     out = b;
     const TownTrafficStats& ts = town.stats;
-    snprintf(b, sizeof(b), " | outside %d: a day %.0f through %.0f in %.0f out, local %.0f, %zu node links | through released %.0f freight %.0f | parked %d",
-             ts.conns, ts.throughPerDay, ts.inPerDay, ts.outPerDay, ts.localPerDay, ts.links, st.released[kTripThrough], st.released[kTripFreight], ts.parkedShown);
+    snprintf(b, sizeof(b), " | outside %d: a day %.0f through %.0f in %.0f out, local %.0f, %zu node links | through released %.0f freight %.0f | parked %d | goods trucks %.0f a day (%zu pairs)",
+             ts.conns, ts.throughPerDay, ts.inPerDay, ts.outPerDay, ts.localPerDay, ts.links, st.released[kTripThrough], st.released[kTripFreight], ts.parkedShown,
+             truckLinksDrawn, SimGoodsTruckLinks().size());
     out += b;
     const ChildStats& cs = children.stats;
     snprintf(b, sizeof(b), " | streams %d budget x%.2f: departures %llu arrivals %llu dropped %llu faded in %llu skipped %llu stop-line waits %llu",

@@ -199,8 +199,9 @@ void SimP1Save(tbd::city::SimSaveRegistry& reg) {
                 // empty (a load then bootstraps) while the bootstrap of an old save still waits for its lots
                 if (sim_p1::on && !sim_p1::bootstrap) LifeSave(g_life, sim_p1::image);
             }
-            const std::vector<uint8_t>& b = sim_p1::image.*(p.bytes);
-            w.Raw(b.data(), b.size());
+            std::vector<uint8_t>& b = sim_p1::image.*(p.bytes);
+            if (w.bytes.empty()) w.bytes = std::move(b), b = std::vector<uint8_t>(); // the image is the payload: no second copy
+            else w.Raw(b.data(), b.size());
         };
         d.load = [p](ByteReader& r, uint16_t) {
             std::vector<uint8_t>& b = sim_p1::in.*(p.bytes);

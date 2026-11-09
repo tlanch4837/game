@@ -40,9 +40,49 @@ const SimPhaseHooks kSimPhases[] = {
 };
 bool SimPhaseOn(const SimPhaseHooks& p) { return *p.enabled != 0.0; }
 
+// ---- the shared flag table (g_simFlagTable, by BuildingId) into the per-lot g_simFlags (zones.lots order)
+namespace sim_hub {
+tbd::city::SimFlags tableMask = 0;      // the bits of the phases that are on (set in SimPhasesInit)
+std::vector<tbd::city::BuildingId> lotIds; // per lot: its BuildingId (cached for the zones and registry versions below)
+uint64_t idsZones = ~0ull, idsReg = ~0ull;
+uint64_t mergedTable = ~0ull, mergedFlags = ~0ull; // the table and g_simFlags versions of the last merge
+double mergeMs = 0.0;
+} // namespace sim_hub
+
+void SimMergeTableFlags(std::vector<uint32_t>& perLot) {
+    using namespace tbd::city;
+    namespace h = sim_hub;
+    if (!h::tableMask) return;
+    if (h::idsZones != g_zones.version || h::idsReg != g_simBuildings.version || h::lotIds.size() != g_zones.lots.size()) {
+        h::idsZones = g_zones.version, h::idsReg = g_simBuildings.version;
+        h::lotIds.assign(g_zones.lots.size(), BuildingId());
+        for (size_t i = 0; i < g_zones.lots.size(); ++i)
+            if (g_zones.lots[i].alive) h::lotIds[i] = g_simBuildings.Find(BOrigin::Lot, g_zones.lots[i].id);
+    }
+    const size_t n = std::min(perLot.size(), h::lotIds.size());
+    for (size_t i = 0; i < n; ++i) perLot[i] = (perLot[i] & ~h::tableMask) | (g_simFlagTable.Get(h::lotIds[i]) & h::tableMask);
+}
+
+// Per frame: a phase changed its bits in the table (P3 hourly, P6 hourly): the per-lot flags follow.
+void SimMergeTableFlagsFrame() {
+    namespace h = sim_hub;
+    if (!h::tableMask || (h::mergedTable == g_simFlagTable.version && h::mergedFlags == g_simFlagsVersion && h::idsReg == g_simBuildings.version)) return;
+    const double t0 = g_sim.nowMs();
+    if (h::mergedTable != g_simFlagTable.version) g_simFlagTable.Prune(g_simBuildings);
+    static std::vector<uint32_t> next;
+    next = g_simFlags;
+    SimMergeTableFlags(next);
+    if (next != g_simFlags) g_simFlags.swap(next), ++g_simFlagsVersion;
+    h::mergedTable = g_simFlagTable.version, h::mergedFlags = g_simFlagsVersion;
+    h::mergeMs = g_sim.nowMs() - t0;
+}
+
 // SimInit: P0's chunks, then each phase's systems, chunks and panels.
 void SimPhasesInit() {
     SimSaveRegisterP0();
+    for (int i = 0; i < (int)(sizeof(kSimPhases) / sizeof(kSimPhases[0])); ++i) // the table's bits of the phases that are on
+        if (SimPhaseOn(kSimPhases[i])) sim_hub::tableMask |= tbd::city::SimFlagPhaseMask(i + 1);
+    sim_hub::tableMask &= ~(tbd::city::kFlagCurrentMask & ~tbd::city::SimFlagPhaseMask(6)); // ComputeSimFlags keeps its own (P6 takes no customers)
     for (const SimPhaseHooks& p : kSimPhases) {
         if (SimPhaseOn(p)) p.init();
         else tbd::Log("Sim: phase %s switched off (tuning enabled = 0)", p.name);
@@ -57,6 +97,8 @@ void SimPhasesReset() {
     for (const tbd::city::SimChunkDef& d : g_simChunks.Defs())
         if (d.fresh) d.fresh();
     sim_save::zones = ~0ull, sim_save::waiting = sim_save::lotsBack = false, sim_save::releaseDeadlineMs = 0;
+    g_cellFactors.Clear(); // every phase's columns go back to neutral with the city
+    sim_hub::lotIds.clear(), sim_hub::idsZones = sim_hub::idsReg = sim_hub::mergedTable = sim_hub::mergedFlags = ~0ull;
 }
 
 // SimSync, after the reset and the M / Q records: the .tbdsim of a load (or nothing: a new map), then the Load hooks.
@@ -70,5 +112,6 @@ void SimPhasesFrame(float realDt) {
     SimBuildingsSync(false);
     for (const SimPhaseHooks& p : kSimPhases)
         if (SimPhaseOn(p)) p.frame(realDt);
+    SimMergeTableFlagsFrame();
     SimAutosaveSync(realDt);
 }

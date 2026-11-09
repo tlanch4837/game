@@ -31,6 +31,7 @@ void SimServices() {
     { // the per-building flags: O(lots), every 10 game minutes (abandonment creeps up with time, so no cheaper key)
         static std::vector<tbd::city::SimFlags> fresh;
         ComputeSimFlags(g_zones, g_citySim, g_simGrowth, g_simTune, g_simLotUtil, fresh);
+        SimMergeTableFlags(fresh); // the phases' bits (P3, P6: the shared table) ride along, so an unchanged pass is no change
         if (fresh != g_simFlags) g_simFlags.swap(fresh), ++g_simFlagsVersion;
     }
     // coverage: only when the services, the roads, the lots or the funding changed

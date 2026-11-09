@@ -37,7 +37,14 @@ tbd::city::SimLoadReport SimTbdApplyPending() {
             for (uint32_t f : rep.skipped) tbd::Log("Sim:   %s skipped (unknown to this build)", FourCCName(f).c_str());
         }
         const SimChunkResult* b = rep.Find(simchunk::BLDG);
-        if (b && b->status == SimChunkStatus::Loaded) sim_save::waiting = true, sim_save::lotsBack = false, sim_save::releaseDeadlineMs = tbd::platform::TickCountMs() + 30000;
+        if (b && b->status == SimChunkStatus::Loaded) {
+            // The reserved rows wait for the load's lots. They may already be back (GameSync restored them before this
+            // apply, in this city generation) or never coming (the save had no painted zones or grown lots): then the
+            // next sync releases what was not claimed at once, instead of after the 30 s deadline.
+            const bool back = sim_save::lotsBackGen == g_cityGeneration || (g_pendingZones.empty() && g_pendingLots.empty());
+            sim_save::waiting = true, sim_save::lotsBack = back, sim_save::releaseDeadlineMs = tbd::platform::TickCountMs() + 30000;
+            if (back) tbd::Log("Sim: the load's lots are already back: unclaimed building ids are released at the next sync");
+        }
     }
     sim_save::zones = ~0ull; // the next sync claims the reserved rows
     p = SimTbdPending();
