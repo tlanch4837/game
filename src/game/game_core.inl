@@ -1641,22 +1641,19 @@ int LookTier() {
     }();
     return tier;
 }
+tbd::MaxLook g_maxLook; // src/max_look.h: the sun MAX replaced
 void SetMaxGraphics(bool on) {
-    static float hour = 0, tilt = 0;
-    static bool sky = true, shadows = true, animate = false;
-    if (on == g_maxGraphics) return;
-    g_maxGraphics = on;
-    tbd::Sun& sun = g_engine.sun;
-    if (on) {
-        hour = sun.hour; tilt = sun.tiltDeg; sky = sun.showSky; shadows = sun.shadows; animate = sun.animate;
-        // the sun's everyday path stays behind a head that faces +Z, so lean it round to the front: a key light
-        sun.hour = 13.6f;
-        sun.tiltDeg = 50.0f;
-        sun.showSky = sun.shadows = true;
-        sun.animate = false;
-    } else {
-        sun.hour = hour; sun.tiltDeg = tilt; sun.showSky = sky; sun.shadows = shadows; sun.animate = animate;
-    }
+    g_maxLook.Set(g_engine.sun, on);
+    g_maxGraphics = g_maxLook.on;
+}
+// The city map's own sun (a new map): under MAX it goes to the sun MAX keeps, so MAX stays on (city_game.inl, city_example.inl).
+void SetCitySun() {
+    g_maxLook.EditBase(g_engine.sun, [](tbd::Sun& sun) {
+        sun.showSky = false;
+        // An afternoon sun, low and leaning south (docs/cs2_look_pass.md): near noon the houses' shadows hid under them and every wall read
+        // the same; at 15:36 with a 30 degree lean they fall across the street, as in CS2's screenshots. The editor keeps its own sun.
+        if (LookOn()) sun.hour = 15.6f, sun.tiltDeg = 30.0f; // TBD_LOOK=0: the sun as it was
+    });
 }
 extern int g_gfxQuality;
 

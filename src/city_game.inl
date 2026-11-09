@@ -192,10 +192,7 @@ void NewCityGame(int seed) {
     g_engine.terrain.params.seed = seed;
     g_engine.terrain.params.relief = NewMapRelief(); // a new map is the flatter one (city_map.h kDefaultRelief)
     g_engine.terrain.field.Clear();
-    g_engine.sun.showSky = false;
-    // An afternoon sun, low and leaning south (docs/cs2_look_pass.md): near noon the houses' shadows hid under them and every wall read
-    // the same; at 15:36 with a 30 degree lean they fall across the street, as in CS2's screenshots. The editor keeps its own sun.
-    if (LookOn()) { g_engine.sun.hour = 15.6f; g_engine.sun.tiltDeg = 30.0f; } // TBD_LOOK=0: the sun as it was
+    SetCitySun(); // no marched sky, the afternoon sun; under Ultra's MAX look, kept under it (game_core.inl)
     ClearCityWorld();
     g_clock.minutes = 8 * 60;
     DefaultInfrastructure();

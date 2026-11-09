@@ -635,8 +635,7 @@ void NewExampleGame(int seed) {
     g_engine.terrain.params.mapKind = 3;
     g_engine.terrain.params.seed = seed;
     g_engine.terrain.field.Clear();
-    g_engine.sun.showSky = false;
-    if (LookOn()) { g_engine.sun.hour = 15.6f; g_engine.sun.tiltDeg = 30.0f; }
+    SetCitySun(); // as NewCityGame: under Ultra's MAX look, kept under it (game_core.inl)
     ClearCityWorld();
     g_clock.minutes = 8 * 60;
     BuildExampleCity(seed);
