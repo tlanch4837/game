@@ -147,8 +147,21 @@ TBD_SIM_TUNING_TABLE(LandTuning, "land.", TBD_SIM_TUNING_LAND)
 TBD_SIM_TUNING_TABLE(EnvTuning, "env.", TBD_SIM_TUNING_ENV)
 
 // ---- P4 services, incidents, garbage (svc.) ---------------------------------------------------------------------------
+// Defaults are sim_svc_world.h SvcParams' compiled values; city_sim_p4.inl copies them in (SimP4ApplyTuning).
 #define TBD_SIM_TUNING_SVC(X)                                                                                               \
-    X(enabled, 1.0)
+    X(enabled, 1.0)                                                                                                         \
+    X(verifyDays, 0.0)                 /* every N game days: full recompute vs incremental (logs mismatches; 0 off) */       \
+    X(crimePerK, 24.0)                 /* a life year per 1,000 residents */                                                \
+    X(firePerKHomes, 2.5)                                                                                                   \
+    X(sickPerK, 60.0)                                                                                                       \
+    X(burnMinutes, 90.0)               /* an unfought fire burns the building down */                                       \
+    X(spreadChance, 0.35)                                                                                                   \
+    X(arrestShare, 0.5)                                                                                                     \
+    X(bedMinutes, 360.0)                                                                                                    \
+    X(jailMinutes, 1440.0)                                                                                                  \
+    X(flagCrime, 150.0)                                                                                                     \
+    X(vehicleDrawShare, 1.0)           /* share of yesterday's service trips the herds draw */                              \
+    X(ownGarbage, 1.0)                 /* 1: P4 runs garbage collection (city_garbage.inl's sync steps aside) */
 TBD_SIM_TUNING_TABLE(SvcTuning, "svc.", TBD_SIM_TUNING_SVC)
 
 // ---- P5 transit lines, modes, outside connections (move.) -------------------------------------------------------------

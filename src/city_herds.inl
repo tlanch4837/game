@@ -178,6 +178,14 @@ void HerdsRelease(const tbd::city::SimTick& t) {
         }
         nodes = &nodeLinks;
     }
+    // Phase 4's service vehicles of the last game day (engines, patrol cars, ambulances, hearses, garbage trucks;
+    // svc.vehicleDrawShare and the preset already applied): node links like the trucks
+    const std::vector<NodeLink>& service = SimServiceVehicleLinks();
+    if (!service.empty()) {
+        if (nodes != &nodeLinks) nodeLinks.assign(town.links.begin(), town.links.end()), nodes = &nodeLinks;
+        for (const NodeLink& l : service)
+            if (l.fromNode >= 0 && l.toNode >= 0 && l.fromNode < table.nodes && l.toNode < table.nodes) nodeLinks.push_back(l);
+    }
     herds.ReleaseHerds(t.minute, tod, hoods.hoods, commute, school, shop, [](int a, int b, RouteChoice* out) { return picker.Pick(a, b, out); }, nodes);
     releaseMs = Now() - t0;
 }

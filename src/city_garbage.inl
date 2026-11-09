@@ -73,11 +73,15 @@ inline int CompAt(const tbd::city::Network& net, const std::vector<int>& segComp
 }
 } // namespace garbage
 
+bool SimP4GarbageOwned(); // city_sim_p4.inl: Phase 4 collects (capacity, trucks, saved piles) and fills g_garbage
+
 // Runs once per game hour on the minutes gathered since (it used to run every frame, looping lots x facilities): the
 // same totals per game month, collected in hourly batches instead of per frame. Each lot only looks at the facilities on
-// its own road network component.
+// its own road network component. With Phase 4 on (svc.ownGarbage) it steps aside: the drawing and the panel below
+// stay, fed by Phase 4.
 void GarbageSync(float realDt) {
     using namespace garbage;
+    if (SimP4GarbageOwned()) return;
     static float pending = 0;
     pending += realDt * g_clock.Rate() * g_clockBoost;
     if (pending < 60.0f) return;

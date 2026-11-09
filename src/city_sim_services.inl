@@ -1,7 +1,12 @@
 // ------------------------------------------------------------------- city sim: utilities into the cells, flags, service coverage (S3)
 // Included by city_sim.inl (moved out of it, CS2 sim roadmap Phase 0; owned by Phase 4 from here on).
+// With Phase 4 on (svc.enabled), the service coverage comes from its travel-time pass with capacity (city_sim_p4.inl
+// writes CellSim::coverage); the radius model below stays as the fallback for svc.enabled = 0.
 
-// The service kind of a transport-tab building, -1 for none (deathcare and communications cover nothing yet).
+bool SimP4CoverageOwned(); // city_sim_p4.inl (the phase hub, included after this file)
+
+// The service kind of a transport-tab building for the radius fallback, -1 for none (deathcare and communications
+// cover nothing there; Phase 4's catalog, sim_svc_catalog.h, covers every service).
 int SimServiceKind(const tbd::city::BuildingDef& d) {
     using tbd::city::TTab;
     switch (d.tab) {
@@ -34,7 +39,8 @@ void SimServices() {
         SimMergeTableFlags(fresh); // the phases' bits (P3, P6: the shared table) ride along, so an unchanged pass is no change
         if (fresh != g_simFlags) g_simFlags.swap(fresh), ++g_simFlagsVersion;
     }
-    // coverage: only when the services, the roads, the lots or the funding changed
+    // coverage: only when the services, the roads, the lots or the funding changed (and Phase 4 does not own it)
+    if (SimP4CoverageOwned()) return;
     static uint64_t kTrans = ~0ull, kNet = ~0ull, kZones = ~0ull;
     static float kFund[kServices] = {};
     static std::vector<int> segComp;
