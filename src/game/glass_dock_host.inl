@@ -237,9 +237,8 @@ void FillStatus(tbd::gui::CityHud& hud) {
     char b[48];
     std::snprintf(b, sizeof(b), "%d%%", (int)std::lround(happy * 100));
     M.happy = b, M.happyBar = happy;
-    static const char* const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    const int day = g_clock.Day() - 1;
-    std::snprintf(b, sizeof(b), "%s %d \xC2\xB7 Y%d", kMonths[(day / 30) % 12], day % 30 + 1, day / 360 + 1);
+    // the one calendar of the sim minute (sim_calendar.h): the month agrees with the season chip and the citizens' months
+    tbd::city::FormatSimDate(g_simCalendar, g_sim.Minute(), b, sizeof(b), " \xC2\xB7 ");
     M.date = b;
     M.weather = SimEnvChip(); // sim Phase 3's weather now (city_sim_p3.inl)
     M.speed = g_clock.speed + 1, M.paused = g_clock.paused && !g_menuPaused;

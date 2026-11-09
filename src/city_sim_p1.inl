@@ -32,7 +32,6 @@ uint64_t waitSinceMs = 0;
 std::vector<uint64_t> savedPeople; // an old save's Q records (their home lots): pinned onto records after the bootstrap
 tbd::city::LifeChunks in;      // the .tbdsim chunks read on load
 uint8_t inMask = 0;            // which of the four came in (1 CITZ, 2 HHLD, 4 OCCU, 8 MIGR)
-tbd::city::LifeChunks image;   // one snapshot's image (CITZ's save makes it, the other three copy theirs)
 struct Sig {
     uint64_t reg = ~0ull, zones = ~0ull, hoods = ~0ull;
     size_t cells = ~(size_t)0;
@@ -40,6 +39,7 @@ struct Sig {
 } synced;
 uint64_t lastSyncMs = 0;
 double syncMs = 0.0, applyMs = 0.0; // last costs (the F3 line)
+tbd::city::LifeApplyState applyState; // the records' links into CitySim, rebuilt only on a change
 // hood -> hood free-flow minutes from the herds' link table: one destination tree per frame into `building`, swapped
 // into `travel` when every hood is done (then the seekers' search order follows: LifeSim::TravelChanged)
 std::vector<float> travel, building;
@@ -62,7 +62,7 @@ float TravelMinutes(int a, int b) {
 void Apply() {
     if (!cellsReady) return;
     const double t0 = Now();
-    tbd::city::LifeApplyCells(g_life.w, g_citySim);
+    tbd::city::LifeApplyCells(g_life.w, g_citySim, &applyState); // the link maps only when they changed
     g_simTotals.population = g_citySim.Population(), g_simTotals.adults = g_citySim.Adults();
     g_simTotals.working = g_citySim.Working(), g_simTotals.jobs = g_citySim.JobCap(), g_simTotals.homes = g_citySim.HomeCap();
     applyMs = Now() - t0;
@@ -70,16 +70,43 @@ void Apply() {
 } // namespace sim_p1
 
 namespace sim_p1 {
-// The registry rows' homes, jobs, cells and hoods, then the citizen sim's buildings (evictions, firing, rehousing).
-void SyncBuildings() {
+// The building sync in three steps, one per frame (each about a third of the ~1 ms it took at 15k lots in one frame):
+//   1 the registry rows' homes, jobs, cells and hoods (LifeFillRows)
+//   2 the citizen sim's buildings: evictions, firing, rehousing (LifeSyncBuildings); the rows again first if the
+//     registry synced in between (P0 rewrites them)
+//   3 each hood's search order (LifeComputeNear) and the views into CitySim
+// The first sync after a reset or a load (and the bootstrap) runs all three at once. stage: the next step, 0 none.
+int stage = 0;
+uint64_t filledReg = ~0ull; // the registry version step 1 filled
+void FillRows() {
+    using namespace tbd::city;
+    const auto& hs = herds_host::hoods;
+    LifeFillRows(g_simBuildings, g_citySim, g_zones.lots, [&hs](int c) { return (size_t)c < hs.cellHood.size() ? hs.cellHood[(size_t)c] : -1; },
+                 &sim_save::hintLot); // the registry sync's per-lot ids (checked before use)
+    filledReg = g_simBuildings.version;
+}
+void SyncStep(bool all) {
     using namespace tbd::city;
     const double t0 = Now();
     const auto& hs = herds_host::hoods;
-    LifeFillRows(g_simBuildings, g_citySim, g_zones.lots, [&hs](int c) { return (size_t)c < hs.cellHood.size() ? hs.cellHood[(size_t)c] : -1; });
-    g_life.SyncBuildings(g_simBuildings, [](const BuildingRow& r) { return r.origin == BOrigin::Lot ? LifeJobKind(r.kind) : -1; });
-    synced = {g_simBuildings.version, g_zones.version, hs.generation, g_citySim.cells.cells.size()};
-    lastSyncMs = tbd::platform::TickCountMs();
+    if (stage == 0) stage = 1;
+    if (stage == 1) {
+        FillRows();
+        synced = {g_simBuildings.version, g_zones.version, hs.generation, g_citySim.cells.cells.size()};
+        lastSyncMs = tbd::platform::TickCountMs();
+        stage = 2;
+        if (!all) { syncMs = Now() - t0; return; }
+    }
+    if (stage == 2) {
+        if (filledReg != g_simBuildings.version) FillRows();
+        LifeSyncBuildings(g_life.w, g_simBuildings, [](const BuildingRow& r) { return r.origin == BOrigin::Lot ? LifeJobKind(r.kind) : -1; });
+        stage = 3;
+        if (!all) { syncMs = Now() - t0; return; }
+    }
+    LifeComputeNear(g_life.w); // what LifeSim::SyncBuildings did after the sync
+    stage = 0;
     syncMs = Now() - t0;
+    Apply();
 }
 
 // One destination hood's route tree a frame (the herds' link table, free-flow minutes) until the matrix is complete.
@@ -167,9 +194,11 @@ void SimP1Frame(float /*realDt*/) {
     if (waitLots) return;
     const Sig sig{g_simBuildings.version, g_zones.version, herds_host::hoods.generation, g_citySim.cells.cells.size()};
     const bool first = !cellsReady || bootstrap;
-    if (first || (!(sig == synced) && now - lastSyncMs >= 1000)) { // ~2 ms at 15k lots: the registry's own cadence
-        if (first) SimBuildingsSync(true); // the registry has every lot now
-        SyncBuildings();
+    if (stage && !first) { SyncStep(false); TravelStep(); return; } // a staged sync goes on (one step a frame)
+    if (first || (!(sig == synced) && now - lastSyncMs >= 1000)) { // the registry's own cadence
+        if (first) SimBuildingsSync(true), stage = 0; // the registry has every lot now
+        SyncStep(first);
+        if (!first) { TravelStep(); return; }
         if (bootstrap) {
             bootstrap = false;
             g_life.Bootstrap();
@@ -193,15 +222,16 @@ void SimP1Save(tbd::city::SimSaveRegistry& reg) {
         SimChunkDef d;
         d.fourcc = p.fourcc;
         d.version = kLifeChunkVersion;
+        // Each chunk makes its own part straight into the payload (no second copy); the four only read g_life, so the
+        // autosave copies them on four threads at once (city_sim_save_io.inl SimTbdSnapshot). Empty (a load then
+        // bootstraps) while the bootstrap of an old save still waits for its lots.
         d.save = [p](ByteWriter& w) {
-            if (p.bit == 1) { // CITZ comes first in the file: it takes the image for all four
-                sim_p1::image = LifeChunks();
-                // empty (a load then bootstraps) while the bootstrap of an old save still waits for its lots
-                if (sim_p1::on && !sim_p1::bootstrap) LifeSave(g_life, sim_p1::image);
-            }
-            std::vector<uint8_t>& b = sim_p1::image.*(p.bytes);
-            if (w.bytes.empty()) w.bytes = std::move(b), b = std::vector<uint8_t>(); // the image is the payload: no second copy
-            else w.Raw(b.data(), b.size());
+            if (!sim_p1::on || sim_p1::bootstrap) return;
+            const int part = p.bit == 1 ? 0 : p.bit == 2 ? 1 : p.bit == 4 ? 2 : 3;
+            if (w.bytes.empty()) { LifeSavePart(g_life, part, w.bytes); return; }
+            std::vector<uint8_t> b;
+            LifeSavePart(g_life, part, b);
+            w.Raw(b.data(), b.size());
         };
         d.load = [p](ByteReader& r, uint16_t) {
             std::vector<uint8_t>& b = sim_p1::in.*(p.bytes);
@@ -224,7 +254,7 @@ void SimP1Load(const tbd::city::SimLoadReport& rep) {
     const bool bldgOk = bldg && bldg->status == SimChunkStatus::Loaded;
     g_life.w.cal = g_simCalendar;
     g_life.Reset(CitySeed());
-    cellsReady = false, bootstrap = false, synced = Sig(), travelKey = buildKey = ~0ull, travelHoods = 0;
+    cellsReady = false, bootstrap = false, synced = Sig(), travelKey = buildKey = ~0ull, travelHoods = 0, stage = 0;
     if (inMask == 15 && bldgOk) {
         if (LifeLoad(g_life, in)) tbd::Log("Sim: P1 loaded %u citizens in %u households", g_life.w.cit.Live(), g_life.w.hh.Live());
         else tbd::Log("Sim: P1 chunks did not check out: citizens start fresh"), bootstrap = true;

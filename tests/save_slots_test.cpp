@@ -54,7 +54,8 @@ int main() {
         Meta part; // unknown keys skipped, missing keys keep defaults, CRLF tolerated
         CHECK(ParseMeta("name=X\r\nfuture=1\r\nmoney=-50\r\n", part) && part.name == "X" && part.money == -50 && part.population == -1 && part.saved == 0);
         CHECK(!ParseMeta("", part));
-        CHECK(GameDate(0) == "Jan 1, Y1" && GameDate(1440.0 * 30) == "Feb 1, Y1" && GameDate(1440.0 * 365) == "Jan 6, Y2");
+        // the one calendar (sim_calendar.h): 1 game day = 1 life month, 12 to a year
+        CHECK(GameDate(0) == "Jan Y1" && GameDate(1440.0 * 1) == "Feb Y1" && GameDate(1440.0 * 12) == "Jan Y2" && GameDate(1440.0 * 365) == "Jun Y31");
         CHECK(RealDate(0).empty() && RealDate(1762600000, true) == "Nov 8 2025, 11:06");
         CHECK(Money(1500000) == "$1.50M" && Money(-12000) == "-$12k" && Money(950) == "$950" && Thousands(1234567) == "1,234,567");
         const Meta f = MetaFromSave(FakeSave(77, 3000, 123456789));

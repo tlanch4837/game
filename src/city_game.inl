@@ -208,21 +208,26 @@ void NewCityGame(int seed) {
 }
 
 // ---------------------------------------------------------------------------------------------------- save
-// A slot's three files, made on the main thread and written by WriteCitySaveFiles (there, or on a worker for an autosave).
+// A slot's three files: their inputs are taken on the main thread, written by WriteCitySaveFiles (there, or on a worker
+// for an autosave, which also formats the .tbdgame text there from the snapshot: CitySaveText).
+struct CityTextSnap; // below
+std::string CitySaveText(const CityTextSnap& s);
 struct CitySaveFiles {
     std::wstring game, hfd, sim;
     std::string text;
-    std::vector<uint8_t> hfdBytes;
+    std::shared_ptr<const CityTextSnap> snap; // set: the text is made from it where the files are written
+    std::shared_ptr<const std::vector<uint8_t>> hfdBytes; // the terrain edits (kept while the field's version holds)
     std::vector<tbd::city::SimSaveRegistry::ChunkImage> simChunks; // the payloads; framing and CRCs where it is written
 };
-bool WriteCitySaveFiles(const CitySaveFiles& s) {
+bool WriteCitySaveFiles(CitySaveFiles& s) {
+    if (s.snap) s.text = CitySaveText(*s.snap), s.snap.reset();
     FILE* f = tbd::platform::WOpen(s.game.c_str(), L"wb");
     bool ok = f && fwrite(s.text.data(), 1, s.text.size(), f) == s.text.size();
     if (f) fclose(f);
-    if (ok) { // the terrain edits beside it
+    if (ok && s.hfdBytes) { // the terrain edits beside it
         FILE* t = tbd::platform::WOpen(s.hfd.c_str(), L"wb");
         if (t) {
-            fwrite(s.hfdBytes.data(), 1, s.hfdBytes.size(), t);
+            fwrite(s.hfdBytes->data(), 1, s.hfdBytes->size(), t);
             fclose(t);
         }
     }
@@ -230,63 +235,30 @@ bool WriteCitySaveFiles(const CitySaveFiles& s) {
     return ok;
 }
 
-// mode 0: the player's save (toast, slot meta); 1: an autosave written now; 2: an autosave written on a worker.
+#include "city_game_text.inl" // the .tbdgame text from a snapshot (CityTakeTextSnap, CitySaveText)
+
+// The terrain edits' bytes, kept while the height field's version and the city hold (they rarely change in a city):
+// a save then shares them instead of encoding every edited tile again on the main thread.
+std::shared_ptr<const std::vector<uint8_t>> CityTerrainBytes() {
+    static std::shared_ptr<const std::vector<uint8_t>> bytes;
+    static uint32_t version = ~0u;
+    static uint64_t generation = ~0ull;
+    const uint32_t v = g_engine.terrain.field.Version();
+    if (!bytes || v != version || generation != g_cityGeneration) {
+        auto b = std::make_shared<std::vector<uint8_t>>();
+        g_engine.terrain.field.Save(*b);
+        bytes = std::move(b), version = v, generation = g_cityGeneration;
+    }
+    return bytes;
+}
+
+// mode 0: the player's save (toast, slot meta); 1: an autosave written now; 2: an autosave written on a worker (the
+// text is formatted there too: the main thread only takes the snapshot and the sim chunks' copy).
 bool SaveCityGameFiles(int slot, int mode) {
-    using namespace tbd::city;
-    std::ostringstream o;
-    o.precision(9);
-    const auto& tp = g_engine.terrain.params;
-    o << "TBDGAME 1\n";
-    o << "H|" << tp.mapKind << '|' << tp.seed << '|' << g_clock.minutes << '|' << g_clock.speed << '|' << g_engine.camera.target.x << ' ' << g_engine.camera.target.y << ' '
-      << g_engine.camera.target.z << '|' << g_engine.camera.distance << '|' << g_engine.camera.pitch << '|' << g_engine.camera.yaw << '|' << g_transit.residents << '|'
-      << g_transit.commuters << '|' << g_transit.totalPeople << '|' << g_transit.totalCargo << '\n';
-    o << "T|" << tp.relief << '\n'; // the map's relief (a save without it is the original map, relief 1)
-    const Network& net = g_roads.net;
-    for (const Node& n : net.nodes) o << "N|" << (n.alive ? 1 : 0) << '|' << n.p.x << ' ' << n.p.y << ' ' << n.p.z << '|' << (n.grounded ? 1 : 0) << '\n';
-    for (const Segment& s : net.segs)
-        o << "S|" << (s.alive ? 1 : 0) << '|' << s.a << '|' << s.b << '|' << s.c1.x << ' ' << s.c1.z << '|' << s.c2.x << ' ' << s.c2.z << '|' << Profiles()[s.profile].name << '\n';
-    for (const ZoneCell& c : g_zones.cells)
-        if (c.zone != kNoZone) o << "Z|" << c.c.x << ' ' << c.c.z << '|' << (int)c.zone << '\n';
-    for (const Placed& b : g_transport.items)
-        if (b.alive)
-            o << "B|" << b.def << '|' << b.c.x << ' ' << b.c.z << '|' << b.front.x << ' ' << b.front.z << '|' << b.y << '|' << b.track << '|' << b.platformInner << '|' << (int)b.state << '|'
-              << b.timer << '|' << b.progress << '|' << (b.haveShore ? 1 : 0) << '|' << b.shore.x << ' ' << b.shore.z << '\n';
-    for (const UtilBuilding& u : g_util.items)
-        if (u.alive) o << "U|" << u.def << '|' << u.c.x << ' ' << u.c.z << '|' << u.front.x << ' ' << u.front.z << '|' << u.y << '\n';
-    for (const UtilLine& l : g_util.lines)
-        if (l.alive) o << "L|" << (int)l.kind << '|' << l.a.x << ' ' << l.a.z << '|' << l.b.x << ' ' << l.b.z << '|' << l.elev << '\n';
-    for (const IndSite& s : g_ind.sites) {
-        o << "D|" << (int)s.kind << '|' << s.c.x << ' ' << s.c.z << '|' << s.front.x << ' ' << s.front.z << '|' << s.y << '|' << s.stock << '|';
-        for (size_t k = 0; k < s.area.size(); ++k) o << (k ? ";" : "") << s.area[k].x << ' ' << s.area[k].z;
-        o << '\n';
-    }
-    for (const Stop& s : g_transit.stops)
-        o << "P|" << s.id << '|' << (int)s.mode << '|' << (int)s.kind << '|' << s.p.x << ' ' << s.p.z << '|' << s.dir.x << ' ' << s.dir.z << '|' << s.y << '|' << s.outside << '|' << (s.alive ? 1 : 0) << '\n';
-    for (const Route& r : g_transit.routes) {
-        o << "R|" << r.id << '|' << (int)r.mode << '|' << (int)r.kind << '|' << (r.closed ? 1 : 0) << '|' << (r.alive ? 1 : 0) << '|' << r.name << '|';
-        for (size_t k = 0; k < r.stops.size(); ++k) o << (k ? "," : "") << r.stops[k];
-        o << '\n';
-    }
-    for (const Outside& q : g_transit.outsides)
-        o << "O|" << q.id << '|' << (int)q.kind << '|' << q.p.x << ' ' << q.p.z << '|' << q.dir.x << ' ' << q.dir.z << '|' << q.y << '|' << (q.alive ? 1 : 0) << '|' << q.stop << '|' << q.name << '|'
-          << q.peopleIn << ' ' << q.peopleOut << ' ' << q.cargoIn << ' ' << q.cargoOut << '\n';
-    o << "X|" << g_transit.NextId() << '\n';
-    // zone-grown buildings: saved as they stand (not regrown), so a loaded city looks the way it was saved
-    for (const Lot& l : g_zones.lots) {
-        if (!l.alive || l.cells.empty()) continue;
-        o << "G|" << l.id << '|' << l.type << '|' << l.w << ' ' << l.d << '|' << l.level << '|' << l.progress << ' ' << l.duration << '|' << l.c.x << ' ' << l.c.z << '|'
-          << l.front.x << ' ' << l.front.z << '|' << l.y << '|' << l.path << '|';
-        for (size_t k = 0; k < l.cells.size(); ++k) {
-            const ZoneCell& c = g_zones.cells[(size_t)l.cells[k]];
-            o << (k ? ";" : "") << c.c.x << ' ' << c.c.z;
-        }
-        o << '\n';
-    }
-    SimSaveLines(o);
     auto files = std::make_shared<CitySaveFiles>();
     files->game = GameSavePath(slot, L".tbdgame"), files->hfd = GameSavePath(slot, L".hfd"), files->sim = GameSavePath(slot, L".tbdsim");
-    files->text = o.str();
-    g_engine.terrain.field.Save(files->hfdBytes);
+    files->snap = CityTakeTextSnap();
+    files->hfdBytes = CityTerrainBytes();
     files->simChunks = SimTbdSnapshot(); // the CS2 sim's chunks (city_sim_save.inl): the autosave's main-thread copy
     if (mode == 2) { // autosave: the files on a worker, the toast when it is done (SimAutosaveSync)
         g_engine.jobs->RunBackground([files] { SimAutosaveFinished(WriteCitySaveFiles(*files)); });

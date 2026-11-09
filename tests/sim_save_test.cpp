@@ -331,6 +331,51 @@ static void TestRegistryStable() {
     CHECK(!ReadBuildings(rs, bad));
 }
 
+// The hinted Upsert (one BuildingId per source entry, city_sim_save.inl) gives exactly the plain Upsert's registry through
+// compactions, demolitions, new lots, a level change, a load and stale hints; CheckIndex agrees with the rows.
+static void TestRegistryHints() {
+    std::vector<FakeLot> lots;
+    for (uint64_t i = 0; i < 40; ++i) lots.push_back({100 + i * 7, (int)(i % 5), (uint16_t)i});
+    BuildingRegistry plain, hinted;
+    std::vector<BuildingId> hints;
+    auto both = [&](const std::vector<FakeLot>& ls) {
+        Sync(plain, ls);
+        hinted.BeginSync();
+        if (hints.size() != ls.size()) hints.resize(ls.size());
+        for (size_t i = 0; i < ls.size(); ++i) {
+            BuildingRow row;
+            row.kind = ls[i].zone, row.homes = ls[i].homes, row.cellX = (int32_t)(ls[i].id % 7), row.cellZ = -(int32_t)(ls[i].id % 5);
+            hinted.Upsert(BOrigin::Lot, ls[i].id, row, hints[i]);
+        }
+        hinted.EndSync();
+        bool same = plain.version == hinted.version && plain.Capacity() == hinted.Capacity() && plain.Live() == hinted.Live();
+        for (uint32_t i = 1; same && i < plain.Capacity(); ++i) {
+            const BuildingRow *a = plain.Get(plain.At(i)), *b = hinted.Get(hinted.At(i));
+            same = (a == nullptr) == (b == nullptr) && plain.At(i) == hinted.At(i) && (!a || (a->originId == b->originId && a->homes == b->homes && a->kind == b->kind));
+        }
+        for (size_t i = 0; i < ls.size(); ++i) same = same && hints[i] == hinted.Find(BOrigin::Lot, ls[i].id);
+        CHECK(same && hinted.CheckIndex() && plain.CheckIndex());
+    };
+    both(lots);
+    both(lots);                                                  // unchanged: every hint used
+    lots.erase(lots.begin() + 3), lots.erase(lots.begin() + 10); // compaction: the hints after 3 point at other lots
+    both(lots);
+    lots.push_back({9001, 2, 9}), lots[5].homes = 77; // a new lot and a changed one
+    both(lots);
+    std::swap(lots[0], lots[20]); // reordered
+    both(lots);
+    ByteWriter w; // a load: reserved rows claimed through stale hints
+    WriteBuildings(w, hinted);
+    ByteReader r(w.bytes);
+    BuildingRegistry loaded;
+    CHECK(ReadBuildings(r, loaded) && loaded.CheckIndex());
+    hinted = loaded;
+    ByteReader r2(w.bytes);
+    plain = BuildingRegistry();
+    CHECK(ReadBuildings(r2, plain));
+    both(lots);
+}
+
 static void TestTuningTables() {
     const std::string json = R"({ "demandTauMinutes": 720, "life.instantFill": 1, "life.enabled": 0, "life.nope": 3,
         "env.enabled": 0.5, "gov.typo": 2, "lifeX.enabled": 9, "note": "life.enabled", "svc.enabled": -1 })";
@@ -428,6 +473,7 @@ int main() {
     TestBadFiles();
     TestHead();
     TestRegistryStable();
+    TestRegistryHints();
     TestTuningTables();
     if (failures) {
         std::printf("sim_save_test: %d FAILED\n", failures);

@@ -183,7 +183,13 @@ class D3D12Renderer final : public Renderer {
         ComPtr<ID3D12Resource> transient, lightBuffer, postBuffer, timerReadback;
         ComPtr<ID3D12QueryHeap> timerHeap;
         uint8_t *transientPtr = nullptr, *lightPtr = nullptr, *postPtr = nullptr;
-        size_t transientUsed = 0;
+        size_t transientUsed = 0; // in the current page
+        // More transient pages when a frame needs more than kTransientBytes (a big city's instance rows and casters):
+        // made once, kept by this frame slot, so the next frames reuse them. Nothing is dropped (TransientCopy).
+        std::vector<ComPtr<ID3D12Resource>> extra;
+        std::vector<uint8_t*> extraPtr;
+        std::vector<size_t> extraSize;
+        size_t page = 0, frameBytes = 0; // the page in use (0: transient); this frame's bytes so far
         UINT nextPair = 1;
         UINT64 fenceValue = 0;
         bool timerPending = false;
@@ -662,6 +668,8 @@ public:
         extraOf_[surface] = extra;
     }
 
+    // Binds at once (a deferred bind at the next draw was tried: it put the material on another pass's root signature
+    // and hung the GPU); a repeat of the bound material is skipped (below).
     void SetMaterial(TextureId albedo, TextureId normal, TextureId surface) override {
         if (!frame_ || !list_ || !shadowSrvHeap_) return;
         UINT slot = 0; // material slot 0 holds the defaults
@@ -669,6 +677,13 @@ public:
         const TextureId ids[kMaterialTextures] = {albedo, normal, surface, extra};
         bool has[kMaterialTextures], any = false;
         for (UINT k = 0; k < kMaterialTextures; ++k) any |= has[k] = ids[k] < textures_.size() && textures_[ids[k]].resource;
+        // The same material as the one bound on this command list (and root signature): nothing to do. Most scene
+        // draws come in runs of one material (a building kind, the road layers), so this halves the binds.
+        uint32_t hasMask = 0;
+        for (UINT k = 0; k < kMaterialTextures; ++k) hasMask |= has[k] ? 1u << k : 0u;
+        if (matBound_ && boundMatIds_[0] == albedo && boundMatIds_[1] == normal && boundMatIds_[2] == surface && boundMatIds_[3] == extra && boundMatHas_ == hasMask) return;
+        matBound_ = true, boundMatHas_ = hasMask;
+        for (UINT k = 0; k < kMaterialTextures; ++k) boundMatIds_[k] = ids[k];
         if (any && frame_->nextPair < kMaterialPairs) {
             slot = frame_->nextPair++;
             for (UINT k = 0; k < kMaterialTextures; ++k)
@@ -1023,11 +1038,12 @@ public:
 
     void BeginFrame(const float clearColor[4]) override {
         prepass_ = 0;
+        matBound_ = false;
         lastCounts_ = counts_;
         counts_ = {};
         frameSlot_ = (frameSlot_ + 1) % kFramesInFlight;
         frame_ = &frames_[frameSlot_];
-        list_ = frame_->list.Get();
+        list_ = frame_->list.Get(), matBound_ = false;
         const double waitStart = TraceNowMs();
         WaitFrame(*frame_);
         if (device_->GetDeviceRemovedReason() != S_OK) ReportDeviceRemoved();
@@ -1035,7 +1051,7 @@ public:
         rayScratch_[frameSlot_].clear(); // this slot's last builds are done
         fenceWaitMs_ = TraceNowMs() - waitStart;
         frame_->nextPair = 1;
-        frame_->transientUsed = 0;
+        frame_->transientUsed = 0, frame_->page = 0, frame_->frameBytes = 0;
         frameIndex_ = swap_->GetCurrentBackBufferIndex();
         frame_->allocator->Reset();
         list_->Reset(frame_->allocator.Get(), nullptr);
@@ -1075,7 +1091,7 @@ public:
     }
 
     void BindMeshRoot() {
-        list_->SetGraphicsRootSignature(rootSig_.Get());
+        list_->SetGraphicsRootSignature(rootSig_.Get()); matBound_ = false;
         list_->SetGraphicsRootConstantBufferView(1, frame_->lightBuffer->GetGPUVirtualAddress());
         list_->SetGraphicsRootConstantBufferView(5, motionBuffer_[frameSlot_]->GetGPUVirtualAddress());
         list_->SetGraphicsRootDescriptorTable(2, shadowSrvHeap_->GetGPUDescriptorHandleForHeapStart());
@@ -1141,7 +1157,7 @@ public:
         Transition(post_[kVelocity].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(depth_.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         const UINT cur = postFrame_ & 1;
-        list_->SetGraphicsRootSignature(postRootSig_.Get());
+        list_->SetGraphicsRootSignature(postRootSig_.Get()); matBound_ = false;
         list_->SetGraphicsRootConstantBufferView(0, frame_->postBuffer->GetGPUVirtualAddress());
         list_->SetGraphicsRootDescriptorTable(1, ShaderGpu(kPostDescriptorBase + cur * kPostSrvs));
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1292,15 +1308,10 @@ public:
     void DrawInstancedTransient(MeshId id, const float* rows, uint32_t count, const Mat4& viewProj) override {
         if (count == 0 || !rows || resolved_ || id >= meshes_.size() || !meshes_[id].buffer || meshes_[id].topology != Topology::Triangles) return;
         const size_t bytes = (size_t)count * kInstanceStride;
-        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) {
-            Log("D3D12: transient buffer full, instanced draw dropped");
-            return;
-        }
-        std::memcpy(frame_->transientPtr + offset, rows, bytes);
-        frame_->transientUsed = offset + bytes;
+        D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+        if (!TransientCopy(rows, bytes, gpu, "instance rows")) return;
         InstanceBuffer ib;
-        ib.view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+        ib.view = {gpu, (UINT)bytes, kInstanceStride};
         const Mesh& mesh = meshes_[id];
         PushConstants pc;
         std::memcpy(pc.mvp, viewProj.m, sizeof(pc.mvp));
@@ -1366,7 +1377,7 @@ public:
             PushConstants pc;
             std::memcpy(pc.mvp, mvp.m, sizeof(pc.mvp));
             std::memcpy(pc.model, model.m, sizeof(pc.model));
-            list_->SetPipelineState(skinnedMotionPso_.Get());
+                list_->SetPipelineState(skinnedMotionPso_.Get());
             list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             list_->SetGraphicsRoot32BitConstants(0, 32, &pc, 0);
             list_->SetGraphicsRoot32BitConstants(6, 4, materialConstants_, 0);
@@ -1389,14 +1400,9 @@ public:
                        bool depthTest) override {
         if (count == 0) return;
         const size_t bytes = (size_t)count * sizeof(Vertex);
-        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) {
-            Log("D3D12: transient buffer full, draw dropped");
-            return;
-        }
-        std::memcpy(frame_->transientPtr + offset, vertices, bytes);
-        frame_->transientUsed = offset + bytes;
-        D3D12_VERTEX_BUFFER_VIEW view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, sizeof(Vertex)};
+        D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+        if (!TransientCopy(vertices, bytes, gpu, "DrawTransient vertices")) return;
+        D3D12_VERTEX_BUFFER_VIEW view = {gpu, (UINT)bytes, sizeof(Vertex)};
         Submit(view, count, topology, mvp, model, depthTest);
     }
 
@@ -1497,6 +1503,10 @@ private:
     // two default textures stored just past the last texture slot.
     static constexpr UINT kMaxTextures = 8192;
     static constexpr UINT kMaterialPairs = 16384;
+    // SetMaterial's last binding on the current list (cleared by every SetGraphicsRootSignature and each frame)
+    bool matBound_ = false;
+    TextureId boundMatIds_[4] = {};
+    uint32_t boundMatHas_ = 0;
     static constexpr UINT kMaterialTextures = 4; // albedo, normal, surface, extra: one table of this many descriptors per SetMaterial
     struct Tex {
         ComPtr<ID3D12Resource> resource;
@@ -1789,7 +1799,7 @@ private:
             std::memcpy(mapped + fp.Offset + (size_t)y * fp.Footprint.RowPitch, &texels[(size_t)y * kN * 4], (size_t)kN * 4);
         upload->Unmap(0, nullptr);
         frame_ = &frames_[0];
-        list_ = frame_->list.Get();
+        list_ = frame_->list.Get(), matBound_ = false;
         CHECK(frame_->allocator->Reset());
         CHECK(list_->Reset(frame_->allocator.Get(), nullptr));
         D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
@@ -1835,7 +1845,7 @@ private:
                             &voxels[((size_t)z * kN + y) * kN * 4], (size_t)kN * 4);
         upload->Unmap(0, nullptr);
         frame_ = &frames_[0];
-        list_ = frame_->list.Get();
+        list_ = frame_->list.Get(), matBound_ = false;
         CHECK(frame_->allocator->Reset());
         CHECK(list_->Reset(frame_->allocator.Get(), nullptr));
         D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
@@ -2413,6 +2423,39 @@ private:
             r = StreamRetired{};
         }
         streamRetired_.resize(kept);
+    }
+
+    // Copies bytes into this frame's transient memory (16-byte aligned): the current page, else the next one, made when
+    // the frame slot has none yet (at least kTransientBytes, or the request). False only when a page cannot be made.
+    bool TransientCopy(const void* src, size_t bytes, D3D12_GPU_VIRTUAL_ADDRESS& gpu, const char* what) {
+        Frame& f = *frame_;
+        static int bigLogged = 0; // a single upload this big is a draw that should be a mesh: say whose (a few times)
+        if (bytes > (8u << 20) && bigLogged < 4) ++bigLogged, Log("D3D12: one transient upload of %.1f MB (%s)", bytes / 1048576.0, what);
+        for (;;) {
+            ID3D12Resource* res = f.page == 0 ? f.transient.Get() : f.extra[f.page - 1].Get();
+            uint8_t* base = f.page == 0 ? f.transientPtr : f.extraPtr[f.page - 1];
+            const size_t cap = f.page == 0 ? kTransientBytes : f.extraSize[f.page - 1];
+            const size_t offset = (f.transientUsed + 15) & ~size_t(15);
+            if (offset + bytes <= cap) {
+                std::memcpy(base + offset, src, bytes);
+                f.transientUsed = offset + bytes, f.frameBytes += bytes;
+                gpu = res->GetGPUVirtualAddress() + offset;
+                return true;
+            }
+            if (f.page >= f.extra.size()) {
+                const size_t size = std::max(kTransientBytes, (bytes + 0xFFFF) & ~size_t(0xFFFF));
+                ComPtr<ID3D12Resource> r;
+                uint8_t* p = nullptr;
+                D3D12_RANGE noRead = {0, 0};
+                if (!CreateUploadBuffer(size, r) || FAILED(r->Map(0, &noRead, reinterpret_cast<void**>(&p)))) {
+                    Log("D3D12: a transient page of %zu MB could not be made: a draw dropped", size >> 20);
+                    return false;
+                }
+                f.extra.push_back(r), f.extraPtr.push_back(p), f.extraSize.push_back(size);
+                Log("D3D12: transient memory past %zu MB in one frame: page %zu added (%zu MB)", (f.frameBytes + bytes) >> 20, f.extra.size(), size >> 20);
+            }
+            ++f.page, f.transientUsed = 0;
+        }
     }
 
     bool CreateUploadBuffer(UINT64 bytes, ComPtr<ID3D12Resource>& out) {
@@ -3009,7 +3052,7 @@ private:
         const D3D12_RECT scissor = {0, 0, (LONG)backdropW_, (LONG)backdropH_};
         list_->RSSetViewports(1, &vp);
         list_->RSSetScissorRects(1, &scissor);
-        list_->SetGraphicsRootSignature(uiRootSig_.Get());
+        list_->SetGraphicsRootSignature(uiRootSig_.Get()); matBound_ = false;
         list_->SetPipelineState(backdropPso_.Get());
         list_->SetGraphicsRootDescriptorTable(1, ShaderGpu(UiAtlasSlot() + 3 + 3 * frameIndex_));
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -3039,15 +3082,10 @@ private:
     void DrawUi(const UiVertex* vertices, uint32_t count, const Mat4& ortho) override {
         if (!uiPso_ || !resolved_ || count == 0) return;
         const size_t bytes = (size_t)count * sizeof(UiVertex);
-        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) {
-            Log("D3D12: transient buffer full, UI draw dropped");
-            return;
-        }
-        std::memcpy(frame_->transientPtr + offset, vertices, bytes);
-        frame_->transientUsed = offset + bytes;
-        const D3D12_VERTEX_BUFFER_VIEW view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, sizeof(UiVertex)};
-        list_->SetGraphicsRootSignature(uiRootSig_.Get());
+        D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+        if (!TransientCopy(vertices, bytes, gpu, "UI vertices")) return;
+        const D3D12_VERTEX_BUFFER_VIEW view = {gpu, (UINT)bytes, sizeof(UiVertex)};
+        list_->SetGraphicsRootSignature(uiRootSig_.Get()); matBound_ = false;
         list_->SetPipelineState(uiPso_.Get());
         list_->SetGraphicsRoot32BitConstants(0, 16, ortho.m, 0);
         list_->SetGraphicsRootDescriptorTable(1, ShaderGpu(UiAtlasSlot()));
@@ -3155,7 +3193,7 @@ private:
         const D3D12_RECT scissor = {0, 0, (LONG)rw_, (LONG)rh_};
         list_->RSSetViewports(1, &vp);
         list_->RSSetScissorRects(1, &scissor);
-        list_->SetGraphicsRootSignature(waterRootSig_.Get());
+        list_->SetGraphicsRootSignature(waterRootSig_.Get()); matBound_ = false;
         list_->SetPipelineState(waterPso_.Get());
         list_->SetGraphicsRootConstantBufferView(1, frame_->postBuffer->GetGPUVirtualAddress());
         list_->SetGraphicsRootConstantBufferView(2, frame_->lightBuffer->GetGPUVirtualAddress());
@@ -3186,7 +3224,7 @@ private:
         Transition(depth_.Get(), D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(composed, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         Transition(post_[kVelocity].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        list_->SetGraphicsRootSignature(postRootSig_.Get());
+        list_->SetGraphicsRootSignature(postRootSig_.Get()); matBound_ = false;
         list_->SetGraphicsRootConstantBufferView(0, frame_->postBuffer->GetGPUVirtualAddress());
         list_->SetGraphicsRootDescriptorTable(1, ShaderGpu(kPostDescriptorBase + cur * kPostSrvs));
     }
@@ -3444,11 +3482,10 @@ private:
         for (uint32_t k = 0; k < count; ++k) {
             const ChunkBakeItem& it = items[k];
             if (!it.rows || !it.count || it.mesh >= meshes_.size() || !meshes_[it.mesh].buffer || meshes_[it.mesh].topology != Topology::Triangles) continue;
-            const size_t bytes = (size_t)it.count * kInstanceStride, offset = (frame_->transientUsed + 15) & ~size_t(15);
-            if (offset + bytes > kTransientBytes) { Log("D3D12: transient buffer full, chunk bake item dropped"); continue; }
-            std::memcpy(frame_->transientPtr + offset, it.rows, bytes);
-            frame_->transientUsed = offset + bytes;
-            views[k].view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+            const size_t bytes = (size_t)it.count * kInstanceStride;
+            D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+            if (!TransientCopy(it.rows, bytes, gpu, "chunk bake rows")) continue;
+            views[k].view = {gpu, (UINT)bytes, kInstanceStride};
         }
         for (int pass = 0; pass < 2; ++pass) {
             list_->SetPipelineState(chunkBakePso_[pass].Get());
@@ -3600,15 +3637,10 @@ private:
     void DrawShadowInstancedTransient(MeshId id, const float* rows, uint32_t count) override {
         if (count == 0 || !rows || !frame_ || id >= meshes_.size() || !meshes_[id].buffer || meshes_[id].topology != Topology::Triangles) return;
         const size_t bytes = (size_t)count * kInstanceStride;
-        const size_t offset = (frame_->transientUsed + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) {
-            Log("D3D12: transient buffer full, instanced caster dropped");
-            return;
-        }
-        std::memcpy(frame_->transientPtr + offset, rows, bytes);
-        frame_->transientUsed = offset + bytes;
+        D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
+        if (!TransientCopy(rows, bytes, gpu, "instance rows")) return;
         InstanceBuffer ib;
-        ib.view = {frame_->transient->GetGPUVirtualAddress() + offset, (UINT)bytes, kInstanceStride};
+        ib.view = {gpu, (UINT)bytes, kInstanceStride};
         if (!shadowInstancedBound_ || forceShadowRebind_) {
             forceShadowRebind_ = false;
             list_->SetPipelineState(shadowTarget_ == ShadowMap::Tight ? tightInstancedPso_.Get() : shadowInstancedPso_.Get());
@@ -3888,10 +3920,10 @@ private:
                                                IID_PPV_ARGS(&readback)));
 
         frame_ = &frames_[0];
-        list_ = frame_->list.Get();
+        list_ = frame_->list.Get(), matBound_ = false;
         CHECK(frame_->allocator->Reset());
         CHECK(list_->Reset(frame_->allocator.Get(), nullptr));
-        list_->SetGraphicsRootSignature(storeRootSig_.Get());
+        list_->SetGraphicsRootSignature(storeRootSig_.Get()); matBound_ = false;
         list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // Pass 1: clear every layer, then draw into one.

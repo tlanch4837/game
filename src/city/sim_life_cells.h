@@ -36,7 +36,10 @@ inline int LifeSlotCat(int jobKind) { return jobKind == kJobIndustrial ? 2 : job
 
 // hoodOf(cell): the hood of a CitySim cell, -1 none. Rows of other origins (transport, utility, industry) get the cell
 // and hood but no homes or jobs (CitySim does not count them either). Rows reserved from a load are left alone.
-inline void LifeFillRows(BuildingRegistry& reg, const CitySim& s, const std::vector<Lot>& lots, const std::function<int(int)>& hoodOf) {
+// lotHints (optional): per lot its BuildingId from the registry sync (city_sim_save.inl), checked before use, so the
+// homes and jobs pass skips the hash lookup; the result is the same with or without them.
+inline void LifeFillRows(BuildingRegistry& reg, const CitySim& s, const std::vector<Lot>& lots, const std::function<int(int)>& hoodOf,
+                         const std::vector<BuildingId>* lotHints = nullptr) {
     int lastCell = -2, lastHood = -1; // rows come in runs of the same cell
     int32_t lastX = 0, lastZ = 0;
     for (uint32_t i = 1; i < reg.Capacity(); ++i) {
@@ -49,9 +52,11 @@ inline void LifeFillRows(BuildingRegistry& reg, const CitySim& s, const std::vec
         r->cell = lastCell, r->hood = lastHood, r->homes = 0;
         for (int e = 0; e < kEduLevels; ++e) r->jobSlots[e] = 0;
     }
-    for (const Lot& l : lots) { // homes and jobs of the built lots
+    for (size_t li = 0; li < lots.size(); ++li) { // homes and jobs of the built lots
+        const Lot& l = lots[li];
         if (!l.alive || !l.Built()) continue;
-        BuildingRow* r = reg.Get(reg.Find(BOrigin::Lot, l.id));
+        BuildingRow* r = lotHints && li < lotHints->size() ? reg.Get((*lotHints)[li]) : nullptr;
+        if (!r || r->origin != BOrigin::Lot || r->originId != l.id) r = reg.Get(reg.Find(BOrigin::Lot, l.id));
         if (!r || r->alive != 1) continue;
         const LotCap cap = LotCapacity(l);
         r->homes = cap.homes;
@@ -63,16 +68,49 @@ inline void LifeFillRows(BuildingRegistry& reg, const CitySim& s, const std::vec
 // The records' education levels (0 none .. 4 university) on CellSim's three bands: basic, skilled, higher.
 inline int LifeEduBand(int level) { return level <= 1 ? 0 : level == 2 ? 1 : 2; }
 
-inline void LifeApplyCells(const LifeWorld& w, CitySim& s) {
+// Deferred link rebuild: the records' commute pairs are summed per supercell pair into a dense table first (Link() only
+// ever adds positive counts, so the sums give the same maps), then compared with the links CitySim holds (a full
+// recompute of what is there, every time); the maps are rebuilt only when they differ. `skipped` and `rebuilt` count.
+struct LifeApplyState {
+    std::vector<int64_t> table;
+    uint32_t skipped = 0, rebuilt = 0;
+};
+
+inline void LifeApplyCells(const LifeWorld& w, CitySim& s, LifeApplyState* st = nullptr) {
     static const LifeCell kEmpty;
-    for (size_t c = 0; c < s.sim.size(); ++c) {
+    for (size_t c = 0; c < s.sim.size(); ++c) { // cheap (one write per cell); SetCellPeople also refreshes vacancies
         const LifeCell& L = c < w.cells.size() ? w.cells[c] : kEmpty;
         uint32_t edu[3] = {};
         for (int e = 0; e < kEduLevels; ++e) edu[LifeEduBand(e)] += L.edu[e];
         s.SetCellPeople((int)c, L.residents, L.working, L.employed, edu, L.wealth);
     }
-    s.SetLinks([&](auto&& add) {
-        for (const auto& [k, n] : w.commute) add((int)(k >> 32), (int)(uint32_t)k, n);
+    const int ns = s.Supercells();
+    if (!st || ns <= 0 || ns > 4096) {
+        s.SetLinks([&](auto&& add) { for (const auto& [k, n] : w.commute) add((int)(k >> 32), (int)(uint32_t)k, n); });
+        return;
+    }
+    std::vector<int64_t>& t = st->table;
+    t.assign((size_t)ns * (size_t)ns, 0);
+    const size_t nc = s.sim.size();
+    for (const auto& [k, n] : w.commute) {
+        const uint32_t h = (uint32_t)(k >> 32), j = (uint32_t)k;
+        if (n > 0 && h < nc && j < nc) t[(size_t)s.SuperOf((int)h) * (size_t)ns + (size_t)s.SuperOf((int)j)] += n;
+    }
+    size_t want = 0, have = 0;
+    for (int64_t v : t) want += v > 0;
+    bool same = true;
+    s.ForEachLink([&](int h, int j, int32_t n) {
+        ++have;
+        if (h < 0 || j < 0 || h >= ns || j >= ns || t[(size_t)h * (size_t)ns + (size_t)j] != (int64_t)n) same = false;
+    });
+    if (same && have == want) { ++st->skipped; return; }
+    ++st->rebuilt;
+    s.SetLinks([&](auto&& add) { // one cell of each supercell stands for it (SetLinks maps cells to supercells)
+        for (int a = 0; a < ns; ++a)
+            for (int b = 0; b < ns; ++b) {
+                const int64_t v = t[(size_t)a * (size_t)ns + (size_t)b];
+                if (v > 0) add(s.SuperCellList(a)[0], s.SuperCellList(b)[0], (int32_t)std::min<int64_t>(v, INT32_MAX));
+            }
     });
 }
 

@@ -592,21 +592,36 @@ void UtilBuildUnderground(std::vector<tbd::Vertex>& o) {
     }
 }
 
+// Poles and pylons: one GPU mesh, made again when the lines change (before the frame opens, game_core.inl). They were
+// uploaded as transient vertices every frame: about 35 MB a frame in Bayside (301 lines), the draw the 16 MB transient
+// buffer dropped.
+namespace util_overhead {
+tbd::MeshId mesh = tbd::kInvalidMesh;
+uint64_t builtFor = ~0ull;
+} // namespace util_overhead
+void UtilOverheadSync(tbd::Renderer& r) {
+    using namespace tbd::city;
+    namespace u = util_overhead;
+    if (u::builtFor == g_util.version) return;
+    u::builtFor = g_util.version;
+    std::vector<tbd::Vertex> overhead;
+    for (const UtilLine& l : g_util.lines) {
+        if (!l.alive) continue;
+        if (l.Poles()) UtilBuildPoles(l, overhead);
+        else if (l.Pylons()) UtilBuildPylons(l, overhead);
+    }
+    if (u::mesh != tbd::kInvalidMesh) r.RetireMesh(u::mesh), u::mesh = tbd::kInvalidMesh;
+    if (overhead.empty()) return;
+    std::vector<tbd::Vertex> wv;
+    std::vector<uint32_t> wi;
+    tbd::WeldVertices(overhead.data(), (uint32_t)overhead.size(), wv, wi);
+    u::mesh = r.CreateMeshNoWait(wv.data(), (uint32_t)wv.size(), wi.data(), (uint32_t)wi.size());
+    tbd::Log("Utilities: poles and pylons %zu triangles into one mesh (%zu vertices welded)", overhead.size() / 3, wv.size());
+}
+
 void UtilDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     using namespace tbd::city;
-    // poles and pylons: built once per change of the lines
-    static std::vector<tbd::Vertex> overhead;
-    static uint64_t overheadFor = 0;
-    if (overheadFor != g_util.version) {
-        overheadFor = g_util.version;
-        overhead.clear();
-        for (const UtilLine& l : g_util.lines) {
-            if (!l.alive) continue;
-            if (l.Poles()) UtilBuildPoles(l, overhead);
-            else if (l.Pylons()) UtilBuildPylons(l, overhead);
-        }
-    }
-    if (!overhead.empty()) r.DrawTransient(overhead.data(), (uint32_t)overhead.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
+    if (util_overhead::mesh != tbd::kInvalidMesh) r.Draw(util_overhead::mesh, viewProj, tbd::Mat4::Identity(), true, false);
 
     if (g_utilTool.active && g_utilTool.underground) {
         static std::vector<tbd::Vertex> under;

@@ -88,7 +88,7 @@ public:
     const CompanyRec* Get(CompanyId c) const { return pool.Alive(c) ? &recs[c.Index()] : nullptr; }
     uint32_t Capacity() const { return pool.Capacity(); }
     CompanyId At(uint32_t i) const { return CompanyId(pool.At(i)); }
-    void Clear() { pool.Clear(), recs.clear(), byBuilding_.clear(), opened.clear(), removed.clear(), seen_.clear(); }
+    void Clear() { pool.Clear(), recs.clear(), byBuilding_.clear(), opened.clear(), removed.clear(), seen_.clear(), hint_.clear(); }
 
     // After a load: the building index from the records.
     void Reindex() {
@@ -102,9 +102,13 @@ public:
     // closed company is lost (added to lost[good]: the mass ledger counts it). Sites are visited in the given order.
     void Sync(const std::vector<GoodsSite>& sites, const GoodsParams& p, std::array<int64_t, kGoodCount>& lost) {
         ++epoch_;
-        for (const GoodsSite& s : sites) {
+        if (hint_.size() != sites.size()) hint_.resize(sites.size());
+        for (size_t si = 0; si < sites.size(); ++si) {
+            const GoodsSite& s = sites[si];
             if (!s.building) continue;
-            CompanyId id = Find(s.building);
+            // the company of this site position at the last sync, if it still is this building's (no hash lookup)
+            const CompanyId h = hint_[si];
+            CompanyId id = h.Valid() && pool.Alive(h) && h.Index() < recs.size() && (uint32_t)recs[h.Index()].building == s.building ? h : Find(s.building);
             if (!id.Valid()) {
                 id = CompanyId(pool.Alloc());
                 if (!id.Valid()) continue;
@@ -114,6 +118,7 @@ public:
                 byBuilding_[s.building] = id.v;
                 opened.push_back(id);
             }
+            hint_[si] = id;
             CompanyRec& c = recs[id.Index()];
             c.building = (int32_t)s.building, c.kind = (int32_t)s.kind, c.recipe = s.recipe, c.rawGood = s.raw == Good::None ? -1 : (int32_t)s.raw;
             c.x = s.x, c.z = s.z, c.node = s.node, c.cell = s.cell;
@@ -142,6 +147,7 @@ public:
 
 private:
     std::unordered_map<uint32_t, uint32_t> byBuilding_; // BuildingId raw -> CompanyId raw
+    std::vector<CompanyId> hint_; // per position in the last Sync's sites: its company (checked before use)
     std::vector<uint32_t> seen_;
     uint32_t epoch_ = 0;
 };

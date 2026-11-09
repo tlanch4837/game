@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "../city/sim_calendar.h" // the one calendar: the date and season beside the clock
 #include "city_budget_panel.h" // the Budget panel (taxes, ledger, trend, loans)
 #include "city_info_panels.h"  // City Information, Population, Notifications, Statistics, the city name card
 #include "sim_panels.h"        // the sim phases' panels (SimPhasePanelsFrame)
@@ -73,6 +74,10 @@ struct CityHud {
     long long adults = 0, working = 0, jobs = 0;
     // in: the weather chip beside the clock (sim Phase 3, city_sim.inl SimHudFill); empty: the old season estimate
     std::string weather, weatherSeason; // "12 C Rain", "Spring"
+    // in: the sim's minute and calendar (city_sim.inl SimHudFill): the date "Mar Y3" and the season come from them, as the
+    // weather's and the citizens' do (docs/cs2_sim_roadmap.md 3.5); -1: the clock's minutes on the same calendar
+    long long simMinute = -1;
+    tbd::city::SimCalendar calendar;
     bool weatherSunny = true;            // draw the sun (else a cloud)
     // the Budget panel (Economy button, or the money cell): in/out with the city sim (city_sim.inl SimHudFill / SimHudRead)
     bool budget = false;
@@ -143,11 +148,12 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
         const Rect pauseR = {x, row.y, cell, cell};
         if (IconBox(g, tip, "##pause", pauseR, clock.paused ? Icon::Play : Icon::Pause, clock.paused, clock.paused ? "Resume (Space)" : "Pause (Space)")) clock.paused = !clock.paused;
         x += cell + gap;
-        const int day0 = clock.Day() - 1;
-        const int month = (day0 / 30) % 12, year = 2023 + day0 / 360;
-        static const char* const kMonth[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%02d:%02d  %s %d", clock.Hour(), clock.Minute(), kMonth[month], year);
+        // the calendar month (1 game day = 1 life month), not a 30-day month: it agrees with the season and the weather
+        const int64_t calMinute = h.simMinute >= 0 ? (int64_t)h.simMinute : (int64_t)clock.minutes;
+        const int month = h.calendar.MonthOfYear(calMinute) * 12 / std::max(1, h.calendar.lifeMonthsPerYear);
+        char date[32], buf[64];
+        tbd::city::FormatSimDate(h.calendar, calMinute, date, sizeof(date));
+        std::snprintf(buf, sizeof(buf), "%02d:%02d  %s", clock.Hour(), clock.Minute(), date);
         const float dateW = std::round(150.0f * s);
         HudCell(g, {x, row.y, dateW, cell}, buf, clock.paused ? th.muted : th.textBright);
         x += dateW + gap;

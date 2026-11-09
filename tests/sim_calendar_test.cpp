@@ -114,7 +114,28 @@ static void TestLongMonths() {
     CHECK(cal.LifeMonth(kMinutesPerDay) == 1 && cal.IsMonthStart(kMinutesPerDay));
 }
 
+// The HUD date (FormatSimDate) is the same calendar as the seasons: month and season always agree.
+static void TestHudDate() {
+    const SimCalendar cal;
+    char b[32];
+    FormatSimDate(cal, 0, b, sizeof(b));
+    CHECK(std::strcmp(b, "Jan Y1") == 0);
+    FormatSimDate(cal, 2 * kMinutesPerDay + 600, b, sizeof(b));
+    CHECK(std::strcmp(b, "Mar Y1") == 0 && cal.SeasonOf(2 * kMinutesPerDay + 600) == kSpring);
+    FormatSimDate(cal, 13 * kMinutesPerDay, b, sizeof(b), " / ");
+    CHECK(std::strcmp(b, "Feb / Y2") == 0 && cal.SeasonOf(13 * kMinutesPerDay) == kWinter);
+    static const int kSeasonOfMonth[12] = {3, 3, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3};
+    for (int d = 0; d < 24; ++d) { // every month name maps to the season the weather uses
+        const int64_t m = d * kMinutesPerDay + 700;
+        CHECK(std::strcmp(MonthNameAt(cal, m), MonthName(d % 12)) == 0 && cal.SeasonOf(m) == kSeasonOfMonth[d % 12]);
+    }
+    SimCalendar two;
+    two.lifeDaysPerMonth = 2; // a 2-day month: the name holds for both days
+    CHECK(std::strcmp(MonthNameAt(two, 3 * kMinutesPerDay), "Feb") == 0);
+}
+
 int main() {
+    TestHudDate();
     TestBoundaries();
     TestWeekdays();
     TestSeasons();

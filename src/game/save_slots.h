@@ -22,6 +22,8 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+
+#include "../city/sim_calendar.h" // GameDate: the one calendar
 #include <vector>
 
 namespace tbd {
@@ -83,12 +85,11 @@ inline bool ParseMeta(const std::string& text, Meta& m) {
     return any;
 }
 
-// The game clock as the dock shows it: "Mar 4 . Y1" (30-day months, 12 to a year; day 1 is Jan 1, Y1).
+// A save's game date on the one calendar (src/city/sim_calendar.h, docs/cs2_sim_roadmap.md 3.5): "Mar Y1", as the HUD and
+// the dock show it. 1 game day = 1 life month, 12 to a year: day 1 is Jan Y1, day 13 is Jan Y2.
 inline std::string GameDate(double minutes) {
-    static const char* const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    const long long day = std::max(0LL, (long long)(minutes / 1440.0));
     char b[40];
-    std::snprintf(b, sizeof(b), "%s %lld, Y%lld", kMonths[(day / 30) % 12], day % 30 + 1, day / 360 + 1);
+    tbd::city::FormatSimDate(tbd::city::SimCalendar(), std::max<int64_t>(0, (int64_t)(minutes)), b, sizeof(b));
     return b;
 }
 // Real time: "Nov 8 2026, 14:32" (local time; utc for tests).
