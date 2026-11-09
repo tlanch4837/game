@@ -10,7 +10,7 @@ using tbd::gui::dock::Category;
 using tbd::gui::dock::Group;
 using tbd::gui::dock::Item;
 
-enum Kind : int { kRoad = 1, kZone, kDezone, kUtilDef, kUtilLine, kTransport, kLine, kOutside, kIndustry, kWaste, kTerrain, kOverlay, kBudget, kInfo };
+enum Kind : int { kRoad = 1, kZone, kDezone, kUtilDef, kUtilLine, kTransport, kLine, kOutside, kIndustry, kWaste, kTerrain, kOverlay, kBudget, kInfo, kSimPanel };
 const char* const kInfoPanels[] = {"City Information", "Population Info", "Notifications", "Statistics"}; // gui/city_info_panels.h
 inline int Id(Kind k, int i) { return (int)k << 16 | (i & 0xFFFF); }
 
@@ -178,13 +178,16 @@ void BuildCatalogue() {
         Category c{"info", "Info", "info", Rgba(20, 184, 166), {}};
         c.groups.push_back({"City", "stats", {{"City Information", "", "info", Id(kInfo, 0)}, {"Population", "", "ppl", Id(kInfo, 1)},
                                                  {"Notifications", "", "bell", Id(kInfo, 2)}, {"Statistics", "", "stats", Id(kInfo, 3)}}, {}});
+        const auto& sp = tbd::gui::SimPanelRegistry(); // the sim phases' panels (sim_panels.h): registered before this runs
+        for (size_t i = 0; i < sp.size(); ++i) c.groups.back().items.push_back({sp[i].name, "", sp[i].icon, Id(kSimPanel, (int)i)});
         M.cats.push_back(std::move(c));
     }
     {
         Category c{"views", "Views", "layers", Rgba(58, 58, 72), {}};
         Group g{"Overlays", "layers", {}, {}};
-        const char* const icons[] = {"power", "water", "sewage", "landvalue", "traffic", "health"};
-        for (int k = 0; k < (int)tbd::gui::Overlay::Count; ++k) g.items.push_back({tbd::gui::OverlayName((tbd::gui::Overlay)k), "", icons[k], Id(kOverlay, k)});
+        for (int k = 0; k < (int)tbd::gui::Overlay::Count; ++k) // a planned layer shows once its phase registered a provider
+            if (tbd::gui::OverlayAvailable((tbd::gui::Overlay)k))
+                g.items.push_back({tbd::gui::OverlayName((tbd::gui::Overlay)k), "", tbd::gui::OverlayAtlasIcon((tbd::gui::Overlay)k), Id(kOverlay, k)});
         c.groups.push_back(g);
         M.cats.push_back(std::move(c));
     }
@@ -242,8 +245,8 @@ void FillStatus(tbd::gui::CityHud& hud) {
     M.city = hud.cityName;
     static int alertFrame = 0;
     if (alertFrame++ % 30 == 0) { // the kinds of problem in the city (sim_flags.h)
-        uint8_t any = 0;
-        for (uint8_t f : g_simFlags) any |= f;
+        uint32_t any = 0;
+        for (uint32_t f : g_simFlags) any |= f;
         int k = 0;
         for (int i = 0; i < tbd::city::kFlagCount; ++i) k += (any >> i) & 1;
         M.alerts = k;
@@ -320,6 +323,7 @@ void Pick(int id, tbd::gui::CityHud& hud) {
         return;
     }
     if (k == kBudget) { hud.Dismiss(), hud.budget = true; return; }
+    if (k == kSimPanel) { hud.Dismiss(), hud.simPanels.Toggle(i); return; } // a sim phase's panel (a bottom sheet; the tool stays)
     if (k == kInfo) { // the info panels (one at a time, over the map; the tool stays)
         const char* name = kInfoPanels[std::min(i, 3)];
         const bool was = hud.notDoneName && std::strcmp(hud.notDoneName, name) == 0;
@@ -660,6 +664,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     NewsCard(hud, o.menuOpen);
     InteractGuiFrame(g_atlas, o.menuOpen, !g_state.pad, g_model.textSize ? 1.15f : 1.0f); // [interact] the info card, the dial's degrees, bulldoze's prompt
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
+    if (!o.menuOpen) tbd::gui::SimPhasePanelsFrame(g_gui, hud.simPanels, tbd::gui::SimPanelPlace::Sheet, o.bottomH, 50.0f, g_model.textSize ? 1.15f : 1.0f);
     if (tbd::gui::CityInfoPanel(g_gui, hud.notDoneName, hud.stats) == 2) hud.Dismiss();
     return true;
 }

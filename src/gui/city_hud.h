@@ -13,6 +13,7 @@
 
 #include "city_budget_panel.h" // the Budget panel (taxes, ledger, trend, loans)
 #include "city_info_panels.h"  // City Information, Population, Notifications, Statistics, the city name card
+#include "sim_panels.h"        // the sim phases' panels (SimPhasePanelsFrame)
 #include "zone_toolbar.h"
 
 namespace tbd {
@@ -81,6 +82,7 @@ struct CityHud {
     std::string citizensClosedFor; // the title the player closed: the panel stays shut until another building is picked
     int milestone = 1;
     BudgetView bv;                           // the Budget panel's ledger and loans (city_budget_panel.h)
+    SimPanelsHost simPanels;                 // the open sim phase panel (sim_panels.h), drawn by both HUDs
     HudCityStats stats;                      // the info panels' numbers (city_info_panels.h; filled while one is open)
     long long lockPop[(int)HudTool::Count] = {}; // in: the population a locked tool needs (milestones), 0 = open
     bool notDoneLocked = false;              // the "not completed" panel is showing a locked tool instead
@@ -326,6 +328,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
 
     // ------------------------------------------------------------ Budget (the city sim's economy)
     if (h.budget) DrawBudgetPanel(g, h);
+    SimPhasePanelsFrame(g, h.simPanels, SimPanelPlace::Side, lift + statusH + toolbarH + 14.0f); // the phases' panels (none yet)
     if (h.bannerAlpha > 0.0f) DrawMilestoneBanner(g, h.banner.c_str(), h.bannerSub.c_str(), h.bannerAlpha);
 
     // ------------------------------------------------------------ "not completed" panel, above the toolbar

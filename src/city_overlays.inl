@@ -50,6 +50,15 @@ inline void Values(tbd::gui::Overlay o, std::vector<float>& cell, std::vector<in
     cell.assign(g_citySim.sim.size(), -1.0f);
     lot.clear();
     if (o == Overlay::Traffic) return;
+    if ((int)o >= (int)Overlay::FirstProvided) { // a planned layer: its phase's per-cell provider (none: nothing)
+        if (!tbd::gui::FindOverlayProvider(o)) return;
+        for (size_t c = 0; c < g_citySim.sim.size(); ++c) {
+            if (g_citySim.cells.cells[c].lots.empty()) continue;
+            const CellKey k = g_citySim.cells.cells[c].key;
+            cell[c] = tbd::gui::OverlayProvidedValue(o, (int)c, (k.x + 0.5f) * kCityCellSize, (k.z + 0.5f) * kCityCellSize);
+        }
+        return;
+    }
     if (o == Overlay::LandValue || o == Overlay::Coverage) {
         for (size_t c = 0; c < g_citySim.sim.size(); ++c) {
             const CellSim& cs = g_citySim.sim[c];
@@ -84,7 +93,7 @@ inline void Quad(std::vector<Vertex>& v, std::vector<uint32_t>& idx, tbd::Vec3 a
 inline void Sync(tbd::Renderer& r) {
     using namespace tbd::city;
     using tbd::gui::Overlay;
-    const Overlay o = g_overlayHud.on;
+    const Overlay o = tbd::gui::OverlayAvailable(g_overlayHud.on) ? g_overlayHud.on : Overlay::None; // no provider: no tint
     if (o == Overlay::None) {
         if (mesh != tbd::kInvalidMesh) r.RetireMesh(mesh), mesh = tbd::kInvalidMesh;
         builtFor = -1;
@@ -196,7 +205,7 @@ bool SimRemote(const std::vector<std::string>& a, std::string& out) {
     const std::string arg = a.size() > 2 ? a[2] : "";
     if (sub == "stats") {
         int counts[kFlagCount] = {};
-        for (uint8_t f : g_simFlags)
+        for (uint32_t f : g_simFlags)
             for (int b = 0; b < kFlagCount; ++b) counts[b] += (f >> b) & 1;
         char b[320];
         std::snprintf(b, sizeof(b), "pop %llu milestone %d (%s) treasury %lld lots %zu | nopower %d nowater %d nosewage %d noworkers %d nocustomers %d abandoning %d | loans %zu bankrupt %d",

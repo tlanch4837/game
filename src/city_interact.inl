@@ -453,7 +453,7 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
         if ((size_t)h.index < g_simFlags.size() && g_simFlags[(size_t)h.index]) {
             std::string p;
             for (int b = 0; b < kFlagCount; ++b)
-                if (g_simFlags[(size_t)h.index] & (1 << b)) p += (p.empty() ? "" : ", ") + std::string(SimFlagText(b));
+                if (g_simFlags[(size_t)h.index] & (1u << b)) p += (p.empty() ? "" : ", ") + std::string(SimFlagText(b));
             d.rows.push_back({"Problems", p});
         }
         AreaRows(d, l.c.x, l.c.z);
