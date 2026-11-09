@@ -14,6 +14,7 @@
 #include "../city/sim_calendar.h" // the one calendar: the date and season beside the clock
 #include "city_budget_panel.h" // the Budget panel (taxes, ledger, trend, loans)
 #include "city_info_panels.h"  // City Information, Population, Notifications, Statistics, the city name card
+#include "controls_page.h"     // [controls] Options > Controls (the same page as Glass Dock+'s Settings > Controls)
 #include "sim_panels.h"        // the sim phases' panels (SimPhasePanelsFrame)
 #include "zone_toolbar.h"
 
@@ -62,6 +63,10 @@ struct CityHud {
     const char* notDoneName = nullptr; // for the right column / status bar items that are not in HudItems
     const char* notDoneBlurb = nullptr;
     bool options = false;      // the Options panel
+    bool controlsOpen = false; // [controls] Options > Controls: the page (a card at the right edge)
+    bool controlsSave = false; // [controls] out: write settings.ini (game/control_prefs.inl LegacyControlsFrame)
+    tbd::controls::Settings* controls = nullptr; // [controls] in: the live settings (null: the page edits a copy)
+    ControlsPage controlsPage; // [controls]
     int sizeIdx = 1;           // interface size: index into kHudSizes
     int slot = 0;              // the save slot picked in Options
     int gameAction = 0;        // out: 1 save, 2 load, 3 a new random map (the host consumes it)
@@ -330,7 +335,16 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
         if (g.Button("Save Game")) h.gameAction = 1;
         if (g.Button("Load Game")) h.gameAction = 2;
         if (g.Button("New Random Map")) h.gameAction = 3;
+        g.Spacing(4.0f);
+        if (g.Button("Controls")) h.options = false, h.controlsOpen = true, h.controlsPage.st = SimPanelState(); // [controls]
         g.EndPanel();
+    }
+    if (h.controlsOpen) { // [controls] the mouse and keyboard rows first; values apply at once, saved when a drag ends
+        static tbd::controls::Settings unbound;
+        const ControlsPageOut co = ControlsPageFrame(g, h.controlsPage, h.controls ? *h.controls : unbound, nullptr, SimPanelPlace::Side,
+                                                     lift + statusH + toolbarH + 14.0f, 0.0f, 1.0f, 0.0f, false);
+        if (co.save) h.controlsSave = true;
+        if (co.closed) h.controlsOpen = false;
     }
 
     // ------------------------------------------------------------ the selected building's residents (tracked people)
@@ -406,7 +420,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
 
 // The City News feed, top right: the latest headlines (what the radio is talking about), newest first.
 inline void CityNewsPanel(Context& g, CityHud& h) {
-    if (h.options) return; // the Options panel sits in the same spot
+    if (h.options || h.controlsOpen) return; // the Options panel (and Controls, [controls]) sit in the same spot
     const Theme& th = g.Style();
     const float w = 400.0f;
     g.BeginPanel("##hud news", Anchor::TopRight, 76.0f, 8.0f, w, 0.0f, 10.0f); // left of the right column icons

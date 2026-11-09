@@ -1570,14 +1570,22 @@ void UpdateFly(float dt) {
 bool RoadRenameActive(); // defined with the road rename box
 struct CamSmooth { float goal = -1.0f, lastSet = -1.0f; bool anchored = false; tbd::Vec3 anchor{}; };
 CamSmooth g_camSmooth;
+// [controls] Settings > Controls (game/control_settings.h, tbd::controls::g). The touch shell (game_host.cpp) marks its
+// input so the mouse's own speeds and inverts never apply to a finger, and says which pan the next middle press is.
+bool g_inputFromTouch = false; // the event being handled came from a finger (game_host.cpp)
+float g_touchPanNext = -1.0f;  // the next middle press is a touch pan at this speed; -1: the mouse's
+float g_panDragScale = 1.0f;   // the running middle drag's pan speed
 bool AppHasFocus() { return tbd::shell::AppHasFocus(); }
+bool CityCamOn();
+void CityMouseEdgeScroll(float dt); // [controls] below UpdateCityCam
 void UpdateCityCam(float dt) {
     tbd::OrbitCamera& cam = g_engine.camera;
+    const tbd::controls::Settings& ctl = tbd::controls::g;
     // smooth zoom, anchored on the ground point that was under the cursor
     if (g_camSmooth.goal > 0.0f) {
         if (g_camSmooth.lastSet >= 0.0f && std::fabs(cam.distance - g_camSmooth.lastSet) > 1e-5f) g_camSmooth.goal = -1.0f; // someone else moved it (Frame, Home)
         else {
-            const float d = cam.distance, nd = d + (g_camSmooth.goal - d) * (1.0f - std::exp(-14.0f * dt));
+            const float d = cam.distance, nd = d + (g_camSmooth.goal - d) * tbd::controls::ZoomBlend(ctl, dt); // [controls] 14 / s by default
             if (g_camSmooth.anchored && d > 1e-6f) cam.target = g_camSmooth.anchor + (cam.target - g_camSmooth.anchor) * (nd / d);
             cam.distance = nd;
             g_camSmooth.lastSet = nd;
@@ -1587,6 +1595,7 @@ void UpdateCityCam(float dt) {
     if (g_engine.drag == Drag::Fly || g_play.active || RoadRenameActive() || !AppHasFocus()) return;
     using PK = tbd::platform::Key; auto down = [](PK k) { return tbd::platform::KeyDownAsync(k); };
     if (down(PK::Control) || down(PK::Alt)) return;
+    CityMouseEdgeScroll(dt); // [controls] off by default
     const float fw = ((down(PK::W) || down(PK::Up)) ? 1.0f : 0.0f) - ((down(PK::S) || down(PK::Down)) ? 1.0f : 0.0f);
     const float rt = ((down(PK::D) || down(PK::Right)) ? 1.0f : 0.0f) - ((down(PK::A) || down(PK::Left)) ? 1.0f : 0.0f);
     const float turn = (down(PK::E) ? 1.0f : 0.0f) - (down(PK::Q) ? 1.0f : 0.0f);
@@ -1597,11 +1606,32 @@ void UpdateCityCam(float dt) {
     const float fl = std::sqrt(f.x * f.x + f.z * f.z);
     if (fl > 1e-4f) f = f * (1.0f / fl);
     tbd::Vec3 r = cam.Right(); r.y = 0.0f;
-    const float pan = std::max(cam.distance, 0.5f) * 1.1f * fast * k * dt; // screen-relative: the same feel at every zoom
+    const float pan = std::max(cam.distance, 0.5f) * 1.1f * fast * k * dt * ctl.keyPan; // screen-relative: the same feel at every zoom
     cam.target = cam.target + (f * fw + r * rt) * pan;
-    cam.yaw += turn * 1.6f * fast * k * dt;
+    cam.yaw += turn * 1.6f * fast * k * dt * ctl.keyRotate;
     if (g_terrainSandbox) tbd::citycam::Tilt(cam, tilt * 0.9f * fast * k * dt); // the city: straight down to the horizon
     else cam.pitch = std::clamp(cam.pitch + tilt * 0.9f * fast * k * dt, 0.05f, 1.5f);
+}
+
+// [controls] Settings > Controls > Mouse > Edge scroll (off by default): the cursor in the window's outer 8 px pans the city
+// like the keyboard (screen-relative, the same feel at every zoom). Windows only: a finger has its own edge pan (main_ios.mm).
+void CityMouseEdgeScroll(float dt) {
+#if !defined(__APPLE__)
+    const tbd::controls::Settings& ctl = tbd::controls::g;
+    if (!ctl.mouseEdge || !CityCamOn() || g_engine.drag != Drag::None || g_engine.vpW <= 0 || g_engine.vpH <= 0) return;
+    const float px = tbd::controls::EdgePush((float)g_terrainEdit.mouseX, (float)g_engine.vpW);
+    const float py = tbd::controls::EdgePush((float)g_terrainEdit.mouseY, (float)g_engine.vpH);
+    if (px == 0.0f && py == 0.0f) return;
+    tbd::OrbitCamera& cam = g_engine.camera;
+    tbd::Vec3 f = cam.Forward(); f.y = 0.0f;
+    const float fl = std::sqrt(f.x * f.x + f.z * f.z);
+    if (fl > 1e-4f) f = f * (1.0f / fl);
+    tbd::Vec3 r = cam.Right(); r.y = 0.0f;
+    const float pan = std::max(cam.distance, 0.5f) * 1.1f * dt * ctl.mouseEdgeSpeed;
+    cam.target = cam.target + (f * -py + r * px) * pan; // the top edge: forward
+#else
+    (void)dt;
+#endif
 }
 
 // Loads a terrain file for the walking ground grid (worker thread; ImportFile touches no shared state).
@@ -1688,7 +1718,7 @@ float CityCamGround(float x, float z) { // terrain or sea, whichever is higher
 }
 void CityCamGroundFloor() {
     if (g_play.active || g_engine.drag == Drag::Fly) return;
-    if (CityCamOn()) { tbd::citycam::GroundFloor(g_engine.camera, CityCamGround); return; }
+    if (CityCamOn()) { tbd::citycam::GroundFloor(g_engine.camera, CityCamGround, tbd::controls::g.eyeClearance, tbd::controls::g.maxDistance); return; } // [controls]
     constexpr float kCamClearance = 1.5f; // metres of the city's units
     tbd::OrbitCamera& cam = g_engine.camera;
     const tbd::Vec3 eye = cam.Eye();
@@ -2048,6 +2078,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         float sl = 0, st = 0, sr = 0, sb = 0;
         if (!gdock::Legacy()) gdock::SafePixels(sl, st, sr, sb);
         g_gui.SetInsets(sl, std::max(topInset, st), sr, sb);
+        gdock::g_gizmoTopPx = topInset; // [gizmo] below the stats text when it shows
     }
     static int64_t last = {};
     int64_t now;
@@ -2115,7 +2146,11 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         return;
     }
     g_guiScaleSel = tbd::gui::HudSizeValues()[std::clamp(hud.sizeIdx, 0, 4)];
+    hud.controls = &tbd::controls::g;  // [controls] Options > Controls edits the live settings
+    gdock::LegacyControlsFrame(hud); // [controls] loads them once, saves when the page asks
     const float hudH = tbd::gui::CityHudFrame(g_gui, hud, g_clock, 4.0f);
+    const bool residents = !hud.citizens.empty() && hud.citizensClosedFor != hud.citizenTitle; // its panel takes the top left
+    if (!hud.options && !hud.controlsOpen && !hud.budget && !residents) gdock::CameraGizmo(tbd::gui::SafeInsets{}); // [gizmo] top left
     tbd::gui::CityNewsPanel(g_gui, hud);
     RadioHudRead(hud);
     SimHudRead(hud); // the Budget panel's tax rates and funding into the city sim
@@ -3510,14 +3545,23 @@ void ContinueDrag(int x, int y) {
     case Drag::Transform:
         if (tbd::Entity* sel = g_engine.scene.Selected()) g_engine.gizmo.Update(MouseRayAt(x, y), *sel);
         break;
-    case Drag::Orbit: g_engine.camera.Orbit(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break; // creator open: slower
-    case Drag::Fly: g_engine.camera.Look(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale()); break;
-    case Drag::Pan:
-        if (CityCamOn()) // the city: the ground follows the finger / cursor, the camera never rises or sinks
-            tbd::citycam::PanGround(g_engine.camera, (float)x - dx, (float)y - dy, (float)x, (float)y, (float)g_engine.vpW, (float)g_engine.vpH,
-                                    CityCamGround(g_engine.camera.target.x, g_engine.camera.target.z));
-        else g_engine.camera.Pan(dx * tbd::shell::EditorCameraScale(), dy * tbd::shell::EditorCameraScale(), (float)g_engine.vpH);
+    case Drag::Orbit: // creator open: slower; [controls] the mouse's rotate / tilt speeds and inverts
+    case Drag::Fly: {
+        const tbd::controls::Settings& ctl = tbd::controls::g;
+        const float k = tbd::shell::EditorCameraScale();
+        const float rx = dx * k * ctl.mouseRotate * (ctl.mouseInvertRotate ? -1.0f : 1.0f), ry = dy * k * ctl.mouseTilt * (ctl.mouseInvertTilt ? -1.0f : 1.0f);
+        if (g_engine.drag == Drag::Orbit) g_engine.camera.Orbit(rx, ry);
+        else g_engine.camera.Look(rx, ry);
         break;
+    }
+    case Drag::Pan: {
+        const float sx = dx * g_panDragScale, sy = dy * g_panDragScale; // [controls] the touch pans' or the mouse's speed (1: the ground follows)
+        if (CityCamOn()) // the city: the ground follows the finger / cursor, the camera never rises or sinks
+            tbd::citycam::PanGround(g_engine.camera, (float)x - sx, (float)y - sy, (float)x, (float)y, (float)g_engine.vpW, (float)g_engine.vpH,
+                                    CityCamGround(g_engine.camera.target.x, g_engine.camera.target.z));
+        else g_engine.camera.Pan(sx * tbd::shell::EditorCameraScale(), sy * tbd::shell::EditorCameraScale(), (float)g_engine.vpH);
+        break;
+    }
     case Drag::Zoom: g_engine.camera.Zoom(-dy * 0.1f * tbd::shell::EditorCameraScale()); break; // drag up = closer
     case Drag::Terrain: break; // the brush follows lastX / lastY, applied once per frame
     case Drag::None: break;
@@ -3860,7 +3904,10 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
         }
         BeginDragHost(host, Drag::Fly, 1, e.x, e.y);
         return true;
-    case VpEv::MiddleDown: BeginDragHost(host, Drag::Pan, 2, e.x, e.y); return true;
+    case VpEv::MiddleDown: // [controls] a touch pan's speed (game_host.cpp SetTouchPan) or the mouse's
+        g_panDragScale = g_touchPanNext > 0.0f ? g_touchPanNext : tbd::controls::g.mousePan, g_touchPanNext = -1.0f;
+        BeginDragHost(host, Drag::Pan, 2, e.x, e.y);
+        return true;
     case VpEv::LeftUp:
         if (InteractLeftUp(e.x, e.y)) { host.Release(); return true; } // [interact]
         if (g_indTool.dragIdx >= 0) {
@@ -3911,14 +3958,15 @@ bool ViewportInput(const VpEvent& e, PointerHost& host) {
 
         if (g_engine.drag == Drag::Fly) g_engine.flySpeed = std::clamp(g_engine.flySpeed * std::pow(1.25f, notches), 1.0f, 3000.0f);
         else { // eased zoom toward the ground point under the cursor; Shift: fine steps; creator open: slower still
-            const float n = notches * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();
+            const tbd::controls::Settings& ctl = tbd::controls::g; // [controls] the pinch's or the wheel's speed / invert / zoom-to-point
+            const float n = tbd::controls::ZoomNotches(ctl, notches, g_inputFromTouch) * (tbd::platform::KeyDownSync(tbd::platform::Key::Shift) ? 0.12f : 0.5f) * tbd::shell::EditorCameraScale();
             const float from = g_camSmooth.goal > 0.0f ? g_camSmooth.goal : g_engine.camera.distance;
             // the city: street level (1 m) to the whole map (9 km); was 0.04 .. 200 there too, so a pinch out from the 3.2 km
             // start view snapped in to 200 m and zoom out never worked
-            g_camSmooth.goal = CityCamOn() ? tbd::citycam::ZoomedDistance(from, 2.0f * n) : std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
+            g_camSmooth.goal = CityCamOn() ? tbd::citycam::ZoomedDistance(from, 2.0f * n, ctl.maxDistance) : std::clamp(from * std::pow(0.9f, n), 0.04f, 200.0f);
             g_camSmooth.lastSet = g_engine.camera.distance;
             tbd::Vec3 hit; // e.x / e.y: the cursor in viewport coordinates
-            g_camSmooth.anchored = !g_play.active &&
+            g_camSmooth.anchored = !g_play.active && (g_inputFromTouch ? ctl.touchZoomToPoint : ctl.mouseZoomToCursor) &&
                 GroundHit(g_engine.camera.ScreenRay((float)e.x, (float)e.y, (float)g_engine.vpW, (float)g_engine.vpH), hit);
             // near the horizon the point under the cursor can be kilometres away: zooming toward it would throw the camera
             if (g_camSmooth.anchored && CityCamOn() && std::sqrt(tbd::Dot(hit - g_engine.camera.target, hit - g_engine.camera.target)) > 4.0f * std::max(g_engine.camera.distance, 25.0f))

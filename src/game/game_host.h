@@ -56,6 +56,9 @@ void Twist(float radians);
 // Tilts the camera about its target by `radians`: positive towards straight down, negative towards the horizon (a two-finger
 // vertical drag). The city clamps it from just above level (street view) to straight down (src/city_camera.h).
 void Tilt(float radians);
+// [controls] The next middle press is a pan by `fingers` (1 or 2): Settings > Controls' one- or two-finger pan speed applies
+// to it (call it right before PointerDown(Button::Middle)).
+void SetTouchPan(int fingers);
 // Keys from a hardware keyboard: tbd::platform::Key values; ch is the character typed (0 if none).
 void KeyDown(int key, bool repeat, unsigned ch);
 void KeyUp(int key);

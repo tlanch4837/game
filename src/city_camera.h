@@ -17,22 +17,23 @@ constexpr float kMaxDistance = 9000.0f; // the whole +-4 km map in view from abo
 constexpr float kEyeClearance = 2.0f;   // the eye never comes lower than this over the ground or the sea: a person's eye height
 
 inline float ClampPitch(float p) { return std::clamp(p, kMinPitch, kMaxPitch); }
-inline float ClampDistance(float d) { return std::clamp(d, kMinDistance, kMaxDistance); }
+// maxD: Settings > Controls > Max zoom distance (game/control_settings.h; the default is kMaxDistance)
+inline float ClampDistance(float d, float maxD = kMaxDistance) { return std::clamp(d, kMinDistance, std::clamp(maxD, kMinDistance, kMaxDistance)); }
 
 // Positive = towards straight down.
 inline void Tilt(OrbitCamera& cam, float radians) { cam.pitch = ClampPitch(cam.pitch + radians); }
 
 // The wheel's zoom (game_core.inl, VpEv::Wheel): `notches` positive = closer, each one 0.9^0.5 of the distance. A pinch
 // spreading the fingers by f arrives as notches = -2 ln f / ln 0.9, so the distance is divided by f.
-inline float ZoomedDistance(float from, float notches) { return ClampDistance(from * std::pow(0.9f, notches * 0.5f)); }
+inline float ZoomedDistance(float from, float notches, float maxD = kMaxDistance) { return ClampDistance(from * std::pow(0.9f, notches * 0.5f), maxD); }
 
 // The pivot rides the ground under it (`ground(x, z)`: terrain or sea, whichever is higher); when the eye would come within
 // `clearance` of the ground at its own spot or a few metres ahead, the pivot is lifted instead (the tilt stays the player's).
 // Also clamps tilt and distance to the city's range. Stateless: the same camera and ground always give the same result.
 template <class GroundFn>
-void GroundFloor(OrbitCamera& cam, GroundFn ground, float clearance = kEyeClearance) {
+void GroundFloor(OrbitCamera& cam, GroundFn ground, float clearance = kEyeClearance, float maxD = kMaxDistance) {
     cam.pitch = ClampPitch(cam.pitch);
-    cam.distance = ClampDistance(cam.distance);
+    cam.distance = ClampDistance(cam.distance, maxD);
     cam.target.y = ground(cam.target.x, cam.target.z);
     const Vec3 eye = cam.Eye();
     const float fx = -std::sin(cam.yaw), fz = -std::cos(cam.yaw); // the view's heading over the ground

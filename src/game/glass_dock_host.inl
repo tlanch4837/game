@@ -377,6 +377,7 @@ void ToolButton(const tbd::gui::dock::Out& o) {
 }
 
 #include "dock_news_stats.inl" // the Show stats switch and the City News pill / card (NewsCard, Load / SaveGuiPrefs)
+#include "control_prefs.inl"    // [controls] Settings > Controls' ctl_* keys (Load / SaveControlPrefs)
 
 // The player's settings file (saves\settings.ini beside the game saves): the Graphics page's options, sound, text size, edge pan.
 // Until the file exists or the player touches a setting, the TBD_* environment switches rule the graphics as before.
@@ -531,7 +532,7 @@ void TouchSnapRadius() {
     if (GroundHit(g_engine.camera.ScreenRay(cx, cy, (float)g_engine.vpW, (float)g_engine.vpH), a) &&
         GroundHit(g_engine.camera.ScreenRay(cx + d, cy, (float)g_engine.vpW, (float)g_engine.vpH), b)) {
         const float mpp = std::hypot(b.x - a.x, b.z - a.z) / d;
-        g_roads.snapRadius = tbd::gui::reticle::SnapRadiusMetres(mpp, 28.0f * g_gui.Scale()); // a fingertip: 28 pt
+        g_roads.snapRadius = tbd::gui::reticle::SnapRadiusMetres(mpp, tbd::controls::g.dotSnapPt * g_gui.Scale()); // a fingertip: 28 pt ([controls])
     }
 }
 
@@ -609,6 +610,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
                 else if (tok == "pause") g_state.menu = true;
                 else if (tok == "settings") g_state.menu = g_state.settings = true;
                 else if (tok == "sound") g_state.menu = g_state.settings = g_state.snd = true;
+                else if (tok == "controls") g_state.menu = g_state.settings = g_state.ctl = true; // [controls]
                 else if (tok.rfind("cat=", 0) == 0) {
                     for (size_t c = 0; c < g_model.cats.size(); ++c)
                         if (g_model.cats[c].id == tok.substr(4)) g_state.cat = (int)c, g_state.catT = 0, g_state.open = true;
@@ -633,6 +635,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
             for (auto& it : c.groups[0].items) it.on = (int)g_overlayHud.on == (it.id & 0xFFFF);
     // [road ux] the safe area; a road kit in its mini strips or the terrain kit slims the bar and takes the placement bar's place
     FillSafe(g_gui.Scale());
+    g_model.touchFirst = Touch(); // [controls] the Controls page lists the touch rows first on a touch screen
     g_model.slim = g_model.hidePlaceBar = (g_roads.active && g_kit.mini) || g_terrainEdit.on;
     g_model.tuck = g_roads.active && g_kit.mini && g_kit.compact && !g_dockPeek; // [road ui]
     tbd::gui::dock::Out o;
@@ -668,6 +671,7 @@ bool Frame(tbd::Renderer& r, tbd::gui::CityHud& hud) {
     RoadKit(o.menuOpen, o.bottomH);    // [road toolkit] [road ux]
     TerrainKit(o.menuOpen, o.bottomH); // [road ux]
     NewsCard(hud, o.menuOpen);
+    if (!o.menuOpen && !hud.budget) CameraGizmo(g_model.safe); // [gizmo] top left (control_prefs.inl)
     InteractGuiFrame(g_atlas, o.menuOpen, !g_state.pad, g_model.textSize ? 1.15f : 1.0f); // [interact] the info card, the dial's degrees, bulldoze's prompt
     if (hud.budget) tbd::gui::DrawBudgetPanel(g_gui, hud);
     if (!o.menuOpen) tbd::gui::SimPhasePanelsFrame(g_gui, hud.simPanels, tbd::gui::SimPanelPlace::Sheet, o.bottomH, 50.0f, g_model.textSize ? 1.15f : 1.0f);

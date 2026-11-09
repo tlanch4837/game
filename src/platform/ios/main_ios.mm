@@ -5,7 +5,8 @@
 //   one finger on the GUI, or with a tool that draws  the left button (press, drag, release): roads / rails, zoning, utility
 //                                                    lines, transit lines, terrain, bulldoze's Zone area box, the rotate dial;
 //   one finger on the city otherwise                 a drag pans (the ground follows the finger); only a TAP acts: it lifts
-//                                                    within 0.45 s and never travels 10 pt (src/game/touch_gesture.h; a
+//                                                    within 0.45 s and never travels 10 pt (src/game/touch_gesture.h; both
+//                                                    are Settings > Controls values, game/control_settings.h; a
 //                                                    slow press that does not move does nothing). That covers no tool (a tap
 //                                                    opens the info card of what is under it), bulldoze's Tap mode (the first
 //                                                    tap marks the target red, a second tap on it or the check demolishes) and
@@ -274,7 +275,7 @@ static CGFloat WrapAngle(CGFloat a) {
     const CGPoint centre = CGPointMake((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
     const CGFloat d = std::hypot(a.x - b.x, a.y - b.y), ang = std::atan2(b.y - a.y, b.x - a.x);
     if (_twoMode == 0) {
-        const CGFloat s = [self pixelScale], slop = 12.0 * s;
+        const CGFloat s = [self pixelScale], slop = (CGFloat)tbd::controls::g.twoSlopPt * s; // [controls] 12 pt by default
         const CGPoint da = CGPointMake(a.x - _a0.x, a.y - _a0.y), db = CGPointMake(b.x - _b0.x, b.y - _b0.y);
         const CGPoint c0 = CGPointMake((_a0.x + _b0.x) * 0.5, (_a0.y + _b0.y) * 0.5);
         const CGFloat cdy = centre.y - c0.y, cmove = std::hypot(centre.x - c0.x, cdy);
@@ -287,6 +288,7 @@ static CGFloat WrapAngle(CGFloat a) {
         } else {
             _twoMode = 2; // MOVE: the middle button from the start centre, so the slop's pan, pinch and twist all apply now
             _panCentre = c0;
+            tbd::host::SetTouchPan(2); // [controls] the two-finger pan's speed
             tbd::host::PointerDown(tbd::host::Button::Middle, (float)c0.x, (float)c0.y);
         }
     }
@@ -348,9 +350,10 @@ static CGFloat WrapAngle(CGFloat a) {
         const CGPoint p = [self pixels:[_first locationInView:self.view]];
         _travel = std::max(_travel, (CGFloat)std::hypot(p.x - _start.x, p.y - _start.y));
         const float travelPt = tbd::touch::TravelPt((float)_travel, 0.0f, (float)[self pixelScale]);
-        if (!_panning && tbd::touch::Classify(travelPt, 0.0, false) == tbd::touch::Gesture::Drag) { // 10 pt: a pan, never a tap
+        if (!_panning && tbd::touch::Classify(travelPt, 0.0, false, tbd::controls::g) == tbd::touch::Gesture::Drag) { // 10 pt: a pan, never a tap ([controls])
             _panning = YES;
             _panCentre = _start;
+            tbd::host::SetTouchPan(1); // [controls] the one-finger pan's speed
             tbd::host::PointerDown(tbd::host::Button::Middle, (float)_start.x, (float)_start.y);
         }
         if (_panning) _panCentre = p, _fingerNow = p, tbd::host::PointerMove((float)p.x, (float)p.y);
@@ -375,7 +378,7 @@ static CGFloat WrapAngle(CGFloat a) {
         else {
             _travel = std::max(_travel, (CGFloat)std::hypot(p.x - _start.x, p.y - _start.y));
             const float travelPt = tbd::touch::TravelPt((float)_travel, 0.0f, (float)[self pixelScale]);
-            if (tbd::touch::Classify(travelPt, _first.timestamp - _startTime, true) == tbd::touch::Gesture::Tap) {
+            if (tbd::touch::Classify(travelPt, _first.timestamp - _startTime, true, tbd::controls::g) == tbd::touch::Gesture::Tap) {
                 // a tap: a click where it landed (info, bulldoze's mark, the placement ghost: src/city_interact.inl)
                 tbd::host::PointerDown(tbd::host::Button::Left, (float)_start.x, (float)_start.y);
                 tbd::host::PointerUp(tbd::host::Button::Left, (float)_start.x, (float)_start.y);

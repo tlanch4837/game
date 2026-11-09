@@ -172,6 +172,7 @@ bool tbd::shell::EditorClayDraw(std::vector<tbd::Vertex>&, std::vector<tbd::Vert
 void tbd::host::Init(const std::wstring& assetsRoot) {
     GameInit(assetsRoot);
     g_touchInput = true; // [interact] this host is the touch shell: taps pick / place, one finger pans (city_interact.inl)
+    g_inputFromTouch = true; // [controls] the pinch / pan speeds of Settings > Controls, never the mouse's (game_core.inl)
     // Sound reads <assets>\audio (the shell copies the bundled UI sfx into it on first run, so the folder exists). Without
     // this every audio:: call is a silent no-op; on Windows main.cpp starts it.
     if (!tbd::audio::Start(assetsRoot)) tbd::Log("Audio: not started (no %s\\audio folder, or TBD_NOAUDIO)", tbd::WideToUtf8(assetsRoot).c_str());
@@ -257,16 +258,30 @@ bool tbd::host::TouchOnGui(float x, float y) { return g_gui.WantsMouseAt(x, y); 
 
 void tbd::host::EdgePan(float dxPx, float dyPx) {
     if (!gdock::EdgePanOn()) return;
+    dxPx *= tbd::controls::g.touchEdgeSpeed, dyPx *= tbd::controls::g.touchEdgeSpeed; // [controls]
     if (!CityCamOn()) { g_engine.camera.Pan(dxPx, dyPx, (float)g_engine.vpH); return; }
     const float cx = (float)g_engine.vpW * 0.5f, cy = (float)g_engine.vpH * 0.5f; // the middle drag's own pan (Drag::Pan), from the centre
     tbd::citycam::PanGround(g_engine.camera, cx, cy, cx + dxPx, cy + dyPx, (float)g_engine.vpW, (float)g_engine.vpH,
                             CityCamGround(g_engine.camera.target.x, g_engine.camera.target.z));
 }
 
-void tbd::host::Twist(float radians) { g_engine.camera.yaw -= radians; }
+// [controls] the twist's speed, and its 15 degree snap: the unsnapped heading is kept while the twist goes on (re-read
+// whenever something else turned the camera), the camera shows it snapped
+void tbd::host::Twist(float radians) {
+    const tbd::controls::Settings& ctl = tbd::controls::g;
+    static float raw = 0.0f, lastSet = 1e9f;
+    float& yaw = g_engine.camera.yaw;
+    if (std::fabs(yaw - lastSet) > 1e-5f) raw = yaw;
+    raw -= radians * ctl.twistSpeed;
+    yaw = ctl.twistSnap ? tbd::controls::SnapYaw(raw) : raw;
+    lastSet = yaw;
+}
+
+void tbd::host::SetTouchPan(int fingers) { g_touchPanNext = fingers >= 2 ? tbd::controls::g.touchPan2 : tbd::controls::g.touchPan1; }
 
 void tbd::host::Tilt(float radians) {
     if (g_play.active) return;
+    radians = tbd::controls::TouchTilt(tbd::controls::g, radians); // [controls] speed, invert
     if (g_terrainSandbox) tbd::citycam::Tilt(g_engine.camera, radians);
     else g_engine.camera.pitch = std::clamp(g_engine.camera.pitch + radians, -1.5f, 1.5f);
 }
