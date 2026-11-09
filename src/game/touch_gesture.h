@@ -5,6 +5,8 @@
 // longer without moving is a hold, which does nothing (a slow, unsure press never builds).
 #include <cmath>
 
+#include "control_settings.h" // Settings > Controls: the slop and the tap time (defaults kTapSlopPt / kTapMaxSeconds)
+
 namespace tbd {
 namespace touch {
 
@@ -18,6 +20,12 @@ inline Gesture Classify(float travelPt, double heldSec, bool lifted, float slopP
     if (travelPt > slopPt) return Gesture::Drag;
     if (!lifted) return heldSec > maxSec ? Gesture::Hold : Gesture::Undecided;
     return heldSec <= maxSec ? Gesture::Tap : Gesture::Hold;
+}
+
+// The same with the player's Settings > Controls values (tapSlopPt, tapMaxSec; the defaults are the constants above).
+inline Gesture Classify(float travelPt, double heldSec, bool lifted, const controls::Settings& c) {
+    // the time to the millisecond, as a double: 0.45f is 0.4499999881, a hair under the constant's 0.45
+    return Classify(travelPt, heldSec, lifted, c.tapSlopPt, std::round((double)c.tapMaxSec * 1000.0) / 1000.0);
 }
 
 // Device pixels to points for the travel.

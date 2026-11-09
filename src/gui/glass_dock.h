@@ -24,6 +24,8 @@
 #include "news_pill.h"       // the City News card's collapsed / unread state (the host draws the card)
 #include "safe_area.h"       // [safe area] the Dynamic Island / corners / home indicator strips (Model::safe)
 #include "../gfx_settings.h" // the player's graphics options (the Graphics page edits Model::gfx)
+#include "camera_gizmo.h"     // [gizmo] the 2D compass at the top left (the host draws it: game/control_prefs.inl)
+#include "controls_page.h"    // [controls] Settings > Controls (game/control_settings.h; the page edits *Model::controls)
 
 namespace tbd {
 namespace gui {
@@ -119,6 +121,8 @@ struct Model {
     tbd::gfx::Settings gfx; // the preset and the individual graphics options (src/gfx_settings.h)
     int textSize = 0; // 0 normal, 1 large
     bool edgePan = true;
+    tbd::controls::Settings* controls = nullptr; // [controls] the live control settings (the host points it at tbd::controls::g)
+    bool touchFirst = false; // [controls] a touch screen: the Controls page lists the touch rows first
     bool showStats = false; // Graphics > Show stats: the FPS / draws / polys / camera text (the host keeps it, settings.ini stats=)
     // [safe area] the strips every anchored element keeps clear, points (the host fills it each frame)
     SafeInsets safe;
@@ -152,6 +156,7 @@ struct Out {
     bool alertsPressed = false, layersPressed = false, cameraPressed = false;
     bool bulldozePressed = false; // [interact] the dock's Bulldoze button
     bool settingsChanged = false;
+    bool controlsChanged = false, controlsSave = false; // [controls] a Controls value moved (live) / save settings.ini now
     bool menuOpen = false;  // the pause menu is up (the host pauses the sim under it)
     std::vector<float> sfx; // pitches of the UI tick to play (volume .6)
     float bottomH = 0;      // [road ux] points from the screen's bottom edge the dock takes (the kits stack above it)
@@ -169,15 +174,28 @@ struct State {
     float openT = 1;
     bool menu = false, settings = false, gfx = false; // gfx: the Graphics page inside Settings
     bool snd = false;      // the Sound page inside Settings (the volumes)
+    bool ctl = false;      // [controls] the Controls page inside Settings
+    ControlsPage ctlPage;  // [controls] its scroll and rows
     float menuT = 1;
     float scroll = 0, scrollMax = 0; // the tile area: PC UI pad vertical, phone horizontal; Phone UI vertical
     bool drag = false;
     float dragFrom = 0, dragScroll = 0, dragStartX = 0, dragStartY = 0;
     Rect scrollArea;
+    float scrollDir = -1;  // [controls] how the tiles move per point of scroll: -1 laid out at -scroll, +1 at +scroll (the Phone UI column)
     float toolT = 1;
     std::string toolShown;
     float slimT = 0; // [road ux] 0 normal .. 1 the slim bar (Model::slim), eased
 };
+
+// [controls] A tile list's scroll after a drag of dPt points from where it started (from), or after wheel notches. dir: how
+// the tiles move per point of scroll (State::scrollDir). Natural: the tiles move with the finger (dPt) and a wheel notch up
+// moves them 40 pt down; invert turns both round.
+inline float DragScrollTo(float from, float dPt, float dir, bool invert, float maxScroll) {
+    return std::clamp(from + dir * dPt * (invert ? -1.0f : 1.0f), 0.0f, std::max(0.0f, maxScroll));
+}
+inline float WheelScrollTo(float from, float notches, float dir, bool invert, float maxScroll) {
+    return std::clamp(from + dir * notches * 40.0f * (invert ? -1.0f : 1.0f), 0.0f, std::max(0.0f, maxScroll));
+}
 
 // ---------------------------------------------------------------- easing
 inline float Bezier(float x, float x1, float y1, float x2, float y2) { // CSS cubic-bezier(x1, y1, x2, y2) at x
@@ -328,13 +346,16 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         st.dragStartX = in.pressX, st.dragStartY = in.pressY;
         st.dragScroll = st.scroll;
     }
+    // [controls] the tiles follow the finger / the wheel in every list (the Phone UI column, laid out from the bottom at
+    // +scroll, used to run against it); Settings > Controls > Invert menu scroll turns that round
     const bool horizontal = st.pcUi && phoneLayout;
+    const bool invertScroll = m.controls && m.controls->invertMenuScroll;
     if (in.down && st.scrollArea.Contains(st.dragStartX, st.dragStartY) && st.scrollMax > 0) {
         const float d = horizontal ? in.mouseX - st.dragStartX : in.mouseY - st.dragStartY;
         if (std::fabs(d) > 8 * s) st.drag = true;
-        if (st.drag) st.scroll = std::clamp(st.dragScroll - d / s, 0.0f, st.scrollMax);
+        if (st.drag) st.scroll = DragScrollTo(st.dragScroll, d / s, st.scrollDir, invertScroll, st.scrollMax);
     }
-    if (in.wheel != 0 && st.scrollArea.Contains(in.mouseX, in.mouseY)) st.scroll = std::clamp(st.scroll - in.wheel * 40, 0.0f, st.scrollMax);
+    if (in.wheel != 0 && st.scrollArea.Contains(in.mouseX, in.mouseY)) st.scroll = WheelScrollTo(st.scroll, in.wheel, st.scrollDir, invertScroll, st.scrollMax);
     if (!in.down && in.released == false) st.drag = st.drag && in.down;
 
     st.catT += dt, st.openT += dt, st.menuT += dt, st.toolT += dt;
@@ -465,6 +486,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             }
             const Rect clip = R(X(k.panelPadX), Y(ty), innerW * scale, gridH * scale);
             st.scrollArea = clip;
+            st.scrollDir = -1; // [controls] the tiles sit at -scroll
             P.dl.SetClip(clip.x, clip.y, clip.x + clip.w, clip.y + clip.h);
             for (int i = 0; i < n; ++i) {
                 const Item& it = items[i];
@@ -799,6 +821,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 P.Glass(colX, by, colW, boxH, 22, kPanel, 24, 1.7f, true);
                 const Rect clip = R(colX + pad, by + pad, colW - 2 * pad, boxH - 2 * pad);
                 st.scrollArea = clip;
+                st.scrollDir = 1; // [controls] rows from the bottom at +scroll: a drag down must raise the scroll
                 st.scrollMax = std::max(0.0f, contentH - (boxH - 2 * pad));
                 P.dl.SetClip(clip.x, clip.y, clip.x + clip.w, clip.y + clip.h);
                 const float tw = (colW - 2 * pad - gap) * 0.5f;
@@ -967,6 +990,17 @@ inline void MenuFrame(Context& g, State& st, Model& m, const Atlas& atlas, Out& 
             if (drawBtn(x0 + hw + gap, y, hw, bh, "gear", "Settings", 0, false)) st.settings = true, sfx(1.1f);
             y += bh + gap;
             if (drawBtn(x0, y, cardW, bh, "exit", "Main menu", 2, true)) out.mainMenu = true, sfx(1.1f);
+        } else if (st.ctl) {
+            // [controls] Settings > Controls: the scrolling sheet of gui/controls_page.h over the scrim, clear of the safe area
+            static tbd::controls::Settings unbound; // no host settings (a test): the page edits a copy
+            tbd::controls::Settings& C = m.controls ? *m.controls : unbound;
+            const ControlsPageOut co = ControlsPageFrame(g, st.ctlPage, C, &m.edgePan, SimPanelPlace::Sheet, in.viewH / s - H + 12.0f, ST + 12.0f, P.text,
+                                                         std::max(SL, in.viewW / s - W), m.touchFirst);
+            if (co.changed) out.controlsChanged = true;
+            if (co.save) out.controlsSave = out.settingsChanged = true; // the host's save writes the ctl_* keys too (game/control_prefs.inl)
+            if (co.edgePanChanged) out.settingsChanged = true; // settings.ini edgepan=
+            if (co.reset) sfx(0.9f);
+            if (co.closed) st.ctl = false, sfx(0.65f);
         } else {
             // Settings: the interface switch (two cards), then the options rows, then Back
             const float cardH = 66;
@@ -1047,7 +1081,9 @@ inline void MenuFrame(Context& g, State& st, Model& m, const Atlas& atlas, Out& 
                 if ((v = row("stats", "Show stats", kOnOff, 2, m.showStats ? 1 : 0)) >= 0) m.showStats = v == 1, out.settingsChanged = true, sfx(1.3f);
                 if (drawBtn(x0, y, cardW, rowH, "left", "Back", 1, true)) st.gfx = false, sfx(0.65f);
             } else {
-                if (drawBtn(x0, y, cardW, rowH, "star", m.volume[0] == 0 ? "Sound (muted)" : "Sound and music", 0, false)) st.snd = true, sfx(1.1f);
+                // [controls] Sound and Controls share a row (the phone's card has no height for another)
+                if (drawBtn(x0, y, hw, rowH, "star", m.volume[0] == 0 ? "Sound (off)" : "Sound", 0, false)) st.snd = true, sfx(1.1f);
+                if (drawBtn(x0 + hw + 8, y, hw, rowH, "cam", "Controls", 0, false)) st.ctl = true, st.ctlPage.st = SimPanelState(), sfx(1.1f);
                 y += rowH + gap;
                 if ((v = row("layers", "Graphics", kPreset, 4, m.gfx.preset)) >= 0) tbd::gfx::ApplyPreset(m.gfx, v), out.settingsChanged = true, sfx(1.3f);
                 if (drawBtn(x0, y, cardW, rowH, "gear", m.gfx.preset == tbd::gfx::kCustom ? "Graphics options (Custom)" : "Graphics options", 0, false)) st.gfx = true, sfx(1.1f);

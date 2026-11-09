@@ -15,6 +15,8 @@ std::wstring SettingsFilePath(); // glass_dock_host.inl
 int g_statsPref = -1;            // settings.ini stats=: -1 none (the device default), 0 off, 1 on
 int g_newsPref = -1;             // settings.ini news=: -1 none (the device default), 0 collapsed, 1 open
 tbd::gui::NewsPill g_newsPill;
+void LoadControlPrefs(); // [controls] control_prefs.inl: the ctl_* keys, read and written with these
+void SaveControlPrefs();
 bool g_newsPillInit = false;
 
 inline bool TouchDefault() {
@@ -30,6 +32,7 @@ bool StatsOverlayOn() {
 }
 
 void LoadGuiPrefs() {
+    LoadControlPrefs(); // [controls]
     FILE* f = tbd::platform::WOpen(SettingsFilePath().c_str(), L"rb");
     if (!f) return;
     std::string text;
@@ -60,6 +63,7 @@ void SaveGuiPrefs() {
     if (!f) return;
     fwrite(kept.data(), 1, kept.size(), f);
     fclose(f);
+    SaveControlPrefs(); // [controls] the ctl_* keys after the rest
 }
 
 // The City News pill and card (city_radio.inl fills hud.news, newest first). Also keeps the Graphics page's Show stats row
