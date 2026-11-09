@@ -25,6 +25,9 @@ void Frame();
 void Shutdown();
 // The app is active again, or an audio-session interruption ended: restart the sound device if the OS stopped it.
 void ResumeAudio();
+// The app went to the background (iOS sceneDidEnterBackground): the city is autosaved at once (city_sim_save.inl), since
+// the OS may suspend or end the app from here on. Nothing happens on the title screen.
+void EnterBackground();
 
 // Pointer input in device pixels. Touch: one finger is the left button; two-finger pan and pinch drive the camera.
 enum class Button { Left = 0, Right = 1, Middle = 2 };

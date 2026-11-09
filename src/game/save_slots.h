@@ -29,11 +29,13 @@ namespace saves {
 
 constexpr int kSlots = 10;      // Save 1 .. Save 10: indices 0 .. 9
 constexpr int kScratchSlot = 99; // test / stress saves (city_stress.inl): "scratch.*", never listed
+constexpr int kAutosaveSlot0 = 90, kAutosaveSlots = 3; // the sim's rotating autosaves (city_sim_save.inl): "autosave_1" .. "autosave_3", never listed
 constexpr int kMetaVersion = 1;
 
 // "slot_01" .. "slot_10"; "scratch" for kScratchSlot.
 inline std::string SlotStem(int slot) {
     if (slot == kScratchSlot) return "scratch";
+    if (slot >= kAutosaveSlot0 && slot < kAutosaveSlot0 + kAutosaveSlots) return "autosave_" + std::to_string(slot - kAutosaveSlot0 + 1);
     char b[16];
     std::snprintf(b, sizeof(b), "slot_%02d", std::clamp(slot, 0, 98) + 1);
     return b;

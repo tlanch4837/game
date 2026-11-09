@@ -66,6 +66,9 @@
 #include "city/sim_flow.h"
 #include "city/sim_agents.h"
 #include "city/sim_people.h"
+#include "city/sim_save.h"         // the CS2 sim's .tbdsim chunks and BuildingRegistry (city_sim_save.inl)
+#include "city/sim_tuning_table.h" // the CS2 phases' prefixed tuning (city_sim.inl g_simPhaseTune)
+#include "city/sim_calendar.h"     // minute -> day, life month, season (city_sim_save.inl)
 #include "city/sim_walkers.h"      // [walkers] people on the sidewalks (city_walkers.inl hosts them; included here: game_core.inl sits in a namespace)
 #include "gui/road_toolbar.h"
 #include "city/road_names.h"
@@ -162,6 +165,10 @@ void tbd::host::Init(const std::wstring& assetsRoot) {
 }
 
 void tbd::host::ResumeAudio() { tbd::audio::Resume(); }
+
+void tbd::host::EnterBackground() {
+    if (g_engine.renderer) SimEnterBackground(); // city_sim_save.inl: an autosave, written before this returns
+}
 
 void tbd::host::AttachRenderer(std::unique_ptr<tbd::Renderer> renderer, int width, int height) {
     if (!renderer) return;

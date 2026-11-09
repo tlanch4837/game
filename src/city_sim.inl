@@ -4,6 +4,9 @@
 // g_clock.minutes, and SimSync feeds the scheduler the change in g_clock.minutes since the last frame, so the sim minute
 // and the HUD clock cannot drift apart. A jump that is not the normal per-frame advance (a save loaded, a new map) rebases
 // the scheduler instead of queueing thousands of minutes.
+// Since the CS2 sim roadmap's Phase 0 this file keeps the scheduler, the cells, the people, the save hub (M, Q) and
+// SimSync; services, budget, flow and the growth registrations are in city_sim_services / _budget / _flow / _growth.inl
+// (included below), and the phase hub with the .tbdsim save is city_sim_phases.inl (included after this file).
 //
 // Environment (dev):
 //   TBD_SIM_BUDGET_MS=<ms>        per-frame sim budget (default 2)
@@ -15,15 +18,31 @@ tbd::city::SimScheduler g_sim;
 tbd::city::CitySim g_citySim; // per-cell counters (sim_cells.h)
 tbd::city::SimGrowth g_simGrowth; // demand, growth gate, levels (sim_growth.h)
 tbd::city::SimTuning g_simTune;   // compiled defaults, then assets\sim\tuning.json
+tbd::city::PhaseTuning g_simPhaseTune; // the CS2 phases' prefixed values from the same file (sim_tuning_table.h)
+
+// The CS2 phase hub (city_sim_phases.inl, included right after this file).
+void SimPhasesInit();
+void SimPhasesReset();
+void SimPhasesAfterReset();
+void SimPhasesFrame(float realDt);
+bool SimTbdLoadIsPending(); // city_sim_save.inl: a load's .tbdsim waits to be applied
+void SimBuildingsLotsBack();   // city_sim_save.inl: the load's lots are back (BLDG releases what never came back)
 
 void SimLoadTuning() {
     g_simTune = tbd::city::SimTuning();
+    g_simPhaseTune = tbd::city::PhaseTuning();
     const std::wstring path = tbd::ExeDirectory() + L"\\..\\assets\\sim\\tuning.json";
     std::vector<std::string> unknown;
     int applied = 0;
     if (g_simTune.LoadFile(path.c_str(), &unknown, &applied)) {
         tbd::Log("Sim: tuning.json applied %d values", applied);
-        for (const std::string& u : unknown) tbd::Log("Sim: tuning.json: unknown name \"%s\" (ignored)", u.c_str());
+        for (const std::string& u : unknown)
+            if (!tbd::city::IsPhaseTuningKey(u)) tbd::Log("Sim: tuning.json: unknown name \"%s\" (ignored)", u.c_str()); // prefixed: a phase's
+        std::vector<std::string> phaseUnknown;
+        int phaseApplied = 0;
+        g_simPhaseTune.LoadFile(path, &phaseUnknown, &phaseApplied);
+        if (phaseApplied) tbd::Log("Sim: tuning.json applied %d phase values", phaseApplied);
+        for (const std::string& u : phaseUnknown) tbd::Log("Sim: tuning.json: unknown phase name \"%s\" (ignored)", u.c_str());
     } else {
         tbd::Log("Sim: no assets\\sim\\tuning.json; compiled-in tuning");
     }
@@ -40,485 +59,16 @@ inline double EnvDouble(const char* name, double fallback) {
 } // namespace sim_host
 
 std::vector<uint8_t> g_simLotUtil; // per lot (zones.lots order): LotUtil flags from the last utilities solve
-std::vector<uint8_t> g_simFlags;   // per lot (zones.lots order): SimFlag bits (sim_flags.h), for the icons, overlays and info card
+std::vector<uint32_t> g_simFlags;  // per lot (zones.lots order): SimFlag bits (sim_flags.h, uint32), for the icons, overlays and info card
 uint64_t g_simFlagsVersion = 0;    // bumped when g_simFlags changed
 float g_simFunding[tbd::city::kServices] = {1, 1, 1, 1, 1, 1}; // S4's budget sliders scale the service radii
 uint64_t g_simCoverageRuns = 0;
 
-// The service kind of a transport-tab building, -1 for none (deathcare and communications cover nothing yet).
-int SimServiceKind(const tbd::city::BuildingDef& d) {
-    using tbd::city::TTab;
-    switch (d.tab) {
-    case TTab::Fire: return tbd::city::kFire;
-    case TTab::Police: return tbd::city::kPolice;
-    case TTab::Health: return tbd::city::kHealth;
-    case TTab::Education: return tbd::city::kSchool;
-    case TTab::Bus: case TTab::Rail: return tbd::city::kTransit;
-    default: return -1;
-    }
-}
+#include "city_sim_services.inl" // S3 utilities into the cells, flags, service coverage (Phase 4 owns it)
+#include "city_sim_budget.inl"   // S4 economy, budget, construction charges, milestones, the Budget panel (Phase 7)
+#include "city_sim_flow.inl"     // S5 flow traffic, S7 cosmetic cars (Phase 5)
+#include "city_sim_growth.inl"   // S2 demand and growth registrations (Phase 2)
 
-void SimServices() {
-    using namespace tbd::city;
-    // utilities: the solve's per-lot result (lots under construction count as fine there)
-    static uint64_t utilSolves = ~0ull, utilZones = ~0ull;
-    if (utilSolves != g_utilSolve.solves || utilZones != g_zones.version) {
-        utilSolves = g_utilSolve.solves, utilZones = g_zones.version;
-        g_simLotUtil.assign(g_zones.lots.size(), kLotAll);
-        if (g_utilReport.lots.size() == g_zones.lots.size())
-            for (size_t i = 0; i < g_zones.lots.size(); ++i) {
-                const UtilStatus& u = g_utilReport.lots[i];
-                g_simLotUtil[i] = (uint8_t)((u.elec ? kLotPower : 0) | (u.water ? kLotWater : 0) | (u.sewage ? kLotSewage : 0) | (u.road ? kLotRoad : 0));
-            }
-        ApplyUtilities(g_citySim, g_zones, g_simLotUtil);
-    }
-    { // the per-building flags: O(lots), every 10 game minutes (abandonment creeps up with time, so no cheaper key)
-        static std::vector<uint8_t> fresh;
-        ComputeSimFlags(g_zones, g_citySim, g_simGrowth, g_simTune, g_simLotUtil, fresh);
-        if (fresh != g_simFlags) g_simFlags.swap(fresh), ++g_simFlagsVersion;
-    }
-    // coverage: only when the services, the roads, the lots or the funding changed
-    static uint64_t kTrans = ~0ull, kNet = ~0ull, kZones = ~0ull;
-    static float kFund[kServices] = {};
-    static std::vector<int> segComp;
-    static uint64_t compFor = ~0ull;
-    int done = 0;
-    for (const Placed& b : g_transport.items) done += b.alive && b.state == BState::Done;
-    const uint64_t transKey = g_transport.version * 1000003ull + (uint64_t)done;
-    bool fundChanged = false;
-    for (int k = 0; k < kServices; ++k) fundChanged |= kFund[k] != g_simFunding[k];
-    if (transKey == kTrans && kNet == g_roads.net.version && kZones == g_zones.version && !fundChanged) return;
-    kTrans = transKey, kNet = g_roads.net.version, kZones = g_zones.version;
-    for (int k = 0; k < kServices; ++k) kFund[k] = g_simFunding[k];
-    if (compFor != g_roads.net.version) compFor = g_roads.net.version, RoadComponents(g_roads.net, segComp);
-    std::vector<ServiceSource> src;
-    for (const Placed& b : g_transport.items) {
-        if (!b.alive || b.state != BState::Done) continue;
-        const BuildingDef& d = Defs()[b.def];
-        const int kind = SimServiceKind(d);
-        if (kind < 0) continue;
-        ServiceSource s;
-        s.at = b.c;
-        s.kind = kind;
-        s.radius = (float)std::min(g_simTune.serviceRadiusMax, g_simTune.serviceRadiusBase + g_simTune.serviceRadiusPerVehicle * d.vehicles);
-        float t, dd;
-        V2 mid[4], out[4]; // the gate: the front edge's road, else whichever edge of a turned lot has one (placement_rotation.h)
-        EdgeMids(b.c, b.front, d.W(), d.D(), mid, out);
-        int seg = -1;
-        for (int e = 0; e < 4 && seg < 0; ++e) seg = g_roads.net.SegmentAt(mid[e] + out[e] * 2.0f, 14.0f, t, dd);
-        s.comp = seg >= 0 && seg < (int)segComp.size() ? segComp[(size_t)seg] : -1;
-        src.push_back(s);
-    }
-    ComputeCoverage(g_citySim, g_zones, segComp, src, g_simFunding);
-    ++g_simCoverageRuns;
-}
-
-tbd::city::SimEconomy g_simEcon; // treasury and tax rates (sim_economy.h)
-tbd::city::SimBudget g_simBudget; // itemised expenses, loans, balance history, bankruptcy (sim_budget.h)
-// The sim minute a fresh city (start, new map) began at: its first ledger runs a whole game day later, not on the tick
-// it was made (the scheduler's minute 0 runs every system, so the first ledger used to charge day 1 at once).
-int64_t g_simLedgerFrom = 0;
-tbd::city::SimMilestones g_simMilestones; // population milestones and what they unlock (sim_milestones.h)
-city::NewsFeed g_simNews;          // news_lines.json; sim events post triggers, the radio reads Queue()
-std::string g_simBanner, g_simBannerSub; // the last milestone, for the HUD banner
-uint64_t g_simBannerAt = 0;
-double g_simMilestoneQuietUntil = 0; // game minutes: a load re-reaches its milestones silently, without rewards
-std::vector<std::string> g_simNotes; // the Notifications panel's log, newest last (capped)
-
-// One line in the Notifications log, stamped with the HUD's calendar date.
-void SimNote(const std::string& text) {
-    static const char* const kMonth[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    const int day0 = std::max(0, g_clock.Day() - 1);
-    char stamp[32];
-    std::snprintf(stamp, sizeof(stamp), "%s %d  ", kMonth[(day0 / 30) % 12], day0 % 30 + 1);
-    g_simNotes.push_back(stamp + text);
-    if (g_simNotes.size() > 40) g_simNotes.erase(g_simNotes.begin());
-}
-
-// Lane-metres of every live road and track (rail counts as two lanes, a path as one), recounted when the network changes.
-double SimRoadLaneMetres() {
-    static uint64_t lenFor = ~0ull;
-    static double sum = 0;
-    if (lenFor == g_roads.net.version) return sum;
-    lenFor = g_roads.net.version, sum = 0;
-    for (size_t i = 0; i < g_roads.net.segs.size(); ++i) {
-        if (!g_roads.net.segs[i].alive) continue;
-        const tbd::city::Profile& p = g_roads.net.Prof((int)i);
-        const int lanes = p.cat == tbd::city::Cat::Rail ? 2 : p.fwd + p.back;
-        sum += tbd::city::RoadLaneMetres(g_roads.net.Curve((int)i).Length(8), lanes);
-    }
-    return sum;
-}
-
-// A sim event for the radio anchor: event driven only, one headline per event, nothing on a timer.
-void RadioSimEvent(const char* trigger); // city_radio.inl
-void SimNews(const char* trigger) {
-    RadioSimEvent(trigger);
-    std::string text, tone;
-    if (g_simNews.Post(trigger, text, tone)) tbd::Log("News [%s]: %s", trigger, text.c_str());
-}
-
-// The day's upkeep split for the ledger (cents per day).
-tbd::city::DayUpkeep SimDayUpkeep() {
-    using namespace tbd::city;
-    DayUpkeep up;
-    for (const UtilBuilding& b : g_util.items)
-        if (b.alive) up.utilities += UpkeepPerDay(UtilDefs()[b.def].upkeep, 1.0, 1.0);
-    for (const Placed& b : g_transport.items) {
-        if (!b.alive || b.state != BState::Done) continue;
-        const BuildingDef& d = Defs()[b.def];
-        const int kind = SimServiceKind(d);
-        up.services += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale : 1.0);
-    }
-    up.roads = RoadUpkeepPerDay(PaidLaneMetres(SimRoadLaneMetres(), g_cityMapLaneMetres), kRoadUpkeepPerLaneKmDay); // not the map's corridor
-    return up;
-}
-
-// ---- construction charges: what was placed since the last frame is paid for once, at its catalog cost (roads by the
-// lane-metres added). A new map or a load is taken as it stands (free), like the radio's baseline, for 2 real seconds.
-void SimBudgetEvents(); // below
-namespace sim_build {
-std::unordered_set<uint64_t> transport, util;
-double laneMetres = -1.0;
-uint64_t roadVersion = ~0ull, generation = ~0ull;
-double settle = 0.0; // real seconds left of the baseline window
-int64_t chargedTotal = 0; // cents, since the session started (dev log)
-} // namespace sim_build
-void SimConstructionSync(float realDt) {
-    using namespace tbd::city;
-    namespace sb = sim_build;
-    if (sb::generation != g_cityGeneration) sb::generation = g_cityGeneration, sb::settle = 2.0, sb::laneMetres = -1.0;
-    const bool settling = sb::settle > 0.0;
-    if (settling) sb::settle -= realDt;
-    if (settling) sb::transport.clear(), sb::util.clear();
-    int64_t cost = 0;
-    for (const Placed& b : g_transport.items)
-        if (b.alive && sb::transport.insert(b.id).second) cost += (int64_t)Defs()[b.def].cost * 100;
-    for (const UtilBuilding& b : g_util.items)
-        if (b.alive && sb::util.insert(b.id).second) cost += (int64_t)UtilDefs()[b.def].cost * 100;
-    if (sb::roadVersion != g_roads.net.version || sb::laneMetres < 0.0) {
-        const double was = sb::laneMetres, now = SimRoadLaneMetres();
-        sb::roadVersion = g_roads.net.version, sb::laneMetres = now;
-        if (was >= 0.0 && now > was + 0.5) cost += RoadCost(now - was); // shortened or bulldozed roads: no refund
-        if (now < g_cityMapLaneMetres) g_cityMapLaneMetres = now; // the corridor was bulldozed: what is rebuilt is the city's
-    }
-    // demolished ones drop out of the sets once in a while (they stay the size of the city)
-    if (sb::transport.size() > g_transport.items.size() + 256) {
-        sb::transport.clear();
-        for (const Placed& b : g_transport.items) if (b.alive) sb::transport.insert(b.id);
-    }
-    if (sb::util.size() > g_util.items.size() + 256) {
-        sb::util.clear();
-        for (const UtilBuilding& b : g_util.items) if (b.alive) sb::util.insert(b.id);
-    }
-    if (settling || cost <= 0) return;
-    g_simBudget.Charge(g_simEcon, cost);
-    sb::chargedTotal += cost;
-    SimBudgetEvents(); // the bankruptcy warning, if this build emptied the treasury
-}
-
-// The budget's and the milestones' events into toasts and the news. The bankrupt story waits out the grace days
-// (sim_budget.h BudgetNewsAllowed): a first day's spending spree is toasted, but the news only runs it if the city is
-// still in the red once a ledger day has gone by.
-bool g_simBankruptNewsPending = false;
-void SimBudgetEvents() {
-    const bool newsOk = tbd::city::BudgetNewsAllowed(g_simEcon, (int)g_simTune.budgetNewsGraceDays);
-    if (g_simBankruptNewsPending && newsOk) {
-        g_simBankruptNewsPending = false;
-        if (g_simBudget.bankrupt) SimNews("bankrupt");
-    }
-    for (const std::string& e : g_simBudget.events) {
-        if (e == "bankrupt") {
-            Toast("THE CITY IS BANKRUPT: RAISE TAXES, CUT COSTS OR TAKE A LOAN"), SimNote("Bankrupt: the treasury is below zero");
-            if (newsOk) SimNews("bankrupt");
-            else g_simBankruptNewsPending = true;
-        }
-        else if (e == "solvent") Toast("THE TREASURY IS BACK IN THE BLACK"), SimNote("The treasury is back above zero");
-        else if (e == "loan_taken") SimNews("loan_taken"), SimNote("Loan taken");
-        else if (e == "loan_repaid") SimNote("Loan repaid early");
-    }
-    g_simBudget.events.clear();
-}
-void SimMilestonesSync() {
-    using namespace tbd::city;
-    const bool quiet = g_clock.minutes < g_simMilestoneQuietUntil;
-    const int got = g_simMilestones.Update(g_simTotals.population, quiet ? nullptr : &g_simEcon.treasury);
-    if (got <= 0 || quiet) return;
-    int n = 0;
-    const Milestone* m = Milestones(n);
-    const Milestone& last = m[g_simMilestones.reached - 1];
-    char b[128];
-    std::snprintf(b, sizeof(b), "MILESTONE: %s (%u RESIDENTS)  +%lld", last.name, last.population, (long long)(last.reward / 100));
-    std::string up = b;
-    for (char& c : up) c = (char)std::toupper((unsigned char)c);
-    Toast(up);
-    g_simBanner = std::string("Milestone reached: ") + last.name;
-    g_simBannerSub = std::to_string(last.population) + " residents.  +" + std::to_string((long long)(last.reward / 100)) + " grant.  New tools unlocked.";
-    g_simBannerAt = tbd::platform::TickCountMs();
-    tbd::Log("Sim: milestone %d %s reached at population %llu", g_simMilestones.reached, last.name, (unsigned long long)g_simTotals.population);
-    SimNote(std::string("Milestone: ") + last.name + " (" + std::to_string(last.population) + " residents)");
-    SimNews("milestone_reached");
-}
-
-// Upkeep of everything the city runs, cents per day: utility sources, and transport / service buildings (services scaled
-// by their funding).
-int64_t SimUpkeepPerDay() {
-    using namespace tbd::city;
-    int64_t sum = 0;
-    for (const UtilBuilding& b : g_util.items)
-        if (b.alive) sum += UpkeepPerDay(UtilDefs()[b.def].upkeep, 1.0, 1.0);
-    for (const Placed& b : g_transport.items) {
-        if (!b.alive || b.state != BState::Done) continue;
-        const BuildingDef& d = Defs()[b.def];
-        const int kind = SimServiceKind(d);
-        sum += UpkeepPerDay(d.upkeep, kind >= 0 ? g_simFunding[kind] : 1.0, kind >= 0 ? g_simTune.serviceUpkeepScale : 1.0);
-    }
-    return sum;
-}
-
-// ---- S5: flow traffic. The graph snapshot and the trips go to a background worker; the result swaps in at a tick.
-struct SimFlowJob {
-    std::shared_ptr<const tbd::city::FlowGraph> graph;
-    std::vector<tbd::city::Trip> trips;
-    tbd::city::FlowSolver solver; // only the worker touches it while busy (warm start: the last flows)
-    std::vector<tbd::city::SegFlow> result;
-    size_t segCount = 0;
-    std::atomic<bool> busy{false}, ready{false};
-};
-std::shared_ptr<SimFlowJob> g_simFlowJob = std::make_shared<SimFlowJob>();
-std::vector<tbd::city::SegFlow> g_segFlow; // per road segment, the last finished solve (empty before the first)
-uint64_t g_segFlowVersion = 0;               // network version g_segFlow belongs to
-tbd::city::SegGrid g_simSegGrid;
-double g_simFlowSolveMs = 0;
-int64_t g_simFlowLastMinute = -1000000;
-
-// Road edits: the cells the changed segments cross are dirty (render and flow).
-void SimDirtyRoadCells() {
-    static std::vector<uint8_t> alive;
-    const auto& net = g_roads.net;
-    std::vector<tbd::city::CellKey> keys;
-    for (size_t s = 0; s < net.segs.size(); ++s) {
-        const uint8_t now = net.segs[s].alive ? 1 : 0;
-        const uint8_t was = s < alive.size() ? alive[s] : 0;
-        if (now == was) continue;
-        tbd::city::SegGrid::CellsOf(net, (int)s, keys);
-        for (const tbd::city::CellKey& k : keys) {
-            const int c = g_citySim.cells.Find(k);
-            if (c >= 0) g_citySim.cells.Touch(c, tbd::city::kDirtyRender | tbd::city::kDirtyFlow);
-        }
-    }
-    alive.resize(net.segs.size());
-    for (size_t s = 0; s < net.segs.size(); ++s) alive[s] = net.segs[s].alive ? 1 : 0;
-}
-
-void SimAppendTownTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips); // city_herds.inl (town traffic)
-
-// The trips of the peak hour: commutes from the supercell links, shopping from homes to commercial (gravity).
-void SimBuildTrips(const tbd::city::FlowGraph& g, std::vector<tbd::city::Trip>& trips) {
-    using namespace tbd::city;
-    trips.clear();
-    const int nsc = g_citySim.Supercells();
-    // a supercell's road node: the network node nearest its people and jobs
-    std::vector<int> node((size_t)nsc, -1);
-    std::vector<V2> centre((size_t)nsc);
-    std::vector<double> pop((size_t)nsc, 0), comm((size_t)nsc, 0);
-    for (int s = 0; s < nsc; ++s) {
-        double w = 0, x = 0, z = 0;
-        for (int c : g_citySim.SuperCellList(s)) {
-            const CellSim& cs = g_citySim.sim[(size_t)c];
-            const double cw = (double)cs.Population() + cs.jobCap[0] + cs.jobCap[1] + cs.jobCap[2];
-            const CellKey k = g_citySim.cells.cells[(size_t)c].key;
-            x += cw * (k.x + 0.5) * kCityCellSize, z += cw * (k.z + 0.5) * kCityCellSize, w += cw;
-            pop[(size_t)s] += cs.Population();
-            comm[(size_t)s] += cs.jobCap[kJobCommercial];
-        }
-        if (w <= 0) continue;
-        centre[(size_t)s] = {(float)(x / w), (float)(z / w)};
-        float t, d;
-        const int seg = g_simSegGrid.Nearest(g_roads.net, centre[(size_t)s], 800.0f, t, d);
-        if (seg < 0) continue;
-        const Segment& sg = g_roads.net.segs[(size_t)seg];
-        node[(size_t)s] = t < 0.5f ? sg.a : sg.b;
-        if (node[(size_t)s] >= g.nodes) node[(size_t)s] = -1;
-    }
-    const float commute = (float)(g_simTune.flowCarShare * g_simTune.flowPeakShare);
-    g_citySim.ForEachLink([&](int h, int j, int32_t n) {
-        if (h == j || node[(size_t)h] < 0 || node[(size_t)j] < 0 || node[(size_t)h] == node[(size_t)j]) return;
-        trips.push_back({node[(size_t)h], node[(size_t)j], (float)n * commute, (int)(SimSeed(7, (uint64_t)h * 131 + (uint64_t)j) % 3)});
-    });
-    for (int h = 0; h < nsc; ++h) {
-        if (node[(size_t)h] < 0 || pop[(size_t)h] <= 0) continue;
-        double wsum = 0;
-        std::vector<std::pair<int, double>> w;
-        for (int c = 0; c < nsc; ++c) {
-            if (c == h || node[(size_t)c] < 0 || comm[(size_t)c] <= 0) continue;
-            const double d = Len(centre[(size_t)c] - centre[(size_t)h]);
-            if (d > 3.0 * g_simTune.flowShopDecayMetres) continue;
-            const double v = comm[(size_t)c] * std::exp(-d / std::max(1.0, g_simTune.flowShopDecayMetres));
-            w.push_back({c, v});
-            wsum += v;
-        }
-        const double total = pop[(size_t)h] * g_simTune.flowShopPerResident;
-        for (const auto& [c, v] : w)
-            if (node[(size_t)c] != node[(size_t)h]) trips.push_back({node[(size_t)h], node[(size_t)c], (float)(total * v / wsum), 2});
-    }
-    SimAppendTownTrips(g, trips); // trips inside one hood and from the outside connections (city_herds.inl, sim_town_traffic.h)
-}
-
-void SimFlow(const tbd::city::SimTick& t) {
-    using namespace tbd::city;
-    SimFlowJob& job = *g_simFlowJob;
-    if (job.ready.load(std::memory_order_acquire)) { // a finished solve: swap it in at this tick
-        g_segFlow = job.result;
-        g_segFlowVersion = job.graph ? job.graph->version : 0;
-        g_simFlowSolveMs = job.solver.lastMs;
-        job.ready.store(false, std::memory_order_release);
-    }
-    if (g_simSegGrid.builtFrom != g_roads.net.version) {
-        g_simSegGrid.Build(g_roads.net);
-        SimDirtyRoadCells();
-    }
-    if (job.busy.load(std::memory_order_acquire)) return;
-    static uint64_t kNet = ~0ull, kZones = ~0ull;
-    const bool changed = kNet != g_roads.net.version || kZones != g_zones.version;
-    if (!changed && t.minute - g_simFlowLastMinute < (int64_t)g_simTune.flowSolveMinutes) return;
-    kNet = g_roads.net.version, kZones = g_zones.version;
-    g_simFlowLastMinute = t.minute;
-    if (!job.graph || job.graph->version != g_roads.net.version) job.graph = std::make_shared<const FlowGraph>(FlowGraph::Build(g_roads.net));
-    SimBuildTrips(*job.graph, job.trips);
-    if (job.trips.empty()) {
-        g_segFlow.assign(g_roads.net.segs.size(), SegFlow{});
-        g_segFlowVersion = g_roads.net.version;
-        return;
-    }
-    job.segCount = g_roads.net.segs.size();
-    job.busy.store(true, std::memory_order_release);
-    std::shared_ptr<SimFlowJob> keep = g_simFlowJob; // the worker holds it even if the city is reset meanwhile
-    g_engine.jobs->RunBackground([keep] {
-        keep->solver.Solve(*keep->graph, keep->trips);
-        keep->solver.Segments(*keep->graph, keep->segCount, keep->result);
-        keep->ready.store(true, std::memory_order_release);
-        keep->busy.store(false, std::memory_order_release);
-    });
-}
-
-// ---- S7: cosmetic traffic. Eight car models (assets/vehicles/cars), uploaded once when there is traffic to show; every
-// frame the cars near the camera come from the segment flows (sim_agents.h) and each model is one instanced draw.
-struct SimCarModel {
-    tbd::MeshId mesh = tbd::kInvalidMesh;
-};
-std::vector<SimCarModel> g_simCars;
-bool g_simCarsTried = false;
-double g_simAgentTime = 0; // seconds the cosmetic cars have driven (real time while the game runs)
-tbd::city::AgentParams g_simAgentParams;
-uint32_t g_simCarsDrawn = 0;
-bool g_herdsOwnCars = false; // city_herds.inl: the herd children draw the cars and the flow-driven cosmetic ones step aside
-
-void SimAgentsSync(float realDt) {
-    if (!g_clock.paused) g_simAgentTime += realDt * (1.0 + 0.5 * g_clock.speed);
-    if (g_simCarsTried || g_segFlow.empty() || !g_engine.renderer) return;
-    g_simCarsTried = true; // outside the frame: the uploads may wait
-    static const char* const kModels[] = {"CAR_sedan_white", "CAR_hatch_red", "CAR_suv_black", "CAR_wagon_silver",
-                                          "CAR_coupe_blue", "CAR_pickup_grey", "CAR_van_white", "CAR_compact_green"};
-    for (const char* m : kModels) {
-        tbd::Entity e;
-        e.mesh = tbd::MeshKind::Imported;
-        e.meshPath = UtilAbsolute((std::string("assets/vehicles/cars/glb/") + m + ".glb").c_str()) + "#native";
-        e.color = {1, 1, 1};
-        if (ImportedVertices(e.meshPath).empty()) continue;
-        SimCarModel c;
-        c.mesh = UploadEntityMesh(e);
-        if (c.mesh != tbd::kInvalidMesh) g_simCars.push_back(c);
-    }
-    g_simAgentParams.models = (int)g_simCars.size();
-    tbd::Log("Sim: %zu car models for cosmetic traffic", g_simCars.size());
-}
-
-// Dev: TBD_SIM_OVERLAY=1 draws every road segment's solved flow over it: green free, yellow busy, orange congested, red
-// jammed (line width by volume), one transient draw.
-void SimFlowOverlay(tbd::Renderer& r, const tbd::Mat4& viewProj) {
-    static const bool on = sim_host::EnvDouble("TBD_SIM_OVERLAY", 0.0) > 0.0;
-    if (!on || g_segFlow.size() != g_roads.net.segs.size()) return;
-    static std::vector<tbd::Vertex> v;
-    v.clear();
-    static const tbd::Vec3 kCol[4] = {{0.2f, 0.85f, 0.3f}, {0.95f, 0.85f, 0.2f}, {0.98f, 0.5f, 0.1f}, {0.9f, 0.15f, 0.1f}};
-    for (size_t s = 0; s < g_segFlow.size(); ++s) {
-        const tbd::city::SegFlow& f = g_segFlow[s];
-        if (f.flow <= 1.0f || !g_roads.net.segs[s].alive) continue;
-        const tbd::city::Cubic cu = g_roads.net.Curve((int)s);
-        const float w = std::clamp(f.flow / 400.0f, 0.6f, 6.0f);
-        const tbd::Vec3 col = kCol[f.cls];
-        tbd::city::V2 prev = cu.At(0);
-        for (int i = 1; i <= 8; ++i) {
-            const tbd::city::V2 q = cu.At(i / 8.0f);
-            const tbd::city::V2 n = tbd::city::RightOf(tbd::city::Norm(q - prev)) * w;
-            const float y0 = g_roads.net.YAt(g_roads.net.segs[s], (i - 1) / 8.0f) + 1.5f, y1 = g_roads.net.YAt(g_roads.net.segs[s], i / 8.0f) + 1.5f;
-            zfx::Quad(v, {prev.x - n.x, y0, prev.z - n.z}, {prev.x + n.x, y0, prev.z + n.z}, {q.x + n.x, y1, q.z + n.z}, {q.x - n.x, y1, q.z - n.z}, {0, 0, 0}, col);
-            prev = q;
-        }
-    }
-    if (!v.empty()) r.DrawTransient(v.data(), (uint32_t)v.size(), tbd::Topology::Triangles, viewProj, tbd::Mat4::Identity(), true);
-}
-
-// Near cars cast shadows (Track R9): the ones within kSimCarShadowRange of the eye, drawn into the sun's map by SimAgentsCasters. The
-// shadow pass runs before the scene, so it draws the rows the previous frame gathered here: one frame behind, a quarter metre at
-// city speeds, under the shadow map's own softness.
-constexpr float kSimCarShadowRange = 150.0f;
-std::vector<std::vector<float>> g_simCarShadowRows; // per car model
-void SimAgentsCasters(tbd::Renderer& r) {
-    for (size_t m = 0; m < g_simCarShadowRows.size() && m < g_simCars.size(); ++m) {
-        const std::vector<float>& rows = g_simCarShadowRows[m];
-        if (rows.empty()) continue;
-        const uint32_t n = (uint32_t)(rows.size() / 12);
-        const tbd::MeshId mesh = g_simCars[m].mesh;
-        const auto it = g_engine.matParts.find(mesh);
-        if (it == g_engine.matParts.end()) { r.DrawShadowInstancedTransient(mesh, rows.data(), n); continue; }
-        for (const MatPart& p : it->second)
-            if (p.lodError == 0.0f && p.caster) r.DrawShadowInstancedTransient(p.mesh, rows.data(), n);
-    }
-}
-
-void SimAgentsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
-    SimFlowOverlay(r, viewProj);
-    g_simCarsDrawn = 0;
-    g_simCarShadowRows.resize(g_simCars.size());
-    for (auto& v : g_simCarShadowRows) v.clear();
-    if (g_herdsOwnCars) return;
-    if (g_simCars.empty() || g_segFlow.size() != g_roads.net.segs.size() || g_segFlowVersion != g_roads.net.version) return;
-    if (g_engine.camera.distance > 1200.0f) return; // past this the cars are specks: none drawn
-    static std::vector<tbd::city::CarInstance> cars;
-    const tbd::city::V2 focus{g_engine.camera.target.x, g_engine.camera.target.z};
-    g_simAgentParams.radius = std::clamp(g_engine.camera.distance * 1.2f, 150.0f, 700.0f);
-    tbd::city::CosmeticCars(g_roads.net, g_simSegGrid, g_segFlow, focus, g_simAgentTime, g_simAgentParams, cars);
-    static std::vector<float> rows;
-    for (int m = 0; m < (int)g_simCars.size(); ++m) {
-        rows.clear();
-        for (const tbd::city::CarInstance& c : cars) {
-            if (c.model != m) continue;
-            float row[12];
-            tbd::city::CarRow(c, row);
-            rows.insert(rows.end(), row, row + 12);
-            const tbd::Vec3 eye = g_engine.camera.Eye(), at{row[3], row[7], row[11]};
-            if (tbd::Dot(at - eye, at - eye) < kSimCarShadowRange * kSimCarShadowRange) g_simCarShadowRows[(size_t)m].insert(g_simCarShadowRows[(size_t)m].end(), row, row + 12);
-        }
-        if (rows.empty()) continue;
-        const uint32_t n = (uint32_t)(rows.size() / 12);
-        const tbd::MeshId mesh = g_simCars[(size_t)m].mesh;
-        const auto it = g_engine.matParts.find(mesh);
-        if (it == g_engine.matParts.end()) {
-            r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
-            r.DrawInstancedTransient(mesh, rows.data(), n, viewProj);
-        } else {
-            for (const MatPart& p : it->second) {
-                if (p.lodError > 0.0f) continue; // the full level only
-                r.SetMaterial(p.albedo, p.normal, p.surface);
-                r.DrawInstancedTransient(p.mesh, rows.data(), n, viewProj);
-            }
-        }
-        g_simCarsDrawn += n;
-    }
-    r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
-}
 
 // ---- S6: tracked people. Selecting a zoned building materializes (up to) its first four residents; the HUD lists them.
 tbd::city::SimPeople g_simPeople;
@@ -557,7 +107,7 @@ void SimShowLot(uint64_t lot) {
         if (g_zones.lots[i].id == lot && g_simFlags[i]) {
             std::string line = "Problems:";
             for (int b = 0; b < tbd::city::kFlagCount; ++b)
-                if (g_simFlags[i] & (1 << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
+                if (g_simFlags[i] & (1u << b)) line += std::string(line.back() == ':' ? " " : ", ") + tbd::city::SimFlagText(b);
             g_simCitizenLines.push_back(line);
         }
     if (!tbd::city::SimPeople::LotSlots(g_citySim, lot, cell, first, count) || count == 0) {
@@ -635,7 +185,7 @@ void SimLoadLine(const std::vector<std::string>& f) {
     }
 }
 
-void SimLotsRestored() { g_simPending.lotsBack = true; }
+void SimLotsRestored() { g_simPending.lotsBack = true, SimBuildingsLotsBack(); }
 extern bool g_simHudPush; // below, with the HUD glue
 
 // After the reset for a load: the sim's own state back; the people once their homes are back.
@@ -703,6 +253,7 @@ void SimOnCityReset() {
     if (!g_simFlowJob->busy.load()) g_simFlowJob->solver = tbd::city::FlowSolver(), g_simFlowJob->graph.reset();
     else g_simFlowJob = std::make_shared<SimFlowJob>(); // the running solve finishes on its own copy and is dropped
     g_segFlow.clear();
+    SimPhasesReset(); // every .tbdsim chunk's owner starts fresh (city_sim_phases.inl)
 }
 
 void SimInit() {
@@ -737,52 +288,41 @@ void SimInit() {
         g_simTotals.jobs = g_citySim.JobCap();
         g_simTotals.homes = g_citySim.HomeCap();
     });
-    // S2: demand every 10 game minutes (smoothed over a day), and the spawn gate it drives.
     SimLoadTuning();
-    g_sim.Register("demand", 10, 1, [](const tbd::city::SimTick&) {
-        g_simGrowth.UpdateDemand(g_citySim, g_simTune, 10.0, &g_zones);
-        g_simGrowth.ApplyGate(g_zones, g_simTune);
-    });
-    // S2: land value (once an hour), level up / down and abandonment: every lot once a game hour, in 6 slices of 10 minutes.
-    g_sim.Register("growth", 60, 6, [](const tbd::city::SimTick& t) {
-        if (t.slice == 0) g_simGrowth.UpdateLand(g_citySim, g_simTune);
-        g_simGrowth.TickLots(g_zones, g_citySim, g_simTune, 60.0, t.slice, t.sliceCount, g_simLotUtil.size() == g_zones.lots.size() ? &g_simLotUtil : nullptr);
-        if (g_simGrowth.events.empty()) return;
-        const size_t n = g_simGrowth.events.size();
-        for (size_t i = 0; i < std::min<size_t>(n, 3); ++i) tbd::Log("Sim: %s", g_simGrowth.events[i].c_str());
-        if (n > 3) tbd::Log("Sim: ... and %zu more (ups %llu, downs %llu, abandoned %llu so far)", n - 3, (unsigned long long)g_simGrowth.levelUps,
-                            (unsigned long long)g_simGrowth.levelDowns, (unsigned long long)g_simGrowth.abandoned);
-        g_simGrowth.events.clear();
-    });
+    SimRegisterGrowth(); // S2: demand and growth (city_sim_growth.inl)
     // S6: named people follow what the counters did (building gone, job gone), idle ones collapse; every 10 minutes.
     g_sim.Register("people", 10, 1, [](const tbd::city::SimTick& t) { g_simPeople.Sync(g_citySim, t.minute); });
-    // S5: flow traffic, checked every 5 game minutes (solved on a worker when anything changed or every flowSolveMinutes).
-    g_sim.Register("flow", 5, 1, [](const tbd::city::SimTick& t) { SimFlow(t); });
-    // S4: the ledger, once a game day.
-    g_simEcon.Reset(g_simTune);
-    g_sim.Register("economy", 1440, 1, [](const tbd::city::SimTick& t) {
-        if (t.minute < g_simLedgerFrom + 1440) return; // a fresh city's first (partial) day: no ledger yet
-        g_simBudget.Day(g_simEcon, g_citySim, g_simTune, SimDayUpkeep(), (int64_t)g_simTotals.population); // SimEconomy::Day inside
-        SimBudgetEvents();
-    });
-    // S3: utilities into the cells (from the cached solve) and service coverage, every 10 game minutes, only on change.
-    g_sim.Register("services", 10, 1, [](const tbd::city::SimTick&) { SimServices(); });
+    SimRegisterFlow();     // S5 (city_sim_flow.inl)
+    SimRegisterEconomy();  // S4 (city_sim_budget.inl)
+    SimRegisterServices(); // S3 (city_sim_services.inl)
     const double stressMs = sim_host::EnvDouble("TBD_SIM_SCHED_STRESS", 0.0);
     if (stressMs > 0.0)
         g_sim.Register("stress", 1, 1, [stressMs](const tbd::city::SimTick&) {
             const double a = g_sim.nowMs();
             while (g_sim.nowMs() - a < stressMs) {}
         });
+    SimPhasesInit(); // the CS2 phases (city_sim_phases.inl): P0's chunks, then P1 .. P7
 }
 
+double g_simTotalMs = 0.0, g_simTotalAvgMs = 0.0; // all of SimSync per frame (F3 "SIM TOTAL")
+void SimSyncFrame(float realDt);
 void SimSync(float realDt) {
+    const double t0 = g_sim.nowMs();
+    SimSyncFrame(realDt);
+    g_simTotalMs = g_sim.nowMs() - t0;
+    g_simTotalAvgMs += (g_simTotalMs - g_simTotalAvgMs) * 0.05;
+}
+
+void SimSyncFrame(float realDt) {
     SimInit();
     static uint64_t generation = 0;
-    if (generation != g_cityGeneration) { // new map or a load wiped the city
+    const bool reset = generation != g_cityGeneration;
+    if (reset) { // new map or a load wiped the city
         generation = g_cityGeneration;
         SimOnCityReset();
     }
     SimApplyPending(); // a loaded game's sim records, once the reset above is done
+    if (reset || SimTbdLoadIsPending()) SimPhasesAfterReset(); // the load's .tbdsim (or fresh), then the phases' Load hooks
     SimMilestonesSync();
     SimConstructionSync(realDt); // what was placed since the last frame is paid for
     for (int c = 0; c < tbd::city::SimEconomy::kCats; ++c) g_simGrowth.offset[c] = g_simEcon.DemandOffset(c, g_simTune);
@@ -802,6 +342,7 @@ void SimSync(float realDt) {
     lastClock = now;
     g_sim.paused = g_clock.paused;
     g_sim.Frame(delta);
+    SimPhasesFrame(realDt); // the building ids, P1 .. P7, the autosave (city_sim_phases.inl)
 
     static const bool log = sim_host::EnvDouble("TBD_SIM_LOG", 0.0) > 0.0;
     if (log) {
@@ -885,50 +426,7 @@ void SimHudFill(tbd::gui::CityHud& hud) {
     hud.adults = (long long)g_simTotals.adults;
     hud.working = (long long)g_simTotals.working;
     hud.jobs = (long long)g_simTotals.jobs;
-    hud.money = (long long)(g_simEcon.treasury / 100);
-    for (int c = 0; c < 4; ++c) hud.incomeDay[c] = (long long)(g_simEcon.lastIncome[c] / 100);
-    hud.upkeepDay = (long long)(g_simEcon.lastUpkeep / 100);
-    { // the milestone banner: 5 s, fading over the last one
-        const double age = g_simBannerAt ? (double)(tbd::platform::TickCountMs() - g_simBannerAt) / 1000.0 : 1e9;
-        hud.bannerAlpha = (float)std::clamp(5.0 - age, 0.0, 1.0);
-        hud.banner = g_simBanner, hud.bannerSub = g_simBannerSub;
-    }
-    { // the Budget panel's ledger and loans
-        using namespace tbd::city;
-        tbd::gui::BudgetView& v = hud.bv;
-        for (int e = 0; e < kExpenses; ++e) v.expense[e] = (long long)(g_simBudget.lastExpense[e] / 100);
-        v.repayment = (long long)(g_simBudget.lastRepayment / 100);
-        v.construction = (long long)(g_simBudget.lastConstruction / 100);
-        v.constructionToday = (long long)(g_simBudget.constructionToday / 100);
-        int64_t h[SimBudget::kHistory];
-        v.historyCount = g_simBudget.History(h, SimBudget::kHistory);
-        for (int i = 0; i < v.historyCount; ++i) v.history[i] = (long long)(h[i] / 100);
-        v.bankrupt = g_simBudget.bankrupt;
-        int nt = 0;
-        const LoanTier* t = LoanTiers(nt);
-        v.loanCount = std::min(nt, 3);
-        for (int i = 0; i < v.loanCount; ++i) {
-            auto& r = v.loans[i];
-            r = {};
-            r.name = t[i].name, r.amount = (long long)(t[i].amount / 100), r.ratePct = t[i].ratePermille / 10.0f, r.termDays = t[i].termDays;
-            for (const Loan& l : g_simBudget.loans)
-                if (l.tier == i) r.active = true, r.owed = (long long)(l.owed / 100), r.daysLeft = l.daysLeft;
-        }
-        // milestones: the population each locked toolbar button and transport tab needs
-        using tbd::gui::HudTool;
-        static const struct { HudTool tool; uint32_t bit; } kTools[] = {
-            {HudTool::Terrain, kUnlockTerrain}, {HudTool::Zoning, kUnlockZoning}, {HudTool::Roads, kUnlockRoads},
-            {HudTool::Electricity, kUnlockElectricity}, {HudTool::Water, kUnlockWater}, {HudTool::Garbage, kUnlockGarbage},
-            {HudTool::Transport, kUnlockTransport}, {HudTool::Industry, kUnlockIndustry}, {HudTool::Fire, kUnlockFire},
-            {HudTool::Health, kUnlockHealth}, {HudTool::Police, kUnlockPolice}, {HudTool::Education, kUnlockEducation}, {HudTool::Comms, kUnlockComms}};
-        for (const auto& k : kTools) hud.lockPop[(int)k.tool] = g_simMilestones.Unlocked(k.bit) ? 0 : (long long)UnlockPopulation(k.bit);
-        hud.milestone = g_simMilestones.Level();
-        uint32_t tabs = 0;
-        if (!g_simMilestones.Unlocked(kUnlockRail)) tabs |= 1u << (int)TTab::Rail;
-        if (!g_simMilestones.Unlocked(kUnlockShip)) tabs |= 1u << (int)TTab::Ship;
-        if (!g_simMilestones.Unlocked(kUnlockAirport)) tabs |= 1u << (int)TTab::Air;
-        g_transportTool.lockedTabs = tabs;
-    }
+    SimBudgetHudFill(hud); // money, the milestone banner, the Budget panel and the locks (city_sim_budget.inl)
     SimInfoFill(hud);
     hud.citizenTitle = g_simCitizenTitle;
     hud.citizens = g_simCitizenLines;
@@ -940,20 +438,6 @@ void SimHudFill(tbd::gui::CityHud& hud) {
         for (int k = 0; k < tbd::city::kServices; ++k) hud.funding[k] = g_simFunding[k] * 100.0f;
     }
 }
-// After the HUD drew: the panel's sliders into the sim.
-void SimHudRead(const tbd::gui::CityHud& hud) {
-    for (int c = 0; c < 4; ++c) g_simEcon.taxRate10[c] = (int)std::lround(std::clamp(hud.tax[c], 0.0f, 30.0f) * 10.0f);
-    for (int k = 0; k < tbd::city::kServices; ++k) g_simFunding[k] = std::round(std::clamp(hud.funding[k], 50.0f, 150.0f)) / 100.0f;
-    if (hud.bv.takeLoan >= 0 && g_simBudget.TakeLoan(hud.bv.takeLoan, g_simEcon)) Toast("LOAN TAKEN"), SimBudgetEvents();
-    if (hud.bv.repayLoan >= 0) {
-        for (size_t i = 0; i < g_simBudget.loans.size(); ++i)
-            if (g_simBudget.loans[i].tier == hud.bv.repayLoan) {
-                Toast(g_simBudget.RepayLoan((int)i, g_simEcon) ? "LOAN REPAID" : "NOT ENOUGH MONEY TO REPAY THE LOAN");
-                break;
-            }
-        SimBudgetEvents(); // the log line (loan_repaid)
-    }
-}
 
 // The F3 overlay's SIM section.
 void SimProfile(tbd::profiler::Sample& smp) {
@@ -963,6 +447,7 @@ void SimProfile(tbd::profiler::Sample& smp) {
     smp.simBudgetMs = g_sim.budgetMs;
     smp.simBacklog = g_sim.Backlog();
     smp.simTicks = (uint32_t)g_sim.TicksLastFrame();
+    smp.simTotalMs = g_simTotalMs, smp.simTotalAvgMs = g_simTotalAvgMs; // the F3 line "sim total ms/frame"
     for (const tbd::city::SimSystem& s : g_sim.Systems()) smp.sim.push_back({s.name, s.frameMs, s.avgMs});
     char b[96];
     snprintf(b, sizeof(b), "R %+.2f C %+.2f O %+.2f I %+.2f", g_simGrowth.demand[0], g_simGrowth.demand[1], g_simGrowth.demand[2], g_simGrowth.demand[3]);

@@ -4,6 +4,7 @@
 // transport buildings, utilities (sources + lines), industry sites, transit lines + outside connections + the people who moved in.
 // Saved since the city sim (S8): the buildings the zones grew (G, as they stand), the sim's treasury, taxes, funding and clock
 // (M, versioned) and the tracked people (Q); everyone else is a counter and comes back from the lots.
+// Beside it since the CS2 sim's Phase 0: slot_NN.tbdsim, binary chunks per sim phase (city_sim_save.inl, city/sim_save.h).
 // Not saved (they restart): construction cranes, traffic vehicles in motion, garbage stock, the flow solve.
 //   G|id|type|w d|level|progress duration|cx cz|fx fz|y|model path|cell x z;cell x z;...
 //   M|simVersion|treasury cents|tax r c o i (tenths of a %)|funding x6|sim minute|demand r c o i|ups downs abandoned
@@ -33,6 +34,10 @@ std::vector<PendingLot> g_pendingLots;
 void SimSaveLines(std::ostringstream& o);
 void SimLoadLine(const std::vector<std::string>& f);
 void SimLotsRestored();
+// The CS2 sim's .tbdsim beside the .tbdgame (city_sim_save.inl): the image to write, the file to read after the reset.
+std::vector<tbd::city::SimSaveRegistry::ChunkImage> SimTbdSnapshot();
+void SimTbdLoadPending(int slot);
+void SimAutosaveFinished(bool ok);
 int g_gameAction = 0, g_gameSlot = 0;
 bool g_exampleFounding = false; // [example map] the example map: once its zones exist, found a starter town (city_example.inl)
 void ExampleFound();
@@ -203,7 +208,30 @@ void NewCityGame(int seed) {
 }
 
 // ---------------------------------------------------------------------------------------------------- save
-bool SaveCityGame(int slot) {
+// A slot's three files, made on the main thread and written by WriteCitySaveFiles (there, or on a worker for an autosave).
+struct CitySaveFiles {
+    std::wstring game, hfd, sim;
+    std::string text;
+    std::vector<uint8_t> hfdBytes;
+    std::vector<tbd::city::SimSaveRegistry::ChunkImage> simChunks; // the payloads; framing and CRCs where it is written
+};
+bool WriteCitySaveFiles(const CitySaveFiles& s) {
+    FILE* f = tbd::platform::WOpen(s.game.c_str(), L"wb");
+    bool ok = f && fwrite(s.text.data(), 1, s.text.size(), f) == s.text.size();
+    if (f) fclose(f);
+    if (ok) { // the terrain edits beside it
+        FILE* t = tbd::platform::WOpen(s.hfd.c_str(), L"wb");
+        if (t) {
+            fwrite(s.hfdBytes.data(), 1, s.hfdBytes.size(), t);
+            fclose(t);
+        }
+    }
+    if (ok) ok = tbd::city::WriteSimFileBytes(s.sim, tbd::city::SimSaveRegistry::Assemble(s.simChunks)); // the CS2 sim's .tbdsim (written to .tmp, then renamed)
+    return ok;
+}
+
+// mode 0: the player's save (toast, slot meta); 1: an autosave written now; 2: an autosave written on a worker.
+bool SaveCityGameFiles(int slot, int mode) {
     using namespace tbd::city;
     std::ostringstream o;
     o.precision(9);
@@ -255,23 +283,22 @@ bool SaveCityGame(int slot) {
         o << '\n';
     }
     SimSaveLines(o);
-    const std::string text = o.str();
-    FILE* f = tbd::platform::WOpen(GameSavePath(slot, L".tbdgame").c_str(), L"wb");
-    const bool ok = f && fwrite(text.data(), 1, text.size(), f) == text.size();
-    if (f) fclose(f);
-    if (ok) { // the terrain edits beside it
-        std::vector<uint8_t> bytes;
-        g_engine.terrain.field.Save(bytes);
-        FILE* t = tbd::platform::WOpen(GameSavePath(slot, L".hfd").c_str(), L"wb");
-        if (t) {
-            fwrite(bytes.data(), 1, bytes.size(), t);
-            fclose(t);
-        }
+    auto files = std::make_shared<CitySaveFiles>();
+    files->game = GameSavePath(slot, L".tbdgame"), files->hfd = GameSavePath(slot, L".hfd"), files->sim = GameSavePath(slot, L".tbdsim");
+    files->text = o.str();
+    g_engine.terrain.field.Save(files->hfdBytes);
+    files->simChunks = SimTbdSnapshot(); // the CS2 sim's chunks (city_sim_save.inl): the autosave's main-thread copy
+    if (mode == 2) { // autosave: the files on a worker, the toast when it is done (SimAutosaveSync)
+        g_engine.jobs->RunBackground([files] { SimAutosaveFinished(WriteCitySaveFiles(*files)); });
+        return true;
     }
+    const bool ok = WriteCitySaveFiles(*files);
+    if (mode == 1) { SimAutosaveFinished(ok); return ok; }
     if (ok) SaveSlotMeta(slot); // [title] the slot list's line (title_host.inl)
     Toast(ok ? "GAME SAVED - SAVE " + std::to_string(slot + 1) : "GAME SAVE FAILED"); // [title]
     return ok;
 }
+bool SaveCityGame(int slot) { return SaveCityGameFiles(slot, 0); }
 
 // ---------------------------------------------------------------------------------------------------- load
 bool LoadCityGame(int slot) {
@@ -495,6 +522,7 @@ bool LoadCityGame(int slot) {
     for (const Placed& b : g_transport.items) // finished buildings that were GLBs respawn through TransportSync
         (void)b;
     TransportRefreshZoning();
+    SimTbdLoadPending(slot); // the sim's chunks wait for the reset this load causes (applied in SimSync)
     Toast("GAME LOADED - SAVE " + std::to_string(slot + 1)); // [title]
     tbd::Log("Loaded city slot %d: %zu nodes, %zu segs, %zu transport, %zu zones painted", slot + 1, net.nodes.size(), net.segs.size(), g_transport.items.size(), g_pendingZones.size());
     return true;
