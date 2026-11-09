@@ -439,6 +439,14 @@ void GoodsRows(tbd::gui::InfoCardData& d, tbd::city::BOrigin o, uint64_t id) {
         for (auto& r : rows) d.rows.push_back({r.first, r.second});
 }
 
+// sim Phase 2: land value, rent and development of a lot (city_sim_p2.inl)
+bool SimLandInspect(uint64_t lot, std::vector<std::pair<std::string, std::string>>& rows);
+void LandRows(tbd::gui::InfoCardData& d, uint64_t lot) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (SimLandInspect(lot, rows))
+        for (auto& r : rows) d.rows.push_back({r.first, r.second});
+}
+
 // The card's text from the sim, honest: only what it keeps.
 void InfoCardFill(tbd::gui::InfoCardData& d) {
     using namespace tbd::city;
@@ -474,6 +482,7 @@ void InfoCardFill(tbd::gui::InfoCardData& d) {
         }
         AreaRows(d, l.c.x, l.c.z);
         GoodsRows(d, BOrigin::Lot, l.id);
+        LandRows(d, l.id);
         if (g_simCitizenTitle.rfind("Lot " + std::to_string(l.id), 0) == 0)
             for (const std::string& line : g_simCitizenLines) d.notes.push_back(line);
         break;

@@ -569,7 +569,10 @@ public:
         for (const BuildingModel& m : models)
             if (m.type == l.type && m.w == l.w && m.d == l.d && m.level == level) fit.push_back(&m);
         if (fit.empty()) return false;
-        const BuildingModel& m = *fit[rng() % fit.size()];
+        // seeded per lot and level, not the shared stream (sim roadmap Phase 2: the same city levels the same way after a load)
+        uint64_t h = l.id * 0x9E3779B97F4A7C15ull + (uint64_t)level * 0xD1B54A32D192ED03ull;
+        h = (h ^ (h >> 31)) * 0xBF58476D1CE4E5B9ull;
+        const BuildingModel& m = *fit[(size_t)((h ^ (h >> 29)) % fit.size())];
         l.level = level;
         l.path = m.path;
         l.progress = 0;
