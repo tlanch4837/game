@@ -3,10 +3,41 @@
 
 // Every chunk's payload as the sim stands (main thread). This is the autosave's copy, its cost g_simSaveCopyMs; the
 // header, framing and CRCs are added where the file is written (SimSaveRegistry::Assemble, a worker for an autosave).
+// The copy is a fork-join: the chunks whose save functions only read the sim (P0, P1, P3, P6: checked by their owners)
+// are made at once on the workers, in groups that share state (P3's POLL and WATR both finish the pass in flight); the
+// main thread waits (nothing changes the sim meanwhile), then makes the other phases' chunks itself. The bytes are the
+// same as SimSaveRegistry::Snapshot's: every chunk in registration order.
+int SimChunkGroup(uint32_t fourcc) {
+    namespace c = tbd::city::simchunk;
+    const uint32_t kOwn[] = {c::HEAD, c::BLDG, c::CITZ, c::HHLD, c::OCCU, c::MIGR, c::POLL, c::WTHR, c::COMP, c::GOOD, c::TRAD};
+    if (fourcc == c::WATR) return 6; // with POLL
+    for (int i = 0; i < (int)(sizeof(kOwn) / sizeof(kOwn[0])); ++i)
+        if (kOwn[i] == fourcc) return i;
+    return -1; // another phase's: made on the main thread after the join
+}
 std::vector<tbd::city::SimSaveRegistry::ChunkImage> SimTbdSnapshot() {
+    using tbd::city::SimChunkDef;
     const double t0 = g_sim.nowMs();
     SimBuildingsSync(true);
-    std::vector<tbd::city::SimSaveRegistry::ChunkImage> chunks = g_simChunks.Snapshot();
+    const std::vector<SimChunkDef>& defs = g_simChunks.Defs();
+    std::vector<tbd::city::SimSaveRegistry::ChunkImage> chunks(defs.size());
+    std::vector<std::vector<size_t>> groups(11);
+    for (size_t i = 0; i < defs.size(); ++i) {
+        chunks[i].fourcc = defs[i].fourcc, chunks[i].version = defs[i].version, chunks[i].flags = defs[i].flags;
+        const int g = SimChunkGroup(defs[i].fourcc);
+        if (g >= 0) groups[(size_t)g].push_back(i);
+    }
+    auto make = [&](size_t i) {
+        tbd::city::ByteWriter p;
+        if (defs[i].save) defs[i].save(p);
+        chunks[i].payload = std::move(p.bytes);
+    };
+    tbd::JobCounter done; // one job per group (the biggest, CITZ, alone); Wait helps with them on the main thread
+    for (const std::vector<size_t>& g : groups)
+        if (!g.empty()) g_engine.jobs->Run([&make, &g] { for (size_t i : g) make(i); }, &done);
+    g_engine.jobs->Wait(done);
+    for (size_t i = 0; i < defs.size(); ++i)
+        if (SimChunkGroup(defs[i].fourcc) < 0) make(i);
     g_simSaveCopyMs = g_sim.nowMs() - t0;
     return chunks;
 }

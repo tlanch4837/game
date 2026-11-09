@@ -111,6 +111,8 @@ enum class Pass { None, Scene, Shadow, Capture, Overlay, Post, Water, Compute, B
 class MetalRenderer final : public Renderer {
     struct Frame {
         MTL::Buffer* transient = nullptr;
+        // more transient pages when a frame needs more than kTransientBytes: made once, kept by this frame slot (TransientCopy)
+        std::vector<MTL::Buffer*> extra;
         MTL::Buffer* light = nullptr;
         MTL::Buffer* post = nullptr;
         MTL::Buffer* motion = nullptr;
@@ -327,10 +329,9 @@ public:
         curMat_[0] = albedo;
         curMat_[1] = normal;
         curMat_[2] = surface;
-        ++counts_.materialBinds;
         materialConstants_[0] = SkinDetailScale(albedo);
         materialConstants_[1] = SkinPoreDepthConstant(albedo);
-        boundMatKey_ = ~0ull; // rebound before the next draw that reads it
+        // BindMaterial rebinds before the next draw only if the material key changed (runs of one material bind once)
     }
 
     // ------------------------------------------------------------------ streaming
@@ -503,7 +504,7 @@ public:
         fenceWaitMs_ = TraceNowMs() - waitStart;
         frameSlot_ = (frameSlot_ + 1) % kFramesInFlight;
         frame_ = &frames_[frameSlot_];
-        used_ = 0;
+        used_ = 0, page_ = 0;
         FlushRetired(false);
         ReportTimers();
         framePool_ = NS::AutoreleasePool::alloc()->init();
@@ -576,12 +577,12 @@ public:
         if (pass_ != Pass::Shadow || count == 0 || !rows || !device_ || id >= meshes_.size() || !meshes_[id].live ||
             meshes_[id].topology != Topology::Triangles)
             return;
-        MTL::Buffer* b = device_->newBuffer(rows, (NS::UInteger)count * kInstanceStride, MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined);
+        NS::UInteger at = 0; // the rows go into this frame's transient pages (was: a new MTL::Buffer per draw)
+        MTL::Buffer* b = TransientCopy(rows, (size_t)count * kInstanceStride, at);
         if (!b) return;
         UsePipe(shadowInstPipe_, -1, dsShadow_);
         PushMesh(lightVP_, Mat4::Identity());
-        DrawInstancedMesh(meshes_[id], b, 0, count);
-        RetireObject(b);
+        DrawInstancedMeshAt(meshes_[id], b, at, count);
         ++counts_.shadowDraws;
         counts_.shadowTriangles += (uint64_t)(meshes_[id].count / 3) * count;
     }
@@ -609,13 +610,13 @@ public:
             meshes_[id].topology != Topology::Triangles)
             return;
         if (!DrawEncoder()) return;
-        MTL::Buffer* b = device_->newBuffer(rows, (NS::UInteger)count * kInstanceStride, MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined);
+        NS::UInteger at = 0; // the rows go into this frame's transient pages (was: a new MTL::Buffer per draw)
+        MTL::Buffer* b = TransientCopy(rows, (size_t)count * kInstanceStride, at);
         if (!b) return;
         if (prepass_ == 1) UsePipe(prepassDepthPipe_[1], -1, dsScene_);
         else UsePipe(instancedPipe_, 0, prepass_ == 2 ? dsEqual_ : dsScene_);
         PushMesh(viewProj, Mat4::Identity());
-        DrawInstancedMesh(meshes_[id], b, 0, count);
-        RetireObject(b);
+        DrawInstancedMeshAt(meshes_[id], b, at, count);
         if (prepass_ == 1) return;
         ++counts_.draws;
         counts_.triangles += (uint64_t)(meshes_[id].count / 3) * count;
@@ -683,12 +684,11 @@ public:
     void DrawTransient(const Vertex* vertices, uint32_t count, Topology topology, const Mat4& mvp, const Mat4& model, bool depthTest) override {
         if (!frameActive_ || count == 0) return;
         const size_t bytes = (size_t)count * sizeof(Vertex);
-        const size_t offset = (used_ + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) { Log("Metal: transient buffer full, draw dropped"); return; }
         if (!DrawEncoder()) return;
-        std::memcpy(static_cast<uint8_t*>(frame_->transient->contents()) + offset, vertices, bytes);
-        used_ = offset + bytes;
-        Submit(frame_->transient, offset, count, topology, mvp, model, depthTest);
+        NS::UInteger offset = 0;
+        MTL::Buffer* b = TransientCopy(vertices, bytes, offset);
+        if (!b) return;
+        Submit(b, offset, count, topology, mvp, model, depthTest);
     }
 
     bool UiSupported() const override { return uiPipe_ != nullptr; }
@@ -697,10 +697,9 @@ public:
     void DrawUi(const UiVertex* vertices, uint32_t count, const Mat4& ortho) override {
         if (!frameActive_ || !resolved_ || !uiPipe_ || count == 0 || pass_ != Pass::Overlay) return;
         const size_t bytes = (size_t)count * sizeof(UiVertex);
-        const size_t offset = (used_ + 15) & ~size_t(15);
-        if (offset + bytes > kTransientBytes) { Log("Metal: transient buffer full, UI draw dropped"); return; }
-        std::memcpy(static_cast<uint8_t*>(frame_->transient->contents()) + offset, vertices, bytes);
-        used_ = offset + bytes;
+        NS::UInteger offset = 0;
+        MTL::Buffer* uiBuf = TransientCopy(vertices, bytes, offset);
+        if (!uiBuf) return;
         UsePipe(uiPipe_, -1, dsOff_);
         const TextureId atlas = uiAtlas_ < textures_.size() && textures_[uiAtlas_].tex ? uiAtlas_ : defaults_[0];
         rce_->setFragmentTexture(textures_[atlas].tex, slot::kUiAtlas);
@@ -710,7 +709,7 @@ public:
         rce_->setFragmentSamplerState(clampSampler_, slot::kUiSampler);
         rce_->setVertexBytes(ortho.m, 64, slot::kPush);
         rce_->setFragmentBytes(ortho.m, 64, slot::kPush); // the glass mode reads the viewport size
-        rce_->setVertexBuffer(frame_->transient, offset, slot::kStream0);
+        rce_->setVertexBuffer(uiBuf, offset, slot::kStream0);
         rce_->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)count);
     }
 
@@ -1224,6 +1223,7 @@ private:
         rce_->setFragmentBuffer(page, offset, slot::kMaterial);
         const MTL::Resource* used[4] = {textures_[m.t[0]].tex, textures_[m.t[1]].tex, textures_[m.t[2]].tex, textures_[m.t[3]].tex};
         rce_->useResources(used, layout == 0 ? 4 : 1, MTL::ResourceUsageRead, MTL::RenderStageFragment);
+        ++counts_.materialBinds; // the binds that reached the GPU
         boundMatKey_ = key;
         boundMatLayout_ = layout;
     }
@@ -1367,6 +1367,38 @@ private:
         rce_->setVertexBuffer(mesh.buffer, mesh.copyBytes * NewestCopy(mesh), slot::kStream0);
         if (mesh.indexed) rce_->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, mesh.count, MTL::IndexTypeUInt32, mesh.buffer, mesh.indexOffset);
         else rce_->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)mesh.count);
+    }
+
+    // Instance rows at a byte offset of a buffer (the transient pages): base instance 0.
+    void DrawInstancedMeshAt(const Mesh& mesh, MTL::Buffer* instances, NS::UInteger offset, uint32_t count) {
+        rce_->setVertexBuffer(mesh.buffer, 0, slot::kStream0);
+        rce_->setVertexBuffer(instances, offset, slot::kStream1);
+        if (mesh.indexed) rce_->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, mesh.count, MTL::IndexTypeUInt32, mesh.buffer, mesh.indexOffset, count, 0, 0);
+        else rce_->drawPrimitives(MTL::PrimitiveTypeTriangle, (NS::UInteger)0, (NS::UInteger)mesh.count, (NS::UInteger)count, (NS::UInteger)0);
+    }
+
+    // Copies bytes into this frame's transient memory (16-byte aligned) and returns the buffer (offset: where): the current
+    // page, else the next one, made when the frame slot has none yet (at least kTransientBytes, or the request). Null only
+    // when a page cannot be made. Nothing is dropped for want of room.
+    MTL::Buffer* TransientCopy(const void* src, size_t bytes, NS::UInteger& offset) {
+        for (;;) {
+            MTL::Buffer* b = page_ == 0 ? frame_->transient : frame_->extra[page_ - 1];
+            const size_t at = (used_ + 15) & ~size_t(15);
+            if (b && at + bytes <= (size_t)b->length()) {
+                std::memcpy(static_cast<uint8_t*>(b->contents()) + at, src, bytes);
+                used_ = at + bytes, offset = (NS::UInteger)at;
+                return b;
+            }
+            if (page_ >= frame_->extra.size()) {
+                const size_t size = std::max(kTransientBytes, (bytes + 0xFFFF) & ~size_t(0xFFFF));
+                MTL::Buffer* nb = device_->newBuffer((NS::UInteger)size, MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined);
+                if (!nb) { Log("Metal: a transient page of %zu MB could not be made: a draw dropped", size >> 20); return nullptr; }
+                frame_->extra.push_back(nb);
+                Log("Metal: transient memory past %zu MB in one frame: page %zu added (%zu MB)", (size_t)(page_ + 1) * (kTransientBytes >> 20),
+                    frame_->extra.size(), size >> 20);
+            }
+            ++page_, used_ = 0;
+        }
     }
 
     void DrawInstancedMesh(const Mesh& mesh, MTL::Buffer* instances, uint32_t first, uint32_t count) {
@@ -1755,7 +1787,11 @@ private:
         for (auto& f : functions_) f.second->release();
         for (MTL::Library*& l : runtimeLibraries_) Release(l);
         Release(defaultLibrary_);
-        for (Frame& f : frames_) { Release(f.transient); Release(f.light); Release(f.post); Release(f.motion); }
+        for (Frame& f : frames_) {
+            Release(f.transient); Release(f.light); Release(f.post); Release(f.motion);
+            for (MTL::Buffer*& b : f.extra) Release(b);
+            f.extra.clear();
+        }
         for (MTL::Texture*& t : post_) Release(t);
         for (MTL::Texture** t : {&waterRefract_, &depth_, &depthCopy_, &overlayDepth_, &shadow_, &sunCache_, &tightShadow_, &captureDepth_, &captureVelocity_, &cloudNoise_, &cloudField_, &dummy_})
             Release(*t);
@@ -1805,7 +1841,8 @@ private:
     bool frameActive_ = false, resolved_ = false, sceneStarted_ = false, historyValid_ = false, cloudMapValid_ = false;
     uint32_t postFrame_ = 0, probeAge_ = 0;
     FrameView view_;
-    size_t used_ = 0;
+    size_t used_ = 0;  // bytes used in the current transient page
+    size_t page_ = 0;  // the transient page in use (0: frame_->transient, then frame_->extra)
     int prepass_ = 0, vegetationPass_ = 0;
 
     MTL::DepthStencilState *dsScene_ = nullptr, *dsEqual_ = nullptr, *dsWater_ = nullptr, *dsOff_ = nullptr, *dsShadow_ = nullptr;

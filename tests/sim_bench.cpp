@@ -74,6 +74,8 @@ struct Bench {
     GoodsWorld goods;
     std::vector<GoodsSite> sites;
     std::vector<BuildingId> lotIds; // the hub's merge cache
+    std::vector<BuildingId> hubHint; // the registry sync's per-lot hints
+    LifeApplyState applyState;       // P1's link rebuild memory (city_sim_p1.inl)
 };
 
 #include "sim_bench_phases.h" // Phases 2, 4, 5, 7 on this city (sim-all: every phase in one day)
@@ -81,17 +83,19 @@ struct Bench {
 // Phase 0's hub: the building ids from the lots.
 static void HubSync(Bench& b) {
     b.reg.BeginSync();
-    for (const Lot& l : b.zones.lots) {
+    if (b.hubHint.size() != b.zones.lots.size()) b.hubHint.resize(b.zones.lots.size());
+    for (size_t i = 0; i < b.zones.lots.size(); ++i) { // the game's per-lot hints (city_sim_save.inl SimBuildingsSync)
+        const Lot& l = b.zones.lots[i];
         BuildingRow r;
         const CellKey k = CellKeyAt(l.c.x, l.c.z);
         r.kind = l.type, r.cellX = k.x, r.cellZ = k.z, r.level = (uint8_t)l.level;
-        b.reg.Upsert(BOrigin::Lot, l.id, r);
+        b.reg.Upsert(BOrigin::Lot, l.id, r, b.hubHint[i]);
     }
     b.reg.EndSync();
 }
 // Phase 1 (city_sim_p1.inl): the rows' homes, jobs, cells and hoods (a hood per supercell here), then the records.
 static void LifeSync(Bench& b) {
-    LifeFillRows(b.reg, b.cells, b.zones.lots, [&b](int c) { return b.cells.SuperOf(c); });
+    LifeFillRows(b.reg, b.cells, b.zones.lots, [&b](int c) { return b.cells.SuperOf(c); }, &b.hubHint);
     b.life.SyncBuildings(b.reg, [](const BuildingRow& r) { return LifeJobKind(r.kind); });
     b.lifeReg = b.reg.version;
 }
@@ -185,7 +189,8 @@ static void BuildGoods(Bench& b) {
     const int B1 = (int)std::lround(std::sqrt((double)b.net.nodes.size())); // nodes per side
     b.sites.clear();
     int64_t residents = (int64_t)b.cells.Population();
-    for (const Lot& l : b.zones.lots) {
+    for (size_t li = 0; li < b.zones.lots.size(); ++li) {
+        const Lot& l = b.zones.lots[li];
         const ZoneCat cat = types[(size_t)l.type].cat;
         GoodsSite s;
         int kind;
@@ -193,7 +198,7 @@ static void BuildGoods(Bench& b) {
         else if (cat == ZoneCat::Commercial) s.kind = CompanyKind::Shop, kind = kJobCommercial;
         else if (cat == ZoneCat::Office) s.kind = CompanyKind::Office, kind = kJobOffice;
         else continue;
-        s.building = b.reg.Find(BOrigin::Lot, l.id).v;
+        s.building = (li < b.hubHint.size() && b.reg.Get(b.hubHint[li]) ? b.hubHint[li] : b.reg.Find(BOrigin::Lot, l.id)).v; // the game: sim_save::hintLot
         s.jobs = LotCapacity(l).jobs[kind];
         s.x = (int32_t)l.c.x, s.z = (int32_t)l.c.z;
         s.node = std::clamp((int)std::lround(l.c.z / 120.0f), 0, B1 - 1) * B1 + std::clamp((int)std::lround(l.c.x / 120.0f), 0, B1 - 1);
@@ -306,14 +311,22 @@ int main(int argc, char** argv) {
     // Phase 1: the records' building sync after a lot changed (the hourly level change here; the game: on a zones change, at
     // most once a real second), the "life" system (monthly slices, moves, job matching every 10 minutes), the views into
     // the cells every 10 minutes and the factors every 30.
-    timed("life: buildings", [](const SimTick& t) { if (t.minute % 60 == 1) LifeSync(b); });
+    // The game runs the building sync in three steps on three frames (city_sim_p1.inl SyncStep): the rows, the records'
+    // buildings, the hoods' search order; here on three ticks.
+    timed("life: buildings", [](const SimTick& t) {
+        const int64_t m = t.minute % 60;
+        if (m == 1) LifeFillRows(b.reg, b.cells, b.zones.lots, [](int c) { return b.cells.SuperOf(c); }, &b.hubHint);
+        if (m == 2) LifeSyncBuildings(b.life.w, b.reg, [](const BuildingRow& r) { return LifeJobKind(r.kind); }), b.lifeReg = b.reg.version;
+        if (m == 3) LifeComputeNear(b.life.w);
+    });
     timed("life", [](const SimTick& t) {
         b.life.Tick(t.minute);
-        if (t.minute % 10 == 5) LifeApplyCells(b.life.w, b.cells);
+        if (t.minute % 10 == 5) LifeApplyCells(b.life.w, b.cells, &b.applyState);
         if (t.minute % 30 == 17) b.life.WriteFactors(b.factors);
     });
     // Phase 3: the weather every 10 minutes; every hour the previous pass lands (factors, flags, events, the overlay index)
-    // and the snapshot for the next one is copied (main thread); the pass itself is the worker's.
+    // and the snapshot for the next one is taken (main thread); the pass itself is the worker's, and so are the copy of the
+    // applied state it steps (city_sim_p3.inl Job::base), the road tiles and freeing the replaced state.
     timed("env: weather", [](const SimTick& t) {
         if (t.minute % 10) return;
         b.wx = WeatherChain::Replay(SimCalendar::FloorDiv(t.minute, kWeatherStepMinutes), 7, b.cal, &b.wx);
@@ -324,7 +337,10 @@ int main(int argc, char** argv) {
     timed("env: hourly apply", [](const SimTick& t) {
         if (t.minute % 60) return;
         if (b.envPending) {
-            b.env = std::move(envState);
+            std::swap(b.env, envState);
+            const double f0 = NowMs();
+            envState = EnvSim(); // the game frees the old state on a worker
+            b.carve += NowMs() - f0;
             WriteEnvFactors(b.envOut, b.factors);
             WriteEnvFlags(b.envOut, b.reg, b.flagTable);
             PushEnvEvents(b.envOut, b.ring);
@@ -333,10 +349,10 @@ int main(int argc, char** argv) {
         }
         envJob = b.envBase, envJob.minute = t.minute, envJob.weather = b.weather;
         if (t.minute > 0) envJob.heights.Clear(); // only the first pass brings the heights (the game: new cells only)
-        envState = b.env;
     });
     timed("env: pass (worker)", [](const SimTick& t) {
         if (t.minute % 60) return;
+        envState = b.env;
         b.envOut = EnvResult();
         envState.Step(envJob, b.envP, b.envOut);
         b.envPending = true;
@@ -361,19 +377,21 @@ int main(int argc, char** argv) {
         mask &= ~(kFlagCurrentMask & ~SimFlagPhaseMask(6) & ~SimFlagPhaseMask(2));
         for (size_t i = 0; i < b.flags.size() && i < b.lotIds.size(); ++i) b.flags[i] = (b.flags[i] & ~mask) | (b.flagTable.Get(b.lotIds[i]) & mask);
     });
-    // ... and the .tbdsim image (HEAD + BLDG + the P1, P3, P6 chunks) the autosave copies on the main thread, once a game hour here.
+    // ... and the .tbdsim image (HEAD + BLDG + the P1, P3, P6 chunks) the autosave copies, once a game hour here. The game
+    // makes these chunks at once on the workers while the main thread waits (city_sim_save_io.inl SimTbdSnapshot, one job
+    // per group: POLL with WATR, every other chunk alone), so the main thread pays the longest group: that is what the
+    // copy line counts; the rest of the sequential time is booked as the worker's.
     size_t imageBytes = 0;
     timed("hub: .tbdsim copy", [&imageBytes](const SimTick& t) {
         if (t.minute % 60) return;
         SimSaveRegistry chunks;
         chunks.Register({simchunk::HEAD, 1, 0, [](ByteWriter& w) { WriteHead(w, SimSaveHead{}); }, nullptr, nullptr});
         chunks.Register({simchunk::BLDG, 1, 0, [](ByteWriter& w) { WriteBuildings(w, b.reg); }, nullptr, nullptr});
-        // Phase 1 as the game writes it (city_sim_p1.inl): CITZ makes the image of all four, each chunk takes its part over
-        static LifeChunks img;
-        chunks.Register({simchunk::CITZ, 1, 0, [](ByteWriter& w) { LifeSave(b.life, img); w.bytes = std::move(img.citz); }, nullptr, nullptr});
-        chunks.Register({simchunk::HHLD, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.hhld); }, nullptr, nullptr});
-        chunks.Register({simchunk::OCCU, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.occu); }, nullptr, nullptr});
-        chunks.Register({simchunk::MIGR, 1, 0, [](ByteWriter& w) { w.bytes = std::move(img.migr); }, nullptr, nullptr});
+        // Phase 1 as the game writes it (city_sim_p1.inl): each chunk makes its own part
+        chunks.Register({simchunk::CITZ, 1, 0, [](ByteWriter& w) { LifeSavePart(b.life, 0, w.bytes); }, nullptr, nullptr});
+        chunks.Register({simchunk::HHLD, 1, 0, [](ByteWriter& w) { LifeSavePart(b.life, 1, w.bytes); }, nullptr, nullptr});
+        chunks.Register({simchunk::OCCU, 1, 0, [](ByteWriter& w) { LifeSavePart(b.life, 2, w.bytes); }, nullptr, nullptr});
+        chunks.Register({simchunk::MIGR, 1, 0, [](ByteWriter& w) { LifeSavePart(b.life, 3, w.bytes); }, nullptr, nullptr});
         // Phase 3 and Phase 6 (city_sim_p3.inl, city_sim_p6.inl)
         chunks.Register({simchunk::POLL, 1, 0, [](ByteWriter& w) { EnvSavePoll(w, EnvSaveView{&b.env, &b.envOut, nullptr, nullptr}); }, nullptr, nullptr});
         chunks.Register({simchunk::WTHR, 1, 0, [](ByteWriter& w) { EnvWeatherState st; st.chain = b.wx; EnvSaveWeather(w, st); }, nullptr, nullptr});
@@ -381,18 +399,23 @@ int main(int argc, char** argv) {
         chunks.Register({simchunk::COMP, 1, 0, [](ByteWriter& w) { WriteGoodsComp(w, b.goods); }, nullptr, nullptr});
         chunks.Register({simchunk::GOOD, 1, 0, [](ByteWriter& w) { WriteGoodsGood(w, b.goods); }, nullptr, nullptr});
         chunks.Register({simchunk::TRAD, 1, 0, [](ByteWriter& w) { WriteGoodsTrad(w, b.goods); }, nullptr, nullptr});
-        std::vector<SimSaveRegistry::ChunkImage> snap; // the main thread's part (SimSaveRegistry::Snapshot, timed per chunk)
+        std::vector<SimSaveRegistry::ChunkImage> snap; // timed per chunk
+        double seq = 0, pollWatr = 0, longest = 0;
         for (const SimChunkDef& d : chunks.Defs()) {
             const double c0 = NowMs();
             ByteWriter pw;
             d.save(pw);
             snap.push_back({d.fourcc, d.version, d.flags, std::move(pw.bytes)});
-            b.copyBy[FourCCName(d.fourcc)] += NowMs() - c0;
+            const double ms = NowMs() - c0;
+            b.copyBy[FourCCName(d.fourcc)] += ms, seq += ms;
+            if (d.fourcc == simchunk::POLL || d.fourcc == simchunk::WATR) pollWatr += ms;
+            else longest = std::max(longest, ms);
         }
+        longest = std::max(longest, pollWatr);
         const double a0 = NowMs();
         imageBytes = SimSaveRegistry::Assemble(snap).size(); // the worker's part (framing, CRCs): not in the total
         const double assemble = NowMs() - a0;
-        b.ms["hub: .tbdsim (worker)"] += assemble, ++b.calls["hub: .tbdsim (worker)"], b.carve = assemble;
+        b.ms["hub: .tbdsim (worker)"] += assemble + seq - longest, ++b.calls["hub: .tbdsim (worker)"], b.carve = assemble + seq - longest;
         b.worst["hub: .tbdsim (worker)"] = std::max(b.worst["hub: .tbdsim (worker)"], assemble);
     });
     const double t0 = NowMs();

@@ -2887,6 +2887,7 @@ void RenderFrame() {
     static tbd::material_lab::Lab materialLab;
     if (matLab) materialLab.Build(r); // makes textures, so it runs before the frame opens
     RoadsSync(r);                       // road textures and meshes: also before the frame opens
+    UtilOverheadSync(r);                // poles and pylons: one mesh, made when the lines change (city_utilities.inl)
     CityBuildingsSync(r, viewProj, eye); // zoned buildings: cells, tiers, bake cache, proxies, instance rows (uploads: before the frame)
     r.BeginFrame(clear);
     traceMark(kTraceBegin);

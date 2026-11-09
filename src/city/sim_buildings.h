@@ -88,6 +88,33 @@ public:
         seen_[b.Index()] = epoch_;
         return b;
     }
+    // The same with a per-source hint (the host keeps one BuildingId per entry of its source list): while the hint still
+    // names this (origin, originId) the hash lookup is skipped, so a sync of an unchanged city is one linear pass. The
+    // result is exactly Upsert's (a stale or empty hint falls back to it and is refreshed).
+    BuildingId Upsert(BOrigin o, uint64_t originId, const BuildingRow& data, BuildingId& hint) {
+        const uint32_t i = hint.Index();
+        if (hint.Valid() && pool_.Alive(hint) && i < rows.size() && rows[i].originId == originId && rows[i].origin == o && rows[i].alive) {
+            BuildingRow& r = rows[i];
+            BuildingRow next = data;
+            next.origin = o, next.originId = originId, next.alive = 1;
+            if (!Same(r, next)) r = next, changed_ = true;
+            seen_[i] = epoch_;
+            return hint;
+        }
+        return hint = Upsert(o, originId, data);
+    }
+    // The check of the incremental path: every live or reserved row is in the index under its own key and the index
+    // holds nothing else (a full recompute of what the hints rely on). True when consistent.
+    bool CheckIndex() const {
+        size_t n = 0;
+        for (uint32_t i = 1; i < rows.size(); ++i) {
+            if (!rows[i].alive) continue;
+            ++n;
+            const auto it = index_.find(Key(rows[i].origin, rows[i].originId));
+            if (it == index_.end() || it->second != pool_.At(i).v) return false;
+        }
+        return n == index_.size();
+    }
     // Frees every live row not upserted since BeginSync. Reserved rows stay until claimed or released.
     void EndSync() {
         for (uint32_t i = 1; i < rows.size(); ++i)

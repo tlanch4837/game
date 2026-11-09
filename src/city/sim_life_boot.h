@@ -93,15 +93,16 @@ inline void LifeSyncBuildings(LifeWorld& w, const BuildingRegistry& reg, const L
         for (int e = 0; e < kEduLevels; ++e) jobs += r.jobSlots[e];
         return jobs == 0 ? -1 : jobKindOf ? jobKindOf(r) : 1;
     };
+    std::vector<int8_t> kinds(cap, -1); // kindOf once per row (it may be a std::function call)
     for (uint32_t i = 1; i < cap; ++i) { // pass 1: what went, what moved
         const BuildingId id = reg.At(i);
         const BuildingRow* r = id.Valid() ? reg.Get(id) : nullptr;
         const uint32_t raw = r && r->alive ? id.v : 0;
         LifeBuilding& L = w.bld[i];
-        if (r && raw) hoods = std::max(hoods, r->hood + 1), maxCell = std::max(maxCell, r->cell);
+        if (r && raw) hoods = std::max(hoods, r->hood + 1), maxCell = std::max(maxCell, r->cell), kinds[i] = (int8_t)kindOf(*r);
         if (L.id && L.id != raw) gone.push_back(i);
         else if (L.id && r->alive == 1 && (L.cell != r->cell || L.hood != std::max(0, r->hood) || L.cellX != r->cellX ||
-                                           L.cellZ != r->cellZ || L.jobKind != kindOf(*r)))
+                                           L.cellZ != r->cellZ || L.jobKind != kinds[i]))
             relocate = true;
     }
     for (const LifeBuilding& L : w.bld) if (L.id) hoods = std::max(hoods, L.hood + 1);
@@ -117,7 +118,7 @@ inline void LifeSyncBuildings(LifeWorld& w, const BuildingRegistry& reg, const L
         if (L.id != id.v) L = LifeBuilding(), L.id = id.v;
         else if (r->alive == 2) continue; // reserved from a load: keep the saved row until the building is back
         L.cell = r->cell, L.hood = std::max(0, r->hood), L.cellX = r->cellX, L.cellZ = r->cellZ;
-        L.level = r->level, L.jobKind = (int8_t)kindOf(*r);
+        L.level = r->level, L.jobKind = kinds[i];
         if (r->homes < L.homes) shrunk.push_back(i);
         L.homes = r->homes;
         for (int e = 0; e < kEduLevels; ++e) L.slots[e] = r->jobSlots[e];

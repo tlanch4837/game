@@ -93,9 +93,26 @@ void BuildSites() {
         if (g_simSegGrid.builtFrom == g_roads.net.version) nodeCache[key] = n; // the grid is up: the answer holds
         return n;
     };
+    // registry row -> lot index from the registry sync's per-lot ids (sim_save::hintLot, checked here): a linear pass
+    // instead of a hash map of every lot each hour; a row the hints miss falls back to the map (built only then)
+    static std::vector<int32_t> rowLot;
+    rowLot.assign(g_simBuildings.Capacity(), -1);
+    for (size_t i = 0; i < g_zones.lots.size() && i < sim_save::hintLot.size(); ++i) {
+        const BuildingRow* r = g_simBuildings.Get(sim_save::hintLot[i]);
+        if (g_zones.lots[i].alive && r && r->origin == BOrigin::Lot && r->originId == g_zones.lots[i].id) rowLot[sim_save::hintLot[i].Index()] = (int32_t)i;
+    }
     std::unordered_map<uint64_t, uint32_t> lotIdx, hubIdx;
-    for (size_t i = 0; i < g_zones.lots.size(); ++i)
-        if (g_zones.lots[i].alive) lotIdx[g_zones.lots[i].id] = (uint32_t)i;
+    bool lotIdxBuilt = false;
+    auto lotOf = [&](uint32_t row, uint64_t originId) -> int64_t {
+        if (rowLot[row] >= 0) return rowLot[row];
+        if (!lotIdxBuilt) {
+            lotIdxBuilt = true;
+            for (size_t i = 0; i < g_zones.lots.size(); ++i)
+                if (g_zones.lots[i].alive) lotIdx[g_zones.lots[i].id] = (uint32_t)i;
+        }
+        const auto it = lotIdx.find(originId);
+        return it == lotIdx.end() ? -1 : (int64_t)it->second;
+    };
     for (size_t i = 0; i < g_ind.sites.size(); ++i) hubIdx[g_ind.sites[i].id] = (uint32_t)i;
     const auto& types = ZoneTypes();
     int64_t residents = 0;
@@ -108,9 +125,9 @@ void BuildSites() {
         GoodsSite s;
         s.building = b.v;
         if (row->origin == BOrigin::Lot) {
-            const auto it = lotIdx.find(row->originId);
-            if (it == lotIdx.end()) continue;
-            const Lot& l = g_zones.lots[it->second];
+            const int64_t li = lotOf(i, row->originId);
+            if (li < 0) continue;
+            const Lot& l = g_zones.lots[(size_t)li];
             if (!l.Built() || l.type < 0 || l.type >= (int)types.size()) continue;
             const ZoneCat cat = types[(size_t)l.type].cat;
             int kind;
@@ -145,7 +162,7 @@ void BuildSites() {
             continue;
         }
         sites.push_back(s);
-        siteLot.push_back(row->origin == BOrigin::Lot ? (int32_t)lotIdx[row->originId] : -1);
+        siteLot.push_back(row->origin == BOrigin::Lot ? (int32_t)lotOf(i, row->originId) : -1);
     }
 }
 

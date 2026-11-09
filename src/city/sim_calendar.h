@@ -9,11 +9,15 @@
 //   weekday    0 Monday .. 6 Sunday, of the game day (commutes, weekend leisure)
 //   season     0 spring (Mar-May), 1 summer (Jun-Aug), 2 autumn (Sep-Nov), 3 winter (Dec-Feb): 4 x 3 life months
 //   daylight   0 night .. 1 full day, from the hour the same way sun.h's Sun::Direction() puts the sun up (06 to 18)
+// The one calendar (docs/cs2_sim_roadmap.md 3.5): every date the player sees (both HUDs, the save list, the budget
+// stamps) is this calendar of the sim minute, so the month, the season and the life events always agree. A life month
+// has no days to show: the HUD shows the month and the year ("Mar Y3", FormatSimDate) beside the clock's time of day.
 #pragma once
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 namespace tbd {
 namespace city {
@@ -95,6 +99,15 @@ inline const char* SeasonName(int s) {
 inline const char* MonthName(int m) {
     static const char* const k[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     return m >= 0 && m < 12 ? k[m] : "";
+}
+// The month name of a minute (other year lengths scaled onto 12, as SeasonOf does).
+inline const char* MonthNameAt(const SimCalendar& c, int64_t minute) {
+    const int n = std::max(1, c.lifeMonthsPerYear);
+    return MonthName(c.MonthOfYear(minute) * 12 / n);
+}
+// "Mar Y3" (sep " "), "Mar Â· Y3" (the dock's middle dot) ...: the life month and the life year + 1. Returns snprintf's.
+inline int FormatSimDate(const SimCalendar& c, int64_t minute, char* out, size_t n, const char* sep = " ") {
+    return std::snprintf(out, n, "%s%sY%lld", MonthNameAt(c, minute), sep, (long long)(c.Year(minute) + 1));
 }
 
 } // namespace city

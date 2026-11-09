@@ -25,12 +25,19 @@ int syncFallbacks = 0;    // passes the worker had not finished in time (compute
 uint32_t terrainVersion = ~0u;
 bool resampleAll = true;  // the next pass re-samples every height (a load, a terrain edit)
 
-// One pass in flight. The worker reads `in` and writes state / out; the main thread only reads `in` until ready.
+// A loaded road segment as the snapshot keeps it; the worker turns them into the 32 m road tiles (SimP3ExpandRoads).
+struct RoadIn { tbd::city::Cubic cv; float flow = 0, speedRatio = 1; };
+// One pass in flight. The worker copies `base` (the applied state, read only until it is replaced) into state, adds the
+// road tiles to `in`, then steps; the main thread only reads `in` until ready. phase: 0 queued, 1 copying, 2 copied (the
+// worker no longer reads base or writes in), 3 cancelled before it started (the worker does nothing).
 struct Job {
     EnvInput in;
+    std::vector<RoadIn> roads;
+    const EnvSim* base = nullptr;
     EnvSim state;
     EnvResult out;
     double ms = 0;
+    std::atomic<int> phase{0};
     std::atomic<bool> ready{false};
 };
 std::shared_ptr<Job> job;   // null: nothing in flight
@@ -84,7 +91,7 @@ void SimP3Weather(int64_t minute) {
 }
 
 // ---- the hourly snapshot (main thread): sources, pumps, city cells, heights of new cells
-void SimP3BuildInput(int64_t minute, tbd::city::EnvInput& in) {
+void SimP3BuildInput(int64_t minute, tbd::city::EnvInput& in, std::vector<sim_p3::RoadIn>& roads) {
     using namespace tbd::city;
     namespace s = sim_p3;
     in = EnvInput();
@@ -104,36 +111,14 @@ void SimP3BuildInput(int64_t minute, tbd::city::EnvInput& in) {
         if (src.air > 0 || src.noise > 0 || src.water > 0) in.sources.push_back(src);
         if (defs[(size_t)b.def].kind == Util::Water) in.pumps.push_back({b.c.x, b.c.z, defs[(size_t)b.def].supply, !UtilDefShore(b.def)});
     }
-    // roads: one source per 32 m tile a loaded segment crosses (the loudest sample of the tile, the sum of its exhaust)
+    // roads: the loaded segments only (curve and flow); their 32 m tiles are made on the worker (SimP3ExpandRoads)
     const Network& net = g_roads.net;
-    if (g_segFlowVersion == net.version && g_segFlow.size() == net.segs.size()) {
-        struct RoadTile { float noise = 0, air = 0, x = 0, z = 0; uint8_t r = 1; };
-        std::unordered_map<uint64_t, RoadTile> tiles;
-        std::vector<uint64_t> order; // first-seen order: deterministic, whatever the hash map does
+    roads.clear();
+    if (g_segFlowVersion == net.version && g_segFlow.size() == net.segs.size())
         for (size_t si = 0; si < net.segs.size(); ++si) {
-            const Segment& sg = net.segs[si];
             const SegFlow& f = g_segFlow[si];
-            if (!sg.alive || f.flow <= 1.0f) continue;
-            const Cubic cv = net.Curve(sg);
-            const float len = Len(cv.p1 - cv.p0) + Len(cv.p2 - cv.p1) + Len(cv.p3 - cv.p2);
-            const int n = std::max(1, (int)(len / kFieldTile));
-            const EnvSource rs = EnvRoadSource(0, 0, f.flow, f.speedRatio);
-            for (int i = 0; i < n; ++i) {
-                const V2 p = cv.At((i + 0.5f) / n);
-                const int gx = (int)std::floor(p.x / kFieldTile), gz = (int)std::floor(p.z / kFieldTile);
-                const uint64_t key = PackKey({gx, gz});
-                auto [it, fresh] = tiles.try_emplace(key);
-                if (fresh) order.push_back(key), it->second.x = (gx + 0.5f) * kFieldTile, it->second.z = (gz + 0.5f) * kFieldTile;
-                it->second.noise = std::max(it->second.noise, rs.noise), it->second.air += rs.air, it->second.r = std::max(it->second.r, rs.noiseR);
-            }
+            if (net.segs[si].alive && f.flow > 1.0f) roads.push_back({net.Curve(net.segs[si]), f.flow, f.speedRatio});
         }
-        for (uint64_t key : order) {
-            const RoadTile& t = tiles[key];
-            EnvSource src;
-            src.x = t.x, src.z = t.z, src.noise = t.noise, src.air = EnvQuant(t.air, 0.25f), src.noiseR = t.r;
-            in.sources.push_back(src);
-        }
-    }
     // the city's cells, their water service, and the terrain under the new ones (all after a load or an edit)
     const uint32_t tv = g_engine.terrain.field.Version();
     if (tv != s::terrainVersion) s::terrainVersion = tv, s::resampleAll = true;
@@ -150,6 +135,45 @@ void SimP3BuildInput(int64_t minute, tbd::city::EnvInput& in) {
     s::resampleAll = false;
 }
 
+// The road tiles of the snapshot's loaded segments, appended to the sources (after the lots, hubs and utilities, as the
+// main thread used to add them): one source per 32 m tile a segment crosses, the loudest sample of the tile and the sum
+// of its exhaust, in first-seen order (deterministic whatever the hash map does). Any thread.
+void SimP3ExpandRoads(tbd::city::EnvInput& in, const std::vector<sim_p3::RoadIn>& roads) {
+    using namespace tbd::city;
+    struct RoadTile { float noise = 0, air = 0, x = 0, z = 0; uint8_t r = 1; };
+    std::unordered_map<uint64_t, RoadTile> tiles;
+    std::vector<uint64_t> order;
+    for (const sim_p3::RoadIn& rd : roads) {
+        const Cubic& cv = rd.cv;
+        const float len = Len(cv.p1 - cv.p0) + Len(cv.p2 - cv.p1) + Len(cv.p3 - cv.p2);
+        const int n = std::max(1, (int)(len / kFieldTile));
+        const EnvSource rs = EnvRoadSource(0, 0, rd.flow, rd.speedRatio);
+        for (int i = 0; i < n; ++i) {
+            const V2 p = cv.At((i + 0.5f) / n);
+            const int gx = (int)std::floor(p.x / kFieldTile), gz = (int)std::floor(p.z / kFieldTile);
+            const uint64_t key = PackKey({gx, gz});
+            auto [it, fresh] = tiles.try_emplace(key);
+            if (fresh) order.push_back(key), it->second.x = (gx + 0.5f) * kFieldTile, it->second.z = (gz + 0.5f) * kFieldTile;
+            it->second.noise = std::max(it->second.noise, rs.noise), it->second.air += rs.air, it->second.r = std::max(it->second.r, rs.noiseR);
+        }
+    }
+    for (uint64_t key : order) {
+        const RoadTile& t = tiles[key];
+        EnvSource src;
+        src.x = t.x, src.z = t.z, src.noise = t.noise, src.air = EnvQuant(t.air, 0.25f), src.noiseR = t.r;
+        in.sources.push_back(src);
+    }
+}
+
+// The worker is done with the job's base and input (it copied them, or it never will): true if it never started (the
+// caller then owns the road expansion). Waits only while the worker is in the middle of its copy.
+bool SimP3ReleaseBase(sim_p3::Job& j) {
+    int expect = 0;
+    if (j.phase.compare_exchange_strong(expect, 3, std::memory_order_acq_rel)) return true;
+    while (j.phase.load(std::memory_order_acquire) == 1) std::this_thread::yield();
+    return false;
+}
+
 // ---- the hourly pass
 // The in-flight pass, finished: the worker's result if it is ready, else computed here from the same input and state.
 void SimP3FinishJob() {
@@ -159,6 +183,7 @@ void SimP3FinishJob() {
         s::doneState = std::move(s::job->state), s::doneResult = std::move(s::job->out), s::stepMs = s::job->ms;
     } else {
         const double t0 = g_sim.nowMs();
+        if (SimP3ReleaseBase(*s::job)) SimP3ExpandRoads(s::job->in, s::job->roads); // the worker never started
         s::doneState = s::cur;
         s::doneState.Step(s::job->in, s::params, s::doneResult);
         s::stepMs = g_sim.nowMs() - t0, ++s::syncFallbacks;
@@ -188,7 +213,11 @@ void SimP3ApplyResult(bool events) {
     using namespace tbd::city;
     namespace s = sim_p3;
     const double t0 = g_sim.nowMs();
-    s::cur = std::move(s::doneState), s::curResult = std::move(s::doneResult);
+    std::swap(s::cur, s::doneState), s::curResult = std::move(s::doneResult);
+    // the old state's buffers are freed on a worker (a quarter millisecond at 30k lots on the main thread otherwise)
+    auto old = std::make_shared<tbd::city::EnvSim>(std::move(s::doneState));
+    s::doneState = tbd::city::EnvSim();
+    g_engine.jobs->RunBackground([old]() mutable { old.reset(); });
     s::job.reset(), s::jobDone = false;
     SimP3ShowResult();
     if (events) PushEnvEvents(s::curResult, *g_p3Events);
@@ -202,13 +231,18 @@ void SimP3Hour(int64_t minute) {
     if (s::job) SimP3FinishJob(), SimP3ApplyResult(true); // the previous hour's pass lands now, never earlier or later
     const double t0 = g_sim.nowMs();
     std::shared_ptr<s::Job> j = std::make_shared<s::Job>();
-    SimP3BuildInput(minute, j->in);
-    j->state = s::cur;
+    SimP3BuildInput(minute, j->in, j->roads);
+    j->base = &s::cur; // copied on the worker: s::cur is only replaced after SimP3ReleaseBase
     s::buildMs = g_sim.nowMs() - t0;
     s::job = j, s::jobDone = false;
     const tbd::city::EnvParams p = s::params;
     g_engine.jobs->RunBackground([j, p] {
+        int expect = 0;
+        if (!j->phase.compare_exchange_strong(expect, 1, std::memory_order_acq_rel)) return; // cancelled: a reset or a fallback
         const auto a = std::chrono::steady_clock::now();
+        j->state = *j->base;
+        SimP3ExpandRoads(j->in, j->roads);
+        j->phase.store(2, std::memory_order_release);
         j->state.Step(j->in, p, j->out);
         j->ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
         j->ready.store(true, std::memory_order_release);
@@ -219,6 +253,7 @@ void SimP3Hour(int64_t minute) {
 // own reference).
 void SimP3Fresh() {
     namespace s = sim_p3;
+    if (s::job) SimP3ReleaseBase(*s::job); // the worker must not be copying s::cur while it is cleared
     s::cur.Clear(), s::curResult = tbd::city::EnvResult(), s::resultIndex.clear();
     s::job.reset(), s::jobDone = false, s::doneState.Clear(), s::doneResult = tbd::city::EnvResult();
     s::airHistory.clear(), s::resampleAll = true;
@@ -372,6 +407,7 @@ void SimP3Load(const tbd::city::SimLoadReport& rep) {
     auto ok = [&](uint32_t f) { const SimChunkResult* c = rep.Find(f); return c && c->status == SimChunkStatus::Loaded; };
     const bool poll = ok(simchunk::POLL), watr = ok(simchunk::WATR);
     if (poll || watr) {
+        if (s::job) SimP3ReleaseBase(*s::job); // (Fresh already dropped it; a pass in flight never copies the loaded state)
         if (poll) s::cur.poll = std::move(s::loaded.cur.poll), s::curResult = std::move(s::loaded.curResult);
         if (watr) s::cur.water = std::move(s::loaded.cur.water), s::cur.wasFlooded = std::move(s::loaded.cur.wasFlooded), s::cur.lastMinute = s::loaded.cur.lastMinute;
         SimP3ShowResult();

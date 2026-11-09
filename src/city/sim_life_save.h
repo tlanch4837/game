@@ -123,40 +123,56 @@ inline void LifeRebuildViews(LifeWorld& w) {
     LifeComputeNear(w);
 }
 
-inline void LifeSave(const LifeSim& s, LifeChunks& out) {
+// One chunk's payload (0 CITZ, 1 HHLD, 2 OCCU, 3 MIGR): each reads only the sim, so the four can be made at once on
+// different threads (the autosave's parallel copy, city_sim_save_io.inl). LifeSave makes all four: the same bytes.
+inline void LifeSavePart(const LifeSim& s, int part, std::vector<uint8_t>& out) {
     const LifeWorld& w = s.w;
-    out = LifeChunks();
-    // one allocation per chunk (upper bounds: 33 B a citizen and 39 B a household of columns plus the pools' 6 B)
-    out.citz.reserve(256 + (size_t)w.cit.Capacity() * 48), out.hhld.reserve(256 + (size_t)w.hh.Capacity() * 56);
-    out.occu.reserve(16 + w.bld.size() * 64);
-    { LifeWriter o{out.citz}; LifeSavePool(o, w.cit.pool);
+    out.clear();
+    if (part == 0) { // one allocation per chunk (upper bounds: 33 B a citizen and 39 B a household of columns plus the pools' 6 B)
+        out.reserve(256 + (size_t)w.cit.Capacity() * 48);
+        LifeWriter o{out}; LifeSavePool(o, w.cit.pool);
 #define TBD_W(c) o.Vec(w.cit.c);
-      TBD_LIFE_CIT_COLS(TBD_W)
+        TBD_LIFE_CIT_COLS(TBD_W)
 #undef TBD_W
-    }
-    { LifeWriter o{out.hhld}; LifeSavePool(o, w.hh.pool);
+    } else if (part == 1) {
+        out.reserve(256 + (size_t)w.hh.Capacity() * 56);
+        LifeWriter o{out}; LifeSavePool(o, w.hh.pool);
 #define TBD_W(c) o.Vec(w.hh.c);
-      TBD_LIFE_HH_COLS(TBD_W)
+        TBD_LIFE_HH_COLS(TBD_W)
 #undef TBD_W
+    } else if (part == 2) {
+        out.reserve(16 + w.bld.size() * 64);
+        LifeWriter o{out};
+        o.Pod((uint32_t)w.bld.size());
+        // each building packed field by field into one buffer, appended once: the same bytes as a Pod per field
+        constexpr size_t kB = sizeof(LifeBuilding::id) + sizeof(LifeBuilding::cell) + sizeof(LifeBuilding::hood) + sizeof(LifeBuilding::cellX) +
+                              sizeof(LifeBuilding::cellZ) + sizeof(LifeBuilding::homes) + sizeof(LifeBuilding::stat) + sizeof(LifeBuilding::slots) +
+                              sizeof(LifeBuilding::firstHousehold) + sizeof(LifeBuilding::level) + sizeof(LifeBuilding::jobKind);
+        for (const LifeBuilding& L : w.bld) {
+            uint8_t b[kB];
+            uint8_t* q = b;
+            auto put = [&q](const auto& v) { std::memcpy(q, &v, sizeof(v)), q += sizeof(v); };
+            put(L.id), put(L.cell), put(L.hood), put(L.cellX), put(L.cellZ), put(L.homes), put(L.stat);
+            put(L.slots); // the array: kEduLevels values in order, as the Pod loop wrote them
+            put(L.firstHousehold), put(L.level), put(L.jobKind);
+            out.insert(out.end(), b, b + kB);
+        }
+    } else if (part == 3) {
+        LifeWriter o{out};
+        static_assert(sizeof(LifeMonthStats) == 15 * sizeof(int32_t), "LifeMonthStats is 15 int32");
+        o.Pod(w.minute), o.Pod(w.month), o.Pod(s.lastMonth), o.Pod(w.matchStart), o.Pod(w.homeCursor);
+        o.Pod(s.mig.attract), o.Pod(s.mig.quota), o.Pod(s.mig.admitted), o.Pod(s.mig.avgHappy), o.Pod(s.mig.vacantJobs);
+        o.Pod(s.mig.seekers), o.Pod(s.mig.freeHomes), o.Vec(s.mig.freeList);
+        o.Pod(w.cur), o.Pod((uint32_t)w.history.size());
+        for (const LifeMonthStats& m : w.history) o.Pod(m);
+        o.Vec(w.jobCursor), o.Vec(w.wantsHome), o.Pod((uint32_t)w.seekers.size());
+        for (const auto& q : w.seekers) o.Vec(q);
     }
-    { LifeWriter o{out.occu};
-      o.Pod((uint32_t)w.bld.size());
-      for (const LifeBuilding& L : w.bld) {
-          o.Pod(L.id), o.Pod(L.cell), o.Pod(L.hood), o.Pod(L.cellX), o.Pod(L.cellZ), o.Pod(L.homes), o.Pod(L.stat);
-          for (int e = 0; e < kEduLevels; ++e) o.Pod(L.slots[e]);
-          o.Pod(L.firstHousehold), o.Pod(L.level), o.Pod(L.jobKind);
-      }
-    }
-    { LifeWriter o{out.migr};
-      static_assert(sizeof(LifeMonthStats) == 15 * sizeof(int32_t), "LifeMonthStats is 15 int32");
-      o.Pod(w.minute), o.Pod(w.month), o.Pod(s.lastMonth), o.Pod(w.matchStart), o.Pod(w.homeCursor);
-      o.Pod(s.mig.attract), o.Pod(s.mig.quota), o.Pod(s.mig.admitted), o.Pod(s.mig.avgHappy), o.Pod(s.mig.vacantJobs);
-      o.Pod(s.mig.seekers), o.Pod(s.mig.freeHomes), o.Vec(s.mig.freeList);
-      o.Pod(w.cur), o.Pod((uint32_t)w.history.size());
-      for (const LifeMonthStats& m : w.history) o.Pod(m);
-      o.Vec(w.jobCursor), o.Vec(w.wantsHome), o.Pod((uint32_t)w.seekers.size());
-      for (const auto& q : w.seekers) o.Vec(q);
-    }
+}
+
+inline void LifeSave(const LifeSim& s, LifeChunks& out) {
+    out = LifeChunks();
+    LifeSavePart(s, 0, out.citz), LifeSavePart(s, 1, out.hhld), LifeSavePart(s, 2, out.occu), LifeSavePart(s, 3, out.migr);
 }
 
 // Loads the four chunks into s (its tuning, calendar, seed and pointers stay). False: s is reset (start fresh).

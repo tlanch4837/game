@@ -139,7 +139,19 @@ static void TestExternalPeople() {
 
     // a few days of job matching: the links come from real assignments and keep every invariant
     for (int64_t m = 0; m < 3 * 1440; ++m) life.Tick(m);
+    CitySim deferred = s; // the host's deferred apply (LifeApplyState) gives the same cells and links, and skips a no-change
+    LifeApplyState st;
+    LifeApplyCells(life.w, deferred, &st);
     LifeApplyCells(life.w, s);
+    CHECK(deferred.Hash() == s.Hash() && deferred.Links() == s.Links() && st.rebuilt == 1);
+    LifeApplyCells(life.w, deferred, &st);
+    CHECK(deferred.Hash() == s.Hash() && st.skipped == 1 && st.rebuilt == 1);
+    LifeSim later = life; // (a copy: the checks below run on the original)
+    for (int64_t m = 3 * 1440; m < 3 * 1440 + 30; ++m) later.Tick(m); // job passes change links: rebuilt again, same as a full apply
+    CitySim full = deferred;
+    LifeApplyCells(later.w, deferred, &st);
+    LifeApplyCells(later.w, full);
+    CHECK(deferred.Hash() == full.Hash());
     std::printf("external: %llu residents, %llu working, %llu links, %d supercells\n", (unsigned long long)s.Population(), (unsigned long long)s.Working(),
                 (unsigned long long)s.Links(), s.Supercells());
     CHECK(s.Working() > 0 && s.Working() == s.Employed() && s.Employed() == s.Links());

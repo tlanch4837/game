@@ -30,6 +30,8 @@ bool waiting = false;          // a load's BLDG rows are reserved: released afte
 bool lotsBack = false;         // GameSync put the load's grown lots back (SimLotsRestored)
 uint64_t releaseDeadlineMs = 0; // or this long after the load at the latest (a save without grown lots)
 uint64_t lotsBackGen = ~0ull;  // g_cityGeneration when GameSync last put a load's lots back (it may run before the apply)
+std::vector<tbd::city::BuildingId> hintLot, hintTr, hintUt, hintInd; // per source entry: its BuildingId at the last sync
+uint64_t syncCount = 0;        // every 64th sync checks the registry's index against its rows (CheckIndex)
 } // namespace sim_save
 
 // BuildingRegistry from the zones, transport, utility and industry lists: only when one of them changed, at most once a
@@ -49,15 +51,27 @@ void SimBuildingsSync(bool force) {
             r.kind = kind, r.cellX = k.x, r.cellZ = k.z, r.level = (uint8_t)std::clamp(level, 0, 255);
             return r;
         };
+        // one hint per source entry (ss::hint*): an unchanged building costs no hash lookup (BuildingRegistry::Upsert)
+        auto fit = [](std::vector<BuildingId>& h, size_t n) { if (h.size() != n) h.resize(n); };
+        fit(ss::hintLot, g_zones.lots.size()), fit(ss::hintTr, g_transport.items.size());
+        fit(ss::hintUt, g_util.items.size()), fit(ss::hintInd, g_ind.sites.size());
         g_simBuildings.BeginSync();
-        for (const Lot& l : g_zones.lots)
-            if (l.alive) g_simBuildings.Upsert(BOrigin::Lot, l.id, row(l.type, l.c, l.level));
-        for (const Placed& b : g_transport.items)
-            if (b.alive) g_simBuildings.Upsert(BOrigin::Transport, b.id, row(b.def, b.c, 1));
-        for (const UtilBuilding& b : g_util.items)
-            if (b.alive) g_simBuildings.Upsert(BOrigin::Utility, b.id, row(b.def, b.c, 1));
-        for (const IndSite& s : g_ind.sites) g_simBuildings.Upsert(BOrigin::Industry, s.id, row((int)s.kind, s.c, 1));
+        for (size_t i = 0; i < g_zones.lots.size(); ++i) {
+            const Lot& l = g_zones.lots[i];
+            if (l.alive) g_simBuildings.Upsert(BOrigin::Lot, l.id, row(l.type, l.c, l.level), ss::hintLot[i]);
+        }
+        for (size_t i = 0; i < g_transport.items.size(); ++i) {
+            const Placed& b = g_transport.items[i];
+            if (b.alive) g_simBuildings.Upsert(BOrigin::Transport, b.id, row(b.def, b.c, 1), ss::hintTr[i]);
+        }
+        for (size_t i = 0; i < g_util.items.size(); ++i) {
+            const UtilBuilding& b = g_util.items[i];
+            if (b.alive) g_simBuildings.Upsert(BOrigin::Utility, b.id, row(b.def, b.c, 1), ss::hintUt[i]);
+        }
+        for (size_t i = 0; i < g_ind.sites.size(); ++i)
+            g_simBuildings.Upsert(BOrigin::Industry, g_ind.sites[i].id, row((int)g_ind.sites[i].kind, g_ind.sites[i].c, 1), ss::hintInd[i]);
         g_simBuildings.EndSync();
+        if (++ss::syncCount % 64 == 0 && !g_simBuildings.CheckIndex()) tbd::Log("Sim: BUG building registry index out of step with its rows");
         if (ss::waiting && ss::lotsBack) ss::waiting = ss::lotsBack = false, ss::releaseDeadlineMs = 0, g_simBuildings.ReleaseUnclaimed();
     }
     if (ss::waiting && ss::releaseDeadlineMs && now >= ss::releaseDeadlineMs) // the lots never came back (no G records)

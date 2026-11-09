@@ -196,6 +196,24 @@ chunk: u32 fourcc  u16 version  u16 flags  u32 bytes  u32 crc32  payload
 | `src/gui/sim_panels.h` | generic panel model: title, stat rows, bars, stacked bar, sparkline, list, slider rows. It is drawn by both HUDs (`city_hud.h` and Glass Dock+ bottom sheets, touch first). A phase only fills a `SimPanelSpec` in its own `.inl`, so no phase edits `glass_dock_host.inl` or `city_hud.h`. |
 | `src/gui/city_overlays.h` | the `Overlay` enum extended with every planned layer (air, noise, ground, water pollution, crime, health, education, garbage, telecom, transit ridership, goods, districts). Each layer gets a per-cell scalar provider callback that its phase registers. |
 
+#### The one calendar (decided 2026-11-09)
+
+The weather's seasons ran on `SimCalendar` (a year of 12 game days) while both HUDs printed 30-day months of the
+clock (a "January" lasted 30 game days, two and a half years of seasons). Decision: **there is one calendar, `SimCalendar`
+of the sim minute, and every date the player sees is printed from it.**
+
+- **1 game day = 1 life month**, 12 life months a year (tunable `lifeDaysPerMonth`, `lifeMonthsPerYear`). Ages, births,
+  the monthly visits, the seasons, the weather chain and the HUD's month all count the same months.
+- **The HUD date is month and year only**: `"14:05  Mar Y3"` (PC HUD), `"Mar · Y3"` (Glass Dock+), `"Mar Y3"` (the save
+  list). A life month has no days to show; the time of day beside it is the clock's (the sun). The season chip and the
+  month always agree (Dec-Feb winter, Mar-May spring, Jun-Aug summer, Sep-Nov autumn). `FormatSimDate` and
+  `MonthNameAt` in `sim_calendar.h` are the only formatters.
+- **The sim minute starts at the clock** on a new map (`SimOnCityReset`: Jan Y1 at 08:00), so the sim minute and the
+  clock's time of day agree; a load restores the save's sim minute (M record). They differ only by the scheduler's
+  backlog (at most a few minutes) or after a dropped backlog.
+- Still on 30-day months: the budget panel's ledger stamps (`city_sim_budget.inl`, Phase 7's file) should switch to
+  `FormatSimDate` when Phase 7 next touches it.
+
 ## 4. Phases
 
 Each phase lists files it **creates** (new) and files it **owns** (the only branch allowed to edit them). A file not
@@ -411,6 +429,30 @@ second is 0.6 ticks per frame at 30 fps.
 1.65 ms per tick × 0.6 ticks per frame is about 1.0 ms per frame: inside the 2 ms cap, with room at Ultra and under
 thermal halving. Per-frame visible work (children 300 cars, walkers 300, active set) stays outside the scheduler and is
 budgeted at 1.5 ms per frame as today. Total sim memory is under 24 MB at 100k.
+
+### 6.1 Spike pass (sim-perf, 2026-11-09): deferred work in P0, P1, P3, P6
+
+The rule: an entity costs nothing unless it changed or is due; bulk work is split over frames; an incremental path
+is checked against a full recompute. What each spike became (`tests\sim_bench.bat` measures them):
+
+- **Building registry sync** (P0): one hint per source entry (`BuildingRegistry::Upsert(..., hint)`): an unchanged
+  building is a linear pass with no hash lookup; `CheckIndex` (every 64th sync) checks the index against the rows.
+- **P1 building sync**: three steps on three frames (rows, records' buildings, hoods' search order), the rows through
+  the same hints; the job kind once per row. **P1 views**: the commute links are summed per supercell pair and compared
+  with CitySim's links every apply (an exact full check); the link maps are rebuilt only when they differ.
+- **P3 hourly apply**: the state copy for the next pass, the road tiles and freeing the replaced state moved to the
+  worker (the job copies the applied state, `SimP3ReleaseBase` guards it); the main thread keeps the apply and the
+  snapshot of the sources.
+- **P6 sites**: registry row to lot through the hints (no hash map of every lot each hour); `CompanyStore::Sync` keeps
+  a hint per site position.
+- **Autosave**: the .tbdsim chunks of P0, P1, P3 and P6 are made at once on the workers (fork-join; P1's four chunks
+  are independent parts now); the .tbdgame text is formatted on the worker from a snapshot of plain copies; the terrain
+  edits' bytes are kept while the height field's version holds. The bytes on disk are unchanged.
+
+Still per-tick or per-period loops over everything (fine at 15k lots, the next candidates): `ComputeSimFlags` and
+the services pass (P4's file), demand and growth (P2's), the goods slice's seller search (`SellerIndex::Nearest`,
+one twelfth of the companies every 5 minutes), P1's monthly slice and job matching (already 1/96 and capped), the hub
+flag merge (every lot on a table change), `LifeFillRows` (every lot after a registry change) and the BLDG / CITZ copies.
 
 ## 7. Open questions for the user
 

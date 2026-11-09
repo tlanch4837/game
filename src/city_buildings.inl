@@ -944,15 +944,19 @@ void CityRoadsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj, bool rail) {
         r.SetMaterial(g_roadGpu.albedo[asphalt], g_roadGpu.normal[asphalt]);
         r.Draw(ribbonAll, viewProj, tbd::Mat4::Identity(), true, true);
     }
-    for (const RoadDraw& d : roadDraw) {
-        const Cell& c = cells[(size_t)d.cell];
-        r.SetDrawFade(d.keep >= 1.0f ? 0.0f : d.keep);
-        if (!d.full) continue;
-        for (int m = 0; m < tbd::city::kMatCount; ++m) {
-            if ((m == track) != rail) continue;
+    // Material by material, the cells inside (was: cell by cell, every material inside): one bind per road material
+    // instead of one per cell and material. Each material still draws after the ones before it (asphalt under the
+    // markings), in every cell.
+    for (int m = 0; m < tbd::city::kMatCount; ++m) {
+        if ((m == track) != rail) continue;
+        bool bound = false;
+        for (const RoadDraw& d : roadDraw) {
+            if (!d.full) continue;
+            const Cell& c = cells[(size_t)d.cell];
             for (tbd::MeshId mesh : {c.road[(size_t)m], c.bridge[(size_t)m]}) {
                 if (mesh == tbd::kInvalidMesh) continue;
-                r.SetMaterial(g_roadGpu.albedo[m], g_roadGpu.normal[m]);
+                if (!bound) r.SetMaterial(g_roadGpu.albedo[m], g_roadGpu.normal[m]), bound = true;
+                r.SetDrawFade(d.keep >= 1.0f ? 0.0f : d.keep);
                 r.Draw(mesh, viewProj, tbd::Mat4::Identity(), true, true);
             }
         }
@@ -1119,21 +1123,30 @@ void CityBuildingsBake(tbd::Renderer& r, const tbd::Vec3& eye) {
 void CityBuildingsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj) {
     using namespace city_bld;
     if (g_zoneEntities) return;
+    // The Near instances in material order (opaque and depth tested: the order does not change the picture), so models
+    // that share textures bind them once (the renderer skips a repeated material).
+    struct NearPart { tbd::TextureId a, n, s; tbd::MeshId mesh; uint32_t model; };
+    static std::vector<NearPart> parts;
+    parts.clear();
     for (size_t m = 0; m < camRows.size() && m < models.size(); ++m) {
         if (camRows[m].empty()) continue;
-        const uint32_t n = (uint32_t)(camRows[m].size() / 12);
         const auto it = g_engine.matParts.find(models[m].mesh);
-        if (it == g_engine.matParts.end()) {
-            r.SetMaterial(tbd::kNoTexture, tbd::kNoTexture);
-            r.DrawInstancedTransient(models[m].mesh, camRows[m].data(), n, viewProj);
-            continue;
-        }
-        for (const MatPart& p : it->second) {
-            if (p.lodError != 0.0f) continue; // the full level only
-            r.SetMaterial(p.albedo, p.normal, p.surface);
-            r.DrawInstancedTransient(p.mesh, camRows[m].data(), n, viewProj);
-        }
+        if (it == g_engine.matParts.end()) { parts.push_back({tbd::kNoTexture, tbd::kNoTexture, tbd::kNoTexture, models[m].mesh, (uint32_t)m}); continue; }
+        for (const MatPart& p : it->second)
+            if (p.lodError == 0.0f) parts.push_back({p.albedo, p.normal, p.surface, p.mesh, (uint32_t)m}); // the full level only
     }
+    std::stable_sort(parts.begin(), parts.end(), [](const NearPart& x, const NearPart& y) {
+        return x.a != y.a ? x.a < y.a : x.n != y.n ? x.n < y.n : x.s < y.s;
+    });
+    uint32_t runs = 0;
+    for (size_t k = 0; k < parts.size(); ++k) {
+        const NearPart& p = parts[k];
+        runs += k == 0 || p.a != parts[k - 1].a || p.n != parts[k - 1].n || p.s != parts[k - 1].s;
+        r.SetMaterial(p.a, p.n, p.s);
+        r.DrawInstancedTransient(p.mesh, camRows[p.model].data(), (uint32_t)(camRows[p.model].size() / 12), viewProj);
+    }
+    static uint32_t partsLog = 0;
+    if (!parts.empty() && ++partsLog % 600 == 1) tbd::Log("City buildings: %zu Near parts in %u material runs", parts.size(), runs);
     for (const FadeBucket& b : fadeRows) { // Near lots in a transition, screen-door faded against the other representation
         const uint32_t n = (uint32_t)(b.rows.size() / 12);
         const auto it = g_engine.matParts.find(models[(size_t)b.model].mesh);

@@ -33,10 +33,13 @@ struct GoodsSaveAccess { // the world's private truck counters
 // COMP: the company handle pool and the records.
 inline void WriteGoodsComp(ByteWriter& w, const GoodsWorld& g) {
     const HandlePool& p = g.cos.pool;
+    const size_t cap = p.Capacity(), have = std::min(cap, g.cos.recs.size());
+    w.bytes.reserve(w.bytes.size() + 3 * 4 + cap * 6 + cap * sizeof(CompanyRec) + 8); // one allocation (the autosave copy)
     w.PutVec(p.Gens()), w.PutVec(p.AliveBits()), w.PutVec(p.FreeList());
-    std::vector<CompanyRec> recs = g.cos.recs;
-    recs.resize(p.Capacity());
-    w.PutVec(recs);
+    // the records as PutVec writes them, resized to the pool (no copy of the vector first): the same bytes
+    w.U32((uint32_t)cap);
+    if (have) w.Raw(g.cos.recs.data(), have * sizeof(CompanyRec));
+    for (size_t i = have; i < cap; ++i) { const CompanyRec empty; w.Raw(&empty, sizeof(CompanyRec)); }
     w.I32(g.bankruptTotal);
 }
 inline bool ReadGoodsComp(ByteReader& r, GoodsWorld& g) {

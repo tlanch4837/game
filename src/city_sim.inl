@@ -283,6 +283,9 @@ void SimApplyPending() {
 
 // A wiped city (new map, load): the sim's state starts over with it.
 void SimOnCityReset() {
+    // A new map starts its calendar at the clock (Jan Y1, 08:00), so the sim minute (seasons, weather, life months, the
+    // HUD date) and the clock's time of day agree; a load sets the save's minute right after (SimApplyPending, M record).
+    g_sim.Reset((int64_t)std::floor(g_clock.minutes));
     g_citySim.Clear();
     g_simGrowth.Clear();
     g_simEcon.Reset(g_simTune);
@@ -473,12 +476,14 @@ void SimInfoFill(tbd::gui::CityHud& hud) {
 
 // The HUD's population (and, from S4, money) cells.
 bool g_simHudPush = true; // the sim's tax rates and funding go into the Budget panel (start, load); afterwards the panel leads
+extern tbd::city::SimCalendar g_simCalendar; // city_sim_save.inl: the one calendar (the HUD date)
 void SimHudFill(tbd::gui::CityHud& hud) {
     hud.population = (long long)g_simTotals.population;
     hud.adults = (long long)g_simTotals.adults;
     hud.working = (long long)g_simTotals.working;
     hud.jobs = (long long)g_simTotals.jobs;
     hud.weather = SimEnvChip(), hud.weatherSeason = SimEnvSeasonName(), hud.weatherSunny = SimEnvSunny(); // P3's weather now
+    hud.simMinute = (long long)g_sim.Minute(), hud.calendar = g_simCalendar; // the date beside the clock: the one calendar
     SimBudgetHudFill(hud); // money, the milestone banner, the Budget panel and the locks (city_sim_budget.inl)
     SimInfoFill(hud);
     hud.citizenTitle = g_simCitizenTitle;
