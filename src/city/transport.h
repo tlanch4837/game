@@ -260,6 +260,16 @@ inline const std::vector<BuildingDef>& Defs() {
          "A walled cemetery with an avenue, a war memorial, four mausoleums, a chapel of rest, rows of headstones, an office and a hearse bay.",
          TTab::Death, Model::GlbBuilding, Site::Flat, 13, 12, 520000, 26000, 50, 8, "Low", 9.0f, 780, {0.34f, 0.48f, 0.34f}, 0, 0, 0.3f,
          "assets/buildings/deathcare/glb/CM_13x12_memorial_cemetery_L3.glb"},
+        // PLACEHOLDERS (Phase 4 services, sim_svc_catalog.h): no models yet (glb null: a tinted box), awaiting the HTML
+        // preview and approval. Parks sit on the Healthcare tab and post on Communications until they get a tab of their own.
+        {"Small Park", "Small Park", "Placeholder. A lawn with trees and benches: residents nearby are happier and healthier.",
+         TTab::Health, Model::GlbBuilding, Site::Flat, 2, 2, 20000, 800, 2, 0, "Low", 2.0f, 180, {0.35f, 0.70f, 0.30f}, 0, 0, 0.3f},
+        {"Town Park", "Town Park", "Placeholder. A large park with paths, a pond and a playground for a whole neighbourhood.",
+         TTab::Health, Model::GlbBuilding, Site::Flat, 4, 4, 60000, 2400, 6, 0, "Low", 3.0f, 300, {0.30f, 0.65f, 0.28f}, 0, 0, 0.3f},
+        {"Post Office", "Post Office", "Placeholder. Sorts and delivers the mail of the area with its vans.",
+         TTab::Comms, Model::GlbBuilding, Site::Flat, 2, 3, 70000, 4000, 20, 4, "Low", 8.0f, 360, {0.85f, 0.70f, 0.25f}, 0, 0, 0.3f},
+        {"Post Sorting Facility", "Sorting Facility", "Placeholder. A big hall that sorts the mail of the whole city.",
+         TTab::Comms, Model::GlbBuilding, Site::Flat, 5, 4, 200000, 12000, 60, 10, "Medium", 12.0f, 600, {0.80f, 0.62f, 0.22f}, 0, 0, 0.3f},
     };
     return v;
 }
