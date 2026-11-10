@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "rail_yard.h" // the yards' trains (the hosts take both from here)
+#include "rail_junction_place.h" // the rail junction planes (city_rail_junctions.inl; the hosts take it from here)
 #include "transport.h"
 
 namespace tbd {

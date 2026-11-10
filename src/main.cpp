@@ -1312,6 +1312,12 @@ static bool RemoteRun(tbd::remote::Request* q, std::string& out) {
         if (a.size() > 1) sscanf(a[1].c_str(), "%f %f", &x, &z);
         return IndustryDemo(x, z, out);
     }
+    if (cmd == "rail_demo") { // rail_demo|x z|gate: a level crossing, a turnout, a crossover and a diamond (city_rail_junctions.inl)
+        float x = cam.target.x, z = cam.target.z, gate = -1.0f;
+        if (a.size() > 1) sscanf(a[1].c_str(), "%f %f", &x, &z);
+        if (a.size() > 2 && !a[2].empty()) gate = (float)atof(a[2].c_str());
+        return RailJunctionDemo(x, z, gate, out);
+    }
     if (cmd == "industry_dump") return IndustryDump(a.size() > 1 ? a[1] : std::string("industry_models_data.js"), out); // industry_dump|path.js
     if (cmd == "sim") return SimRemote(a, out); // sim|stats / overlay / budget / plant / boost (city_overlays.inl)
     if (cmd == "screenshot") { // screenshot|path.bmp|frames to wait: answered once that frame is drawn

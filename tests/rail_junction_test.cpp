@@ -13,7 +13,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "city/rail_junction_plane.h"
+#include "city/rail_junction_place.h"
 #include "city/rail_yard.h"
 
 using namespace tbd::city;
@@ -421,7 +421,113 @@ static void TestPlanes() {
     CHECK(JunctionLayouts()[NearestLayout(p)].id == "turnout_20");
 }
 
+// The junction planes in a network (rail_junction_place.h): sites, layouts, frames, where the tracks stop, phase.
+static float CutDist(const Network& net, int s, float t, const std::vector<V2>& ends) { // the cut point to the nearest route end
+    const V2 q = net.Curve(s).At(t);
+    float best = 1e9f;
+    for (V2 e : ends) best = std::min(best, Len(e - q));
+    return best;
+}
+static std::vector<V2> WorldEnds(const JunctionSite& S) {
+    std::vector<V2> v;
+    for (const RouteEnd& e : LayoutEnds(S.layout)) v.push_back(S.World(e.p.x, e.p.z));
+    return v;
+}
+static void TestPlacement() {
+    for (float side : {1.0f, -1.0f}) { // a turnout either hand: the box set back to the IP, every arm cut at its route's end
+        Network net;
+        const int c = MkNode(net, {0, 0});
+        const int sw = Line(net, MkNode(net, {-100, 0}), c), se = Line(net, c, MkNode(net, {100, 0})), sd = Line(net, c, MkNode(net, Dir(12 * side) * 80));
+        const auto sites = FindJunctionSites(net, nullptr);
+        CHECK(sites.size() == 1);
+        if (sites.size() != 1) continue;
+        const JunctionSite& S = sites[0];
+        CHECK(S.type == JType::Turnout && JunctionLayouts()[S.layout].id == "turnout_12" && S.mirror == (side < 0));
+        CHECK(std::fabs(S.f.x - 1) < 1e-4f && S.o.x < -10 && std::fabs(S.o.z) < 1e-3f); // points well before the node
+        const RailCuts R = RailCutsFor(net, sites);
+        // one gap per arm, from the node to where its route ends: the stem's at its b end, the others' at their a end
+        CHECK(R.trackGaps[(size_t)sw].size() == 1 && R.trackGaps[(size_t)se].size() == 1 && R.trackGaps[(size_t)sd].size() == 1);
+        if (R.trackGaps[(size_t)sw].empty() || R.trackGaps[(size_t)se].empty() || R.trackGaps[(size_t)sd].empty()) continue;
+        const float tw = R.trackGaps[(size_t)sw][0].first, te = R.trackGaps[(size_t)se][0].second, td = R.trackGaps[(size_t)sd][0].second;
+        CHECK(R.trackGaps[(size_t)sw][0].second == 1.0f && R.trackGaps[(size_t)se][0].first == 0.0f && tw > 0.5f && te > 0.05f && td > 0.05f);
+        const auto ends = WorldEnds(S);
+        CHECK(CutDist(net, sw, tw, ends) < 0.05f && CutDist(net, se, te, ends) < 0.05f);
+        CHECK(CutDist(net, sd, td, ends) < 0.3f); // the diverging route's end lies on the graph's line
+        // the plain track meets the box at a pitch boundary (sleeper phase continues)
+        MeshOut out;
+        BuildNetwork(net, nullptr, out, &R);
+        const V2 cut = net.Curve(sw).At(tw);
+        int near = 0;
+        for (const tbd::Vertex& v : out.byMat[(int)Mat::Track])
+            if (Len(V2{v.px, v.pz} - cut) < 2.3f) {
+                ++near;
+                const float ph = std::fmod(std::fabs(v.v), 0.6f);
+                CHECK(std::min(ph, 0.6f - ph) < 1e-3f);
+            }
+        CHECK(near > 0);
+        JunctionDraws d;
+        BuildJunctionDraws(net, sites, d, &out);
+        CHECK(d.sites == 1 && d.byLayout[(size_t)S.layout].size() == 30 && !d.props.empty());
+    }
+    { // a diamond at 45 deg, and a crossover between parallel tracks the layout's spacing apart
+        Network net;
+        const int c = MkNode(net, {0, 0});
+        Line(net, MkNode(net, {-80, 0}), c), Line(net, c, MkNode(net, {80, 0}));
+        Line(net, MkNode(net, Dir(225) * 80), c), Line(net, c, MkNode(net, Dir(45) * 80));
+        const auto sites = FindJunctionSites(net, nullptr);
+        CHECK(sites.size() == 1 && sites[0].type == JType::Diamond && JunctionLayouts()[sites[0].layout].id == "diamond_45");
+    }
+    {
+        Network net;
+        const JunctionParams lp = AdjustParams(JunctionLayouts()[(size_t)NearestLayout([] { JunctionParams p; p.type = JType::Crossover; return p; }())].p);
+        const float run = CrossoverRun(lp.spacing, lp.angleDeg, lp.radius);
+        const int a = MkNode(net, {0, 0}), b = MkNode(net, {run, lp.spacing});
+        Line(net, MkNode(net, {-100, 0}), a), Line(net, a, MkNode(net, {150, 0}));
+        Line(net, MkNode(net, {-100, lp.spacing}), b), Line(net, b, MkNode(net, {150, lp.spacing}));
+        const int diag = Line(net, a, b);
+        const auto sites = FindJunctionSites(net, nullptr);
+        CHECK(sites.size() == 1 && sites[0].type == JType::Crossover && sites[0].node2 >= 0);
+        const RailCuts R = RailCutsFor(net, sites);
+        float covered = 0; // the diagonal is all inside the box: its gaps cover it
+        for (const auto& g : R.trackGaps[(size_t)diag]) covered += g.second - g.first;
+        CHECK(R.trackGaps[(size_t)diag].size() == 2 && covered >= 1.0f);
+    }
+    { // a level crossing: the rail's track cut along the box, ramps into the road's mesh, gates as booms
+        Network net;
+        const int rail = Line(net, MkNode(net, {-120, 0}), MkNode(net, {120, 0}));
+        Line(net, MkNode(net, {0, -60}), MkNode(net, {0, 60}), kRoad);
+        const auto sites = FindJunctionSites(net, nullptr);
+        CHECK(sites.size() == 1 && sites[0].type == JType::LevelCrossing && JunctionLayouts()[sites[0].layout].id == "level_90_w6");
+        if (sites.size() != 1) return;
+        const RailCuts R = RailCutsFor(net, sites);
+        CHECK(R.trackGaps[(size_t)rail].size() == 1);
+        MeshOut out;
+        BuildNetwork(net, nullptr, out, &R);
+        const PlaneRect r = SiteRect(sites[0]);
+        for (const tbd::Vertex& v : out.byMat[(int)Mat::Track]) {
+            CHECK(v.px < r.x0 + 0.01f || v.px > r.x1 - 0.01f);
+            if (!(v.px < r.x0 + 0.01f || v.px > r.x1 - 0.01f)) std::printf("  track vertex at x %.3f (box %.3f .. %.3f)\n", v.px, r.x0, r.x1);
+        }
+        const size_t asphalt = out.byMat[(int)Mat::Asphalt].size(), conc = out.byMat[(int)Mat::Concrete].size();
+        JunctionDraws d;
+        BuildJunctionDraws(net, sites, d, &out);
+        CHECK(out.byMat[(int)Mat::Asphalt].size() > asphalt && out.byMat[(int)Mat::Concrete].size() > conc); // lanes and sidewalks ramp
+        std::vector<tbd::Vertex> up, down;
+        CrossingBooms(sites[0], 1.0f, up), CrossingBooms(sites[0], 0.0f, down);
+        float yUp = -1e9f, yDown = -1e9f;
+        for (const tbd::Vertex& v : up) yUp = std::max(yUp, v.py);
+        for (const tbd::Vertex& v : down) yDown = std::max(yDown, v.py);
+        CHECK(!up.empty() && up.size() == down.size() && yUp > yDown + 2.0f); // raised booms reach far higher
+    }
+    // switch angles snap to the baked layouts
+    CHECK(AngleBetween(SnapSwitchDir({Dir(180), Dir(0)}, Dir(11)), Dir(12)) < 0.01f);
+    CHECK(AngleBetween(SnapSwitchDir({Dir(180), Dir(0)}, Dir(-17)), Dir(-20)) < 0.01f);
+    CHECK(AngleBetween(SnapSwitchDir({Dir(180), Dir(0)}, Dir(2)), Dir(2)) < 0.01f);
+    CHECK(AngleBetween(SnapSwitchDir({Dir(180), Dir(0)}, Dir(40)), Dir(40)) < 0.01f);
+}
+
 int main() {
+    TestPlacement();
     TestClassify();
     TestPlanJoin();
     TestRouting();

@@ -198,6 +198,30 @@ inline bool RailCanPass(const Network& net, int n, int in, int out, const RailJu
     return ArmTurn(arms, i, o) <= kTurnoutMaxDeg + 0.5f;
 }
 
+// The switch angles the junction layouts are baked for (rail_junction_plane.h JunctionLayouts: turnout_08 / _12 / _20,
+// threeway_12). The road tool turns a track leaving a line through a switch to the nearest one, so the junction drawn
+// there is the graph's own (SnapSwitchDir). Straight on (within kStraightTolDeg) and sharper than the limit stay as drawn.
+constexpr float kSwitchLayoutDeg[3] = {8.0f, 12.0f, 20.0f};
+inline V2 SnapSwitchDir(const std::vector<V2>& arms, V2 d) {
+    if (arms.size() < 2) return d;
+    d = Norm(d);
+    int from = -1;
+    float least = 1e9f;
+    for (int k = 0; k < (int)arms.size(); ++k) {
+        const float turn = AngleBetween(arms[(size_t)k] * -1.0f, d);
+        if (turn < least) least = turn, from = k;
+    }
+    if (least <= kStraightTolDeg || least > kTurnoutMaxDeg) return d;
+    float want = kSwitchLayoutDeg[0];
+    if (arms.size() >= 3) want = 12.0f; // a third route: a 3-way switch (threeway_12)
+    else
+        for (float a : kSwitchLayoutDeg)
+            if (std::fabs(a - least) < std::fabs(want - least)) want = a;
+    const V2 line = arms[(size_t)from] * -1.0f;
+    const float side = Cross2(line, d) >= 0 ? 1.0f : -1.0f, c = std::cos(Rad(want)), s = std::sin(Rad(want)) * side;
+    return Norm({line.x * c - line.z * s, line.x * s + line.z * c});
+}
+
 // Turnout geometry: the diverging route leaves the points tangent to the line on a curve of radius R and turns angle a.
 // Its lead (points to the end of the curve, along the line) and the side offset there.
 inline float TurnoutLead(float angleDeg, float radius) { return radius * std::sin(Rad(angleDeg)); }

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "rail_junction.h" // [junction] SnapSwitchDir: switch angles snap to the baked junction layouts
 #include "rail_port.h"
 #include "road_network.h"
 #include "road_snap.h" // [auto snap] building access, angle steps, spacing, dashed guides
@@ -521,6 +522,7 @@ public:
             } else if (mode == ToolMode::Straight && On(SnapConnect)) curve = Aligned(A, c, pts.front(), cursor); // [connect]
             break;
         }
+        if (IsRail() && On(SnapConnect) && Current().kind == AssetKind::Road) SnapSwitchAngles(curve); // [junction]
         out.push_back({curve, ya, yb, prof});
         if (parallel) {
             const float d = ParallelOffset();
@@ -793,6 +795,34 @@ private:
         const V2 u = net.OutDir(sg, sp.node);
         dir = start ? u * -1.0f : u;
         return true;
+    }
+    // [junction] The rail arms at a snap that would become a switch: a rail node's arms, or a rail segment's middle
+    // (both ways). Fewer than two: no switch.
+    bool SwitchArmsAt(const Snap& sp, std::vector<V2>& arms) const {
+        arms.clear();
+        if (sp.port >= 0) return false;
+        if (sp.node >= 0 && sp.node < (int)net.nodes.size() && net.nodes[sp.node].alive) {
+            for (int s : net.nodes[sp.node].segs)
+                if (net.segs[s].alive && net.IsRailSeg(s)) arms.push_back(net.OutDir(s, sp.node));
+        } else if (sp.seg >= 0 && sp.seg < (int)net.segs.size() && net.segs[sp.seg].alive && net.IsRailSeg(sp.seg)) {
+            const V2 t = Norm(net.Curve(sp.seg).Tan(sp.t));
+            arms = {t, t * -1.0f};
+        }
+        return arms.size() >= 2;
+    }
+    // [junction] A new track's ends that leave a line through a switch turn to the nearest baked switch angle
+    // (rail_junction.h SnapSwitchDir), bending the curve's end tangent; its end points stay.
+    void SnapSwitchAngles(Cubic& c) const {
+        std::vector<V2> arms;
+        const float chord = Len(c.p3 - c.p0);
+        if (!pts.empty() && SwitchArmsAt(pts.front(), arms)) {
+            const V2 d = Norm(c.Tan(0)), e = SnapSwitchDir(arms, d);
+            if (Dot2(d, e) < 0.99999f) c.p1 = c.p0 + e * std::max(Len(c.p1 - c.p0), chord * 0.3f);
+        }
+        if (SwitchArmsAt(cursor, arms)) {
+            const V2 d = Norm(c.Tan(1)) * -1.0f, e = SnapSwitchDir(arms, d);
+            if (Dot2(d, e) < 0.99999f) c.p2 = c.p3 + e * std::max(Len(c.p2 - c.p3), chord * 0.3f);
+        }
     }
     // Straight mode from / onto an open end: bend so the new piece continues the old one's tangent (roads only when the
     // chord is within 35 deg of it: a sharper angle is a deliberate corner; track whenever it heads forward).

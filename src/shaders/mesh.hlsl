@@ -1305,6 +1305,92 @@ float4 TrackPS(VSOut i) {
     return float4(lit, 0.76 + 0.23 * share);
 }
 
+// Rail junction ("SPOM junction", alpha 0.84, src/city/rail_junction_plane.h): the track's flat box and march, but the texture
+// (assets/rail/junction/tex: one baked layout, height in alpha) spans the box once instead of repeating. Height byte 0 is a
+// hole: no surface there, the ray passes and the pixel is discarded (the terrain shows through). Same settings as TrackPS.
+//   normal     the layout's forward (+x, along the stem); its canonical +z (across) is (-F.z, 0, F.x) * sign(color.g)
+//   uv         metres across from the box's z0 edge (0 .. W) and along from its x0 edge (0 .. L), canonical (unmirrored)
+//   color.r    this vertex's height relative to the rail top, color.g the width W (negative: a mirrored, left-hand layout),
+//   color.b    the length L
+float JunctionH(float3 p, float2 size, float2 halfTexel) { // p = (across, y, along); -1e9 in a hole
+    const float2 uv = clamp(float2(p.x / size.x, p.z / size.y), halfTexel, 1.0 - halfTexel);
+    const float h = gAlbedo.SampleLevel(gTexSampler, uv, 0.0).a;
+    return h < 0.5 / 255.0 ? -1e9 : -kTrackDepth + kTrackDepth * h;
+}
+float JunctionHN(float3 p, float2 size, float2 halfTexel, float fallback) { // for gradients: a hole reads as the centre
+    const float h = JunctionH(p, size, halfTexel);
+    return h < -1.0 ? fallback : h;
+}
+float4 JunctionPS(VSOut i) {
+    const float3 F = normalize(float3(i.normal.x, 0.0, i.normal.z));
+    const float m = i.color.g < 0.0 ? -1.0 : 1.0;
+    const float3 Z = float3(-F.z, 0.0, F.x) * m;
+    const float2 size = float2(max(abs(i.color.g), 0.5), max(i.color.b, 0.5));
+    float2 dim;
+    gAlbedo.GetDimensions(dim.x, dim.y);
+    const float2 halfTexel = 0.5 / max(dim, float2(1.0, 1.0));
+    const float3 vw = normalize(i.worldPos - gLight.eye.xyz);
+    const float3 d = float3(dot(vw, Z), vw.y, dot(vw, F));
+    float3 p0 = float3(i.uv.x, i.color.r, i.uv.y);
+    const float camDist = length(i.worldPos - gLight.eye.xyz);
+    const float2 uvIn = clamp(float2(i.uv.x / size.x, i.uv.y / size.y), halfTexel, 1.0 - halfTexel);
+    float t = 0.0, tBack = 0.0;
+    if (camDist < 160.0) {
+        float3 tb = float3(1e9, 1e9, 1e9); // back to where the ray entered the box (this may be a back face)
+        if (abs(d.x) > 1e-5) tb.x = d.x > 0.0 ? p0.x / d.x : (p0.x - size.x) / d.x;
+        if (abs(d.y) > 1e-5) tb.y = d.y > 0.0 ? (p0.y + kTrackDepth) / d.y : p0.y / d.y;
+        if (abs(d.z) > 1e-5) tb.z = d.z > 0.0 ? p0.z / d.z : (p0.z - size.y) / d.z;
+        tBack = max(min(tb.x, min(tb.y, tb.z)), 0.0);
+        p0 -= d * tBack;
+        // (Where the plain track meets the box it has an end cap, road_network.h TrackCap: a ray that leaves this box
+        // there below the plain box's top meets the cap, and TrackPS marches it from where it entered.)
+        float3 tf = float3(1e9, 1e9, 1e9);
+        if (abs(d.x) > 1e-5) tf.x = d.x > 0.0 ? (size.x - p0.x) / d.x : -p0.x / d.x;
+        if (abs(d.y) > 1e-5) tf.y = d.y > 0.0 ? -p0.y / d.y : (-kTrackDepth - p0.y) / d.y;
+        if (abs(d.z) > 1e-5) tf.z = d.z > 0.0 ? (size.y - p0.z) / d.z : -p0.z / d.z;
+        const float tExit = max(min(tf.x, min(tf.y, tf.z)), 0.0);
+        const int steps = 40;
+        const float dt = tExit / steps;
+        float tLo = 0.0, tHi = 0.0;
+        bool hit = false;
+        [loop] for (int k = 0; k <= steps; ++k) {
+            tHi = dt * k;
+            const float3 q = p0 + d * tHi;
+            if (q.y <= JunctionH(q, size, halfTexel)) { hit = true; break; }
+            tLo = tHi;
+        }
+        if (!hit) discard;
+        [unroll] for (int r = 0; r < 5; ++r) {
+            const float tm = 0.5 * (tLo + tHi);
+            const float3 q = p0 + d * tm;
+            if (q.y <= JunctionH(q, size, halfTexel)) tHi = tm; else tLo = tm;
+        }
+        t = tHi;
+    } else if (gAlbedo.Sample(gTexSampler, uvIn).a < 0.1) discard; // far: the box top, flat, with its holes
+    const float3 q = p0 + d * t;
+    const float2 uv = clamp(float2(q.x / size.x, q.z / size.y), halfTexel, 1.0 - halfTexel);
+    const float3 albedo = camDist < 160.0 ? gAlbedo.SampleLevel(gTexSampler, uv, 0.0).rgb : gAlbedo.Sample(gTexSampler, uvIn).rgb;
+    float3 nl = float3(0, 1, 0);
+    if (camDist < 160.0) {
+        const float e = 0.02, h0 = JunctionHN(q, size, halfTexel, q.y);
+        nl = normalize(float3(-(JunctionHN(q + float3(e, 0, 0), size, halfTexel, h0) - JunctionHN(q - float3(e, 0, 0), size, halfTexel, h0)) / (2.0 * e), 1.0,
+                              -(JunctionHN(q + float3(0, 0, e), size, halfTexel, h0) - JunctionHN(q - float3(0, 0, e), size, halfTexel, h0)) / (2.0 * e)));
+        if (q.y < h0 - 0.003) nl = abs(d.x) > abs(d.z) ? float3(-sign(d.x), 0, 0) : float3(0, 0, -sign(d.z)); // entered through a side
+    }
+    const float3 n = normalize(Z * nl.x + float3(0, nl.y, 0) + F * nl.z);
+    const float3 wp = i.worldPos + vw * (t - tBack);
+    float shade = 1.0;
+    if (camDist < 160.0) {
+        const float3 l = gLight.sunDir.xyz, lt = float3(dot(l, Z), l.y, dot(l, F));
+        if (lt.y > 0.02) [unroll] for (int s = 1; s <= 6; ++s) { const float3 sp = q + lt * (s * 0.06 + 0.004); if (sp.y <= JunctionH(sp, size, halfTexel)) { shade = 0.4; break; } }
+    }
+    const float steel = smoothstep(0.55, 0.85, albedo.g);
+    const float cloudSun = CloudSun(wp);
+    float share;
+    const float3 lit = LitPbr(pow(saturate(albedo), 2.2), n, wp, gPixelShadow * cloudSun * shade, lerp(0.85, 0.35, steel), steel * 0.8, cloudSun, share);
+    return float4(lit, 0.76 + 0.23 * share);
+}
+
 // SPOM slabs (alpha 0.806 .. 0.824): a whole building face as one thin box kSlabDepth deep standing out of the face; each pixel
 // marches the eye ray against the relief in gAlbedo.a (height out of the face, 0..1 of the depth) so pilasters, recessed windows,
 // brick, door portals, skylights and parapets are real silhouettes from a handful of triangles (tools/building_gen/depot_tex.py).
@@ -1699,6 +1785,7 @@ float4 PSMain(VSOut i) : SV_Target {
     if (i.color.a < 0.15) return TerrainPS(i);
     if (abs(i.color.a - 0.8) < 0.004) return SpomPS(i); // silhouette POM volume (balcony, canopy)
     if (abs(i.color.a - 0.83) < 0.004) return TrackPS(i); // SPOM railway track
+    if (abs(i.color.a - 0.84) < 0.004) return JunctionPS(i); // SPOM rail junction / level crossing (one texture over the box)
     if (i.color.a > 0.806 && i.color.a < 0.824) return SlabPS(i); // SPOM building faces (walls, roofs)
     if (abs(i.color.a - 0.645) < 0.003) return GlassPS(i);
     if (abs(i.color.a - 0.70) < 0.003) return InteriorPS(i); // vehicle windows: interior mapping
@@ -1869,6 +1956,10 @@ ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
     } else if (abs(a - 0.83) < 0.004) { // SPOM railway track (TrackPS): uv metres across and along, g the box width
         const float W = max(i.color.g, 0.1);
         albedo = gAlbedo.SampleLevel(gTexSampler, float2((i.uv.x + 0.5 * W) / W, i.uv.y / 0.6), 1.0).rgb;
+    } else if (abs(a - 0.84) < 0.004) { // SPOM rail junction (JunctionPS): the texture once over the box, holes cut
+        const float4 tex = gAlbedo.SampleLevel(gTexSampler, i.uv / max(float2(abs(i.color.g), i.color.b), 0.5), 1.0);
+        clip(tex.a - 0.1);
+        albedo = tex.rgb;
     } else if (abs(a - 0.8) < 0.004) { // silhouette POM volume (SpomPS): rg the volume's size
         const float2 size = max(i.color.rg, 0.05);
         albedo = gAlbedo.SampleLevel(gTexSampler, float2(i.uv.x / size.x, 1.0 - i.uv.y / size.y), 2.0).rgb;
@@ -1884,7 +1975,7 @@ ChunkBakeOut ChunkBakePS(ChunkBakeVSOut i) {
         albedo = tex.rgb * saturate(i.color.rgb);
     }
     float3 n = dot(i.normal, i.normal) > 1e-8 ? normalize(i.normal) : float3(0, 1, 0);
-    if (abs(a - 0.83) < 0.004) n = float3(0, 1, 0); // a track's vertex normal is its forward direction (TrackPS)
+    if (abs(a - 0.83) < 0.004 || abs(a - 0.84) < 0.004) n = float3(0, 1, 0); // a track's vertex normal is its forward direction (TrackPS)
     if (a > 0.806 && a < 0.824) { // a slab's vertex normal is its T, along the face (SlabPS): the face's own normal from it
         const float3 T = normalize(float3(n.x, 0.0, n.z) + float3(1e-6, 0.0, 0.0));
         n = a > 0.815 ? float3(0, 1, 0) : float3(-T.z, 0.0, T.x);

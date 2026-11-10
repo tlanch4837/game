@@ -15,7 +15,8 @@ FORMATION = -0.55 the box bottom, stored as 8-bit height maps. What it draws, fr
                  from assets/roads/tex/asphalt_albedo.png at its 4 m world tiling), panel joints and open flangeways.
 Holes (height byte 0) are where the box has no surface: the shader discards there (terrain shows through).
 Texel ~2 cm (long side capped at 2048, sizes multiples of 4 for ASTC). Deterministic (fixed seeds).
-Output: assets/rail/junction/tex/<id>_{albedo.jpg, height.png, normal.png}; previews in docs/rail_junction_tex/.
+Output: assets/rail/junction/tex/<id>_{albedo.jpg, height.png} and props_albedo.png (the props atlas); previews in
+docs/rail_junction_tex/.
 Run:  tools\\rail_junction_tex\\dump_layouts.bat  then  python tools/rail_junction_tex/gen_junction_tex.py
 """
 import json, math, os, sys
@@ -159,7 +160,11 @@ def bake_layout(L, track, ballast, asphalt):
         for j in range(i + 1, len(proj)):
             Di, Dj = proj[i][2], proj[j][2]
             between = proj[i][4] * proj[j][4] + proj[i][5] * proj[j][5] < 0  # the two nearest points on opposite sides
-            put(proj[i][3] & proj[j][3] & between & (Di + Dj < FILL_GAP), gb, gc)
+            # the shared bed falls off 1:1.5 towards the box's edges, as a shoulder: where it meets an edge (between two
+            # tracks leaving the box, or in a diamond's acute angle) it does not stand as a cut wall over the ground
+            edge = np.minimum(np.minimum(X - x0, x1 - X), np.minimum(Z - z0, z1 - Z))
+            hf = np.minimum(gb, F + (edge - 0.05) / 1.5 + (gb - CRIB)).astype(np.float32)
+            put(proj[i][3] & proj[j][3] & between & (Di + Dj < FILL_GAP) & (hf > F + 0.004), hf, gc)
     # ---- plain track: stamped from the plain tile, in phase
     ties = [r["ties"] for r in routes]
     for (S, LAT, D, IN, _, _), T in zip(proj, ties):
@@ -240,10 +245,40 @@ def normal_map(Hn, du, dv):
     return ((n * 0.5 + 0.5) * 255).astype(np.uint8)
 
 
+def props_atlas():
+    """The props atlas (rail_junction_mesh.h JMat::Prop: four cells across u: point machine / relay cabinet, gate mast card
+    (crossbuck over two red lights, pole, base; transparent around it), gate boom stripes, deck). Same drawing as the
+    preview's canvas (docs/rail_junction_spom.js atlas()); RGBA, alpha 0 is cut out by the game's material."""
+    from PIL import ImageDraw
+    w, h = 512, 256
+    q = w // 4
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    g = ImageDraw.Draw(im)
+    g.rectangle([0, 0, q - 1, h - 1], fill=(0x9a, 0xa0, 0x92, 255))
+    g.rectangle([10, 10, q - 10, h // 2 - 10], outline=(0x5e, 0x63, 0x59, 255), width=3)
+    g.rectangle([10, h // 2 + 10, q - 10, h - 10], outline=(0x5e, 0x63, 0x59, 255), width=3)
+    mx = q + q // 2
+    g.rectangle([mx - 4, 0, mx + 4, h - 1], fill=(0xd9, 0xd9, 0xd9, 255))
+    for a in (0.6, -0.6):  # the crossbuck: two white boards with a black rim, crossed
+        for half_l, half_w, col in ((56, 9, (17, 17, 17, 255)), (53, 6, (255, 255, 255, 255))):
+            c, s = math.cos(a), math.sin(a)
+            pts = [(mx + x * c - y * s, 40 + x * s + y * c) for x, y in ((-half_l, -half_w), (half_l, -half_w), (half_l, half_w), (-half_l, half_w))]
+            g.polygon(pts, fill=col)
+    g.rectangle([mx - 46, 80, mx + 46, 106], fill=(0x22, 0x22, 0x22, 255))
+    for cx in (mx - 28, mx + 28):
+        g.ellipse([cx - 10, 83, cx + 10, 103], fill=(0xe0, 0x20, 0x18, 255))
+    g.rectangle([mx - 16, h - 40, mx + 16, h - 1], fill=(0x44, 0x44, 0x44, 255))
+    for i in range(8):
+        g.rectangle([2 * q + i * q // 8, 0, 2 * q + (i + 1) * q // 8 - 1, h - 1], fill=(255, 255, 255, 255) if i % 2 else (0xd0, 0x18, 0x18, 255))
+    g.rectangle([3 * q, 0, w - 1, h - 1], fill=(0x4a, 0x4a, 0x4c, 255))
+    im.save(os.path.join(OUT, "props_albedo.png"))
+
+
 def main():
     src = os.path.join(ROOT, "obj", "rail_junction_layouts.json")
     data = json.load(open(src))
     os.makedirs(OUT, exist_ok=True); os.makedirs(DOCS, exist_ok=True)
+    props_atlas()
     Hfull, Cfull, TH, TC = track_tile()
     track = (TH, TC)
     ballast = ballast_tile()
@@ -265,7 +300,8 @@ def main():
         x0, z0, x1, z1 = L["rect"]; nA, nX = L["tex"]
         Image.fromarray(rgb).save(os.path.join(OUT, f"{L['id']}_albedo.jpg"), quality=92)
         Image.fromarray(a).save(os.path.join(OUT, f"{L['id']}_height.png"))
-        Image.fromarray(normal_map(Hn, (z1 - z0) / nX, (x1 - x0) / nA)).save(os.path.join(OUT, f"{L['id']}_normal.png"))
+        # no normal map in assets: JunctionPS takes the normal from the height (as TrackPS); the preview keeps one in docs
+        Image.fromarray(normal_map(Hn, (z1 - z0) / nX, (x1 - x0) / nA)).save(os.path.join(DOCS, f"{L['id']}_normal.png"))
         Image.fromarray(rgb).save(os.path.join(DOCS, f"{L['id']}_albedo.jpg"), quality=85)
         Image.fromarray(a).save(os.path.join(DOCS, f"{L['id']}_height.png"), optimize=True)
         n = nA * nX

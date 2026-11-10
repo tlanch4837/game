@@ -38,6 +38,14 @@ Copy-Item "$repo\src\city\news_lines.json" "$Out\assets\news" -Force
 foreach ($need in "audio\radio", "audio\music\playlist.txt", "audio\ambience", "sim\tuning.json", "buildings") {
     if (-not (Test-Path "$Out\assets\$need")) { Write-Warning "assets\$need is missing from $Assets" }
 }
+# The rail junction planes' textures (switches, diamonds, crossovers, level crossings: <layout>_albedo.jpg + _height.png and
+# props_albedo.png; city_rail_junctions.inl reads them, only the layouts a city uses). Without them junctions draw nothing.
+$junction = @(Get-ChildItem "$Out\assets\rail\junction\tex" -File -ErrorAction SilentlyContinue)
+if ($junction.Count -eq 0) {
+    Write-Warning "assets\rail\junction\tex is missing: run  tools\rail_junction_tex\dump_layouts.bat  then  python tools\rail_junction_tex\gen_junction_tex.py"
+} else {
+    "assets\rail\junction\tex: {0} files, {1:N1} MB" -f $junction.Count, (($junction | Measure-Object Length -Sum).Sum / 1MB)
+}
 if (-not (Test-Path "$Out\assets\audio\music\playlist.txt")) {
     Write-Warning "no city music: run  python tools\audio_gen\gen_audio.py  (writes assets\audio\music and assets\audio\ambience)"
 }

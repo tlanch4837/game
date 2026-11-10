@@ -28,7 +28,7 @@ constexpr float kJunctionSpomAlpha = 0.84f; // TrackPS's tag is 0.83 (tiling tra
 constexpr float kJunctionTexel = 0.02f;     // metres per texel of the baked layouts (long side capped at 2048)
 
 struct JunctionLayout {
-    std::string id; // file stem of its textures: assets/rail/junction/tex/<id>_{albedo.jpg,height.png,normal.png}
+    std::string id; // file stem of its textures: assets/rail/junction/tex/<id>_{albedo.jpg,height.png}
     JunctionParams p;
 };
 
@@ -36,30 +36,40 @@ struct JunctionLayout {
 inline const std::vector<JunctionLayout>& JunctionLayouts() {
     static const std::vector<JunctionLayout> v = [] {
         std::vector<JunctionLayout> l;
-        auto add = [&](const char* id, JType t, float ang, float R = 150.0f) {
+        auto add = [&](const char* id, JType t, float ang, float R = 150.0f, float road = 9.0f, float walk = 2.0f) {
             JunctionLayout L;
             L.id = id, L.p.type = t, L.p.hand = t == JType::Wye || t == JType::ThreeWay || t == JType::LevelCrossing ? Hand::None : Hand::Right;
             L.p.angleDeg = ang, L.p.radius = R, L.p.lod = 2; // lod 2: fine curves for baking
+            L.p.roadWidth = road, L.p.sidewalk = walk;
             l.push_back(L);
         };
         add("turnout_08", JType::Turnout, 8), add("turnout_12", JType::Turnout, 12), add("turnout_20", JType::Turnout, 20, 90);
         add("wye_08", JType::Wye, 8), add("threeway_12", JType::ThreeWay, 12);
-        add("diamond_30", JType::Diamond, 30), add("diamond_90", JType::Diamond, 90), add("slip_15", JType::SingleSlip, 15);
+        add("diamond_30", JType::Diamond, 30), add("diamond_45", JType::Diamond, 45), add("diamond_60", JType::Diamond, 60);
+        add("diamond_90", JType::Diamond, 90), add("slip_15", JType::SingleSlip, 15);
         add("crossover_10", JType::Crossover, 10), add("scissors_10", JType::Scissors, 10);
-        add("level_90", JType::LevelCrossing, 90), add("level_60", JType::LevelCrossing, 60), add("level_45", JType::LevelCrossing, 45);
+        // level crossings: five angles x the common carriageway classes (two-lane 6 m, 9 m, four-lane 14 m, six-lane 21 m;
+        // their sidewalks 2.5, 2, 3, 4 m). ids: level_<angle> (9 m), level_<angle>_w6, _w14, _w21
+        for (int w : {9, 6, 14, 21})
+            for (int a : {90, 75, 60, 45, 30}) {
+                const std::string id = "level_" + std::to_string(a) + (w == 9 ? std::string() : "_w" + std::to_string(w));
+                add(id.c_str(), JType::LevelCrossing, (float)a, 150, (float)w, w == 6 ? 2.5f : w == 9 ? 2.0f : w == 14 ? 3.0f : 4.0f);
+            }
         return l;
     }();
     return v;
 }
 
-// The canonical layout for a junction: same type, nearest angle. mirror: drawn left-handed.
+// The canonical layout for a junction: same type, nearest angle (level crossings: then the nearest carriageway width,
+// 1 m of width counting as 1 deg). mirror: drawn left-handed.
 inline int NearestLayout(const JunctionParams& p, bool* mirror = nullptr) {
     int best = -1;
     float bd = 1e9f;
     const auto& L = JunctionLayouts();
     for (size_t i = 0; i < L.size(); ++i) {
         if (L[i].p.type != p.type) continue;
-        const float d = std::fabs(L[i].p.angleDeg - p.angleDeg);
+        float d = std::fabs(L[i].p.angleDeg - p.angleDeg);
+        if (p.type == JType::LevelCrossing) d += std::fabs(L[i].p.roadWidth - p.roadWidth);
         if (d < bd) bd = d, best = (int)i;
     }
     if (mirror) *mirror = p.hand == Hand::Left;

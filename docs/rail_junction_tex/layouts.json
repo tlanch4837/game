@@ -106,6 +106,40 @@
    "holes": 0.53
   },
   {
+   "id": "diamond_45",
+   "type": "Diamond",
+   "angle": 45.0,
+   "radius": 150.0,
+   "rect": [
+    -10.5,
+    -8.9803,
+    10.5,
+    8.9803
+   ],
+   "tex": [
+    1052,
+    900
+   ],
+   "holes": 0.583
+  },
+  {
+   "id": "diamond_60",
+   "type": "Diamond",
+   "angle": 60.0,
+   "radius": 150.0,
+   "rect": [
+    -9.9,
+    -9.6737,
+    9.9,
+    9.6737
+   ],
+   "tex": [
+    992,
+    968
+   ],
+   "holes": 0.605
+  },
+  {
    "id": "diamond_90",
    "type": "Diamond",
    "angle": 90.0,
@@ -191,6 +225,23 @@
    "holes": 0.061
   },
   {
+   "id": "level_75",
+   "type": "Level crossing",
+   "angle": 75.0,
+   "radius": 150.0,
+   "rect": [
+    -17.1,
+    -2.4,
+    17.1,
+    2.4
+   ],
+   "tex": [
+    1712,
+    244
+   ],
+   "holes": 0.066
+  },
+  {
    "id": "level_60",
    "type": "Level crossing",
    "angle": 60.0,
@@ -223,6 +274,278 @@
     208
    ],
    "holes": 0.067
+  },
+  {
+   "id": "level_30",
+   "type": "Level crossing",
+   "angle": 30.0,
+   "radius": 150.0,
+   "rect": [
+    -30.6,
+    -2.4,
+    30.6,
+    2.4
+   ],
+   "tex": [
+    2048,
+    164
+   ],
+   "holes": 0.063
+  },
+  {
+   "id": "level_90_w6",
+   "type": "Level crossing",
+   "angle": 90.0,
+   "radius": 150.0,
+   "rect": [
+    -13.5,
+    -2.4,
+    13.5,
+    2.4
+   ],
+   "tex": [
+    1352,
+    244
+   ],
+   "holes": 0.065
+  },
+  {
+   "id": "level_75_w6",
+   "type": "Level crossing",
+   "angle": 75.0,
+   "radius": 150.0,
+   "rect": [
+    -15.9,
+    -2.4,
+    15.9,
+    2.4
+   ],
+   "tex": [
+    1592,
+    244
+   ],
+   "holes": 0.07
+  },
+  {
+   "id": "level_60_w6",
+   "type": "Level crossing",
+   "angle": 60.0,
+   "radius": 150.0,
+   "rect": [
+    -18.9,
+    -2.4,
+    18.9,
+    2.4
+   ],
+   "tex": [
+    1892,
+    244
+   ],
+   "holes": 0.072
+  },
+  {
+   "id": "level_45_w6",
+   "type": "Level crossing",
+   "angle": 45.0,
+   "radius": 150.0,
+   "rect": [
+    -22.5,
+    -2.4,
+    22.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    220
+   ],
+   "holes": 0.071
+  },
+  {
+   "id": "level_30_w6",
+   "type": "Level crossing",
+   "angle": 30.0,
+   "radius": 150.0,
+   "rect": [
+    -28.5,
+    -2.4,
+    28.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    176
+   ],
+   "holes": 0.067
+  },
+  {
+   "id": "level_90_w14",
+   "type": "Level crossing",
+   "angle": 90.0,
+   "radius": 150.0,
+   "rect": [
+    -18.0,
+    -2.4,
+    18.0,
+    2.4
+   ],
+   "tex": [
+    1800,
+    244
+   ],
+   "holes": 0.048
+  },
+  {
+   "id": "level_75_w14",
+   "type": "Level crossing",
+   "angle": 75.0,
+   "radius": 150.0,
+   "rect": [
+    -20.7,
+    -2.4,
+    20.7,
+    2.4
+   ],
+   "tex": [
+    2048,
+    240
+   ],
+   "holes": 0.054
+  },
+  {
+   "id": "level_60_w14",
+   "type": "Level crossing",
+   "angle": 60.0,
+   "radius": 150.0,
+   "rect": [
+    -24.0,
+    -2.4,
+    24.0,
+    2.4
+   ],
+   "tex": [
+    2048,
+    208
+   ],
+   "holes": 0.057
+  },
+  {
+   "id": "level_45_w14",
+   "type": "Level crossing",
+   "angle": 45.0,
+   "radius": 150.0,
+   "rect": [
+    -28.8,
+    -2.4,
+    28.8,
+    2.4
+   ],
+   "tex": [
+    2048,
+    172
+   ],
+   "holes": 0.055
+  },
+  {
+   "id": "level_30_w14",
+   "type": "Level crossing",
+   "angle": 30.0,
+   "radius": 150.0,
+   "rect": [
+    -37.5,
+    -2.4,
+    37.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    132
+   ],
+   "holes": 0.05
+  },
+  {
+   "id": "level_90_w21",
+   "type": "Level crossing",
+   "angle": 90.0,
+   "radius": 150.0,
+   "rect": [
+    -22.5,
+    -2.4,
+    22.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    220
+   ],
+   "holes": 0.039
+  },
+  {
+   "id": "level_75_w21",
+   "type": "Level crossing",
+   "angle": 75.0,
+   "radius": 150.0,
+   "rect": [
+    -25.5,
+    -2.4,
+    25.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    196
+   ],
+   "holes": 0.044
+  },
+  {
+   "id": "level_60_w21",
+   "type": "Level crossing",
+   "angle": 60.0,
+   "radius": 150.0,
+   "rect": [
+    -29.4,
+    -2.4,
+    29.4,
+    2.4
+   ],
+   "tex": [
+    2048,
+    168
+   ],
+   "holes": 0.046
+  },
+  {
+   "id": "level_45_w21",
+   "type": "Level crossing",
+   "angle": 45.0,
+   "radius": 150.0,
+   "rect": [
+    -35.4,
+    -2.4,
+    35.4,
+    2.4
+   ],
+   "tex": [
+    2048,
+    140
+   ],
+   "holes": 0.046
+  },
+  {
+   "id": "level_30_w21",
+   "type": "Level crossing",
+   "angle": 30.0,
+   "radius": 150.0,
+   "rect": [
+    -46.5,
+    -2.4,
+    46.5,
+    2.4
+   ],
+   "tex": [
+    2048,
+    108
+   ],
+   "holes": 0.042
   }
  ]
 }

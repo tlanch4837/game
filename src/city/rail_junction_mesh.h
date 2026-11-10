@@ -549,31 +549,31 @@ inline JunctionParams AdjustParams(JunctionParams p, bool* adjusted = nullptr, s
 // The route centre lines of a junction (local frame), and which are tie-only (virtual).
 inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::vector<char>* virt = nullptr) {
     using namespace jmesh;
-    std::vector<Route> R;
+    std::vector<jmesh::Route> R;
     std::vector<char> v;
     const float s = p.hand == Hand::Left ? -1.0f : 1.0f, a = p.angleDeg, Rr = p.radius;
     const V2 O{0, 0}, X{1, 0};
-    auto add = [&](Route r, bool isVirt = false) { R.push_back(std::move(r)), v.push_back(isVirt); };
+    auto add = [&](jmesh::Route r, bool isVirt = false) { R.push_back(std::move(r)), v.push_back(isVirt); };
     const float stemL = jmesh::Pitched(p.stem);
-    auto stem = [&] { Route r; Straight(r, {-stemL, 0}, X, stemL); add(r); };
+    auto stem = [&] { jmesh::Route r; Straight(r, {-stemL, 0}, X, stemL); add(r); };
     const float lead = TurnoutLead(a, Rr);
     switch (p.type) {
     case JType::Turnout: {
         stem();
-        Route st, dv;
+        jmesh::Route st, dv;
         Straight(st, O, X, jmesh::Pitched(lead + p.tail)), add(st);
         Arc(dv, O, X, Rr, a, s, p.lod), Tail(dv, p.tail), add(dv);
     } break;
     case JType::Wye: {
         stem();
-        Route ax, l, r;
+        jmesh::Route ax, l, r;
         Straight(ax, O, X, jmesh::Pitched(lead + p.tail)), add(ax, true);
         Arc(l, O, X, Rr, a, -1, p.lod), Tail(l, p.tail), add(l);
         Arc(r, O, X, Rr, a, 1, p.lod), Tail(r, p.tail), add(r);
     } break;
     case JType::ThreeWay: {
         stem();
-        Route st, l, r;
+        jmesh::Route st, l, r;
         Straight(st, O, X, jmesh::Pitched(lead + p.tail)), add(st);
         Arc(l, O, X, Rr, a, -1, p.lod), Tail(l, p.tail), add(l);
         Arc(r, O, X, Rr, a, 1, p.lod), Tail(r, p.tail), add(r);
@@ -583,23 +583,23 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
         const float th = Rad(a), T = p.type == JType::SingleSlip ? Rr * std::tan(th * 0.5f) : 0.0f;
         const float H = std::max(8.0f + 1.6f / std::sin(th), T + 5.0f);
         const V2 b{std::cos(th), s * std::sin(th)};
-        Route A, B;
+        jmesh::Route A, B;
         const float Hp = jmesh::Pitched(2 * H) * 0.5f;
         Straight(A, {-Hp, 0}, X, 2 * Hp), add(A);
         Straight(B, b * -Hp, b, 2 * Hp), add(B);
-        if (p.type == JType::SingleSlip) { Route sl; Arc(sl, {-T, 0}, X, Rr, a, s, p.lod), add(sl); }
+        if (p.type == JType::SingleSlip) { jmesh::Route sl; Arc(sl, {-T, 0}, X, Rr, a, s, p.lod), add(sl); }
     } break;
     case JType::Crossover:
     case JType::Scissors: {
         const float run = CrossoverRun(p.spacing, a, Rr), o = TurnoutOffset(a, Rr);
         const float D = std::max(0.0f, p.spacing - 2 * o) / std::sin(Rad(a));
-        Route A, B, x;
+        jmesh::Route A, B, x;
         const float AL = jmesh::Pitched(run + 2 * p.stem);
         Straight(A, {-p.stem, 0}, X, AL), add(A);
         Straight(B, {-p.stem, s * p.spacing}, X, AL), add(B);
-        auto mid = [&](Route& r) { if (D > 0.01f) Straight(r, r.back().c, r.back().f, D); }; // exact: no pitch snap inside
+        auto mid = [&](jmesh::Route& r) { if (D > 0.01f) Straight(r, r.back().c, r.back().f, D); }; // exact: no pitch snap inside
         Arc(x, O, X, Rr, a, s, p.lod), mid(x), Arc(x, O, X, Rr, a, -s, p.lod), add(x);
-        if (p.type == JType::Scissors) { Route y; Arc(y, {0, s * p.spacing}, X, Rr, a, -s, p.lod), mid(y), Arc(y, O, X, Rr, a, s, p.lod), add(y); }
+        if (p.type == JType::Scissors) { jmesh::Route y; Arc(y, {0, s * p.spacing}, X, Rr, a, -s, p.lod), mid(y), Arc(y, O, X, Rr, a, s, p.lod), add(y); }
     } break;
     case JType::LevelCrossing: {
         const jmesh::CrossingFrame F = jmesh::CrossFrame(p);
@@ -608,7 +608,7 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
         for (float e : {-F.outer, F.outer})
             for (float z : {-zr, zr}) H = std::max(H, std::fabs(F.At(e, z).x));
         H += 8.0f; // track beyond the ramps and the relay cabinet
-        Route A;
+        jmesh::Route A;
         const float Hp = jmesh::Pitched(2 * H) * 0.5f;
         Straight(A, {-Hp, 0}, X, 2 * Hp), add(A);
     } break;
@@ -626,7 +626,7 @@ inline JunctionMesh BuildJunctionMesh(const JunctionParams& want) {
     const JunctionParams p = AdjustParams(want, &m.adjusted, &m.note);
     m.angleDeg = p.angleDeg, m.radius = p.radius;
     std::vector<char> virt;
-    const std::vector<Route> routes = JunctionRoutes(p, &virt);
+    const std::vector<jmesh::Route> routes = JunctionRoutes(p, &virt);
     if (routes.empty()) return m;
     for (size_t k = 0; k < routes.size(); ++k)
         if (!virt[k]) Bed(m, routes[k], p.lod);

@@ -501,6 +501,21 @@ inline void TrackSweep(std::vector<Vertex>& out, const std::vector<TrackPt>& pts
         }
     }
 }
+// The end face of a track box at p (start: the sweep's first point, facing back; else its last, facing on), where the
+// sweep meets a rail junction box (rail_junction_place.h). A ray that leaves the junction's box there under this box's
+// top meets it, and TrackPS marches it from where it entered the track box: the tile, in phase with the junction's
+// stamped track, so the seam does not open onto the ground below.
+inline void TrackCap(std::vector<Vertex>& out, const TrackPt& p, bool start) {
+    const float hw = kTrackW * 0.5f, s = start ? -1.0f : 1.0f;
+    auto vtx = [&](float x, float dy) {
+        const V2 across{p.f.z, -p.f.x};
+        const V2 w = p.c + across * x;
+        out.push_back({w.x, p.y + dy, w.z, p.f.x, 0.0f, p.f.z, dy, kTrackW, 0.0f, 0.83f, x, p.s});
+    };
+    const float x0 = -hw * s, x1 = hw * s; // wound to face along s * f
+    vtx(x0, 0), vtx(x1, 0), vtx(x1, -kTrackDepth);
+    vtx(x0, 0), vtx(x1, -kTrackDepth), vtx(x0, -kTrackDepth);
+}
 // An axis-free box: centre bottom c, along d (unit) length len, across width w, from y0 to y1.
 inline void Box(std::vector<Vertex>& out, V2 c, V2 d, float len, float w, float y0, float y1, Vec3 col, float tile) {
     const V2 s = LeftOf(d) * (w * 0.5f), f = d * (len * 0.5f);
@@ -523,6 +538,15 @@ struct SegTrim {
     int host = -1;                             // this road's free end sits on that road: no edges while over it
     struct Cut { float t0, t1, side; int own; }; // own: the ramp that peels off (its lanes decide what is covered)        // on the host: where a ramp peels off; side +1 left, -1 right
     std::vector<Cut> cuts;                     // no verge / barrier / edge walls on that side over [t0, t1]
+    // rail junction planes (rail_junction_place.h): parameter ranges with no track, where a junction box draws it (the
+    // track's sleeper phase is anchored at their edges). The strips and junction fills stay: the box's bed sits on them.
+    std::vector<std::pair<float, float>> trackGaps;
+};
+
+// What the rail junction planes change in the network's own mesh (filled by rail_junction_place.h RailCutsFor): per
+// segment, the parameter ranges a junction box covers, with no plain track there. Empty: nothing changes.
+struct RailCuts {
+    std::vector<std::vector<std::pair<float, float>>> trackGaps;
 };
 
 // Distance along the curve -> parameter, from a sampled arc length table.
@@ -854,18 +878,80 @@ inline void BuildSegment(const Network& net, int si, const SegTrim& trim, const 
         for (float side : {-1.0f, 1.0f}) mesh::Box(conc, q.c + q.l * (side * (p.Half() + 0.6f)), d, 2.0f, 1.2f, y0, y1, white, 3);
         mesh::Box(conc, q.c, LeftOf(d) * -1.0f, p.width + 2.4f, 2.0f, y1 - 1.2f, y1 + 0.3f, white, 3);
     }
-    // ---- rail: one SPOM track box per track strip (TrackSweep; the relief carries rails, sleepers and ballast)
+    // ---- rail: one SPOM track box per track strip (TrackSweep; the relief carries rails, sleepers and ballast), in runs
+    // between the level crossing gaps (trim.trackGaps). Where a run meets a junction box its sleeper phase is anchored at
+    // that edge (the box's routes start half a pitch before a sleeper, as a sweep does); a run boxed at both ends is
+    // stretched to whole pitches.
+    std::vector<std::pair<float, float>> runs; // parameter ranges
+    std::vector<std::pair<bool, bool>> boxed;  // a junction box at the run's start / end
+    const bool anyBox = !trim.trackGaps.empty();
+    if (anyBox) {
+        std::vector<std::pair<float, float>> gaps = trim.trackGaps;
+        std::sort(gaps.begin(), gaps.end());
+        // a box over the segment's end draws the track from there: the run reaches it even where a junction fill
+        // trimmed the strips back
+        float t = gaps.front().first <= 1e-4f ? 0.0f : trim.t0;
+        const float tEnd = gaps.back().second >= 1.0f - 1e-4f ? 1.0f : trim.t1;
+        bool bA = false;
+        for (const auto& g : gaps) {
+            if (g.second <= t || g.first >= tEnd) continue;
+            if (g.first > t + 1e-4f) runs.push_back({t, g.first}), boxed.push_back({bA, true});
+            t = std::max(t, g.second), bA = true;
+        }
+        if (tEnd > t + 1e-4f) runs.push_back({t, tEnd}), boxed.push_back({bA, false});
+    }
+    auto smAt = [&](float t, float& y, bool& tunnel) { // the height as the strip samples lift it, at any parameter t
+        const V2 q = c.At(t), l = LeftOf(c.Tan(t));
+        y = net.YAt(s, t);
+        const float g = ground ? ground(q.x, q.z) : 0.0f;
+        if (ground && std::fabs(y - g) < 1.5f) {
+            float top = g;
+            for (float off : {p.Half(), p.Half() * 0.5f, -p.Half() * 0.5f, -p.Half()}) top = std::max(top, ground((q + l * off).x, (q + l * off).z));
+            y = std::max(y, top + 0.02f);
+        }
+        tunnel = y < g - kTunnelDepth;
+    };
+    constexpr float kPitch = 0.6f; // TrackPS kTrackSleeper
     for (size_t k = 0; k < p.strips.size(); ++k) {
         if (p.strips[k].kind != Kind::Track) continue;
         const float mid = 0.5f * (edge[k] + edge[k + 1]), top = kRoadLift + p.strips[k].h + kTrackDepth - 0.05f;
         std::vector<TrackPt> run;
         auto flush = [&] { if (run.size() >= 2) TrackSweep(out.byMat[(int)Mat::Track], run); run.clear(); };
-        for (int i = 0; i <= n; ++i) {
-            if (sm[i].tunnel) { flush(); continue; }
-            const V2 f = Norm(sm[std::min(i + 1, n)].c - sm[std::max(i - 1, 0)].c);
-            run.push_back({at(i, mid), sm[i].y + top, f, sm[i].dist});
+        if (!anyBox) { // the plain sweep, on the strip samples
+            for (int i = 0; i <= n; ++i) {
+                if (sm[i].tunnel) { flush(); continue; }
+                const V2 f = Norm(sm[std::min(i + 1, n)].c - sm[std::max(i - 1, 0)].c);
+                run.push_back({at(i, mid), sm[i].y + top, f, sm[i].dist});
+            }
+            flush();
+            continue;
         }
-        flush();
+        for (size_t r = 0; r < runs.size(); ++r) {
+            const float t0 = runs[r].first, t1 = runs[r].second;
+            const int m = std::max(2, (int)std::ceil(c.Length() * (t1 - t0) / 1.0f)); // ~1 m: arc length from the points
+            std::vector<float> ts(m + 1), ds(m + 1, 0.0f);
+            for (int i = 0; i <= m; ++i) {
+                ts[i] = t0 + (t1 - t0) * ((float)i / m);
+                if (i) ds[i] = ds[i - 1] + Len(c.At(ts[i]) - c.At(ts[i - 1]));
+            }
+            const float L = std::max(ds[m], 1e-3f);
+            const bool b0 = boxed[r].first, b1 = boxed[r].second;
+            const float stretch = b0 && b1 ? std::max(1.0f, std::round(L / kPitch)) * kPitch / L : 1.0f;
+            const float shift = !b0 && b1 ? std::ceil(L / kPitch - 1e-3f) * kPitch - L : 0.0f;
+            for (int i = 0; i <= m; i += (i + 2 <= m || i == m) ? 2 : 1) { // every ~2 m, and the run's last point
+                float y;
+                bool tunnel;
+                smAt(ts[i], y, tunnel);
+                if (tunnel) { flush(); continue; }
+                const float t = ts[i];
+                const V2 l = trim.miterA && std::fabs(t - trim.t0) < 1e-5f ? sm[0].l : trim.miterB && std::fabs(t - trim.t1) < 1e-5f ? sm[n].l : LeftOf(c.Tan(t));
+                run.push_back({c.At(t) + l * mid, y + top, Norm(c.Tan(t)), ds[i] * stretch + shift});
+                if (i == m) break;
+            }
+            if (run.size() >= 2 && b0) TrackCap(out.byMat[(int)Mat::Track], run.front(), true); // the junction box's seams
+            if (run.size() >= 2 && b1) TrackCap(out.byMat[(int)Mat::Track], run.back(), false);
+            flush();
+        }
     }
     // ---- markings (paint)
     auto& paint = out.byMat[(int)Mat::Paint];
@@ -1116,11 +1202,14 @@ inline bool MedianLive(const Network& net, const Network::Median& m) {
     return true;
 }
 
-inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& out) {
+// rail: the junction planes' cuts (rail_junction_place.h), or null.
+inline void BuildNetwork(const Network& net, const GroundFn& ground, MeshOut& out, const RailCuts* rail = nullptr) {
     for (auto& v : out.byMat) v.clear();
     out.arrows.clear();
     std::vector<std::vector<Arm>> junctions;
     std::vector<SegTrim> trims = ComputeTrims(net, &junctions);
+    if (rail) // junction boxes draw the track over these ranges
+        for (size_t s = 0; s < trims.size() && s < rail->trackGaps.size(); ++s) trims[s].trackGaps = rail->trackGaps[s];
     // lane attachments: a dead end sitting on another road's surface is a ramp leaving / joining that road's lane
     std::vector<char> attached(net.nodes.size(), 0);
     for (size_t nd = 0; nd < net.nodes.size(); ++nd) {

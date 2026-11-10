@@ -1841,12 +1841,18 @@ tbd::TextureId TrackSpomTexture(tbd::Renderer& r) {
 
 void CityRoadsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj, bool rail);
 void CityRoadsRebuild(tbd::Renderer& r, const tbd::city::MeshOut& out); // city_buildings.inl: the network split per CityCell (Track R9)
+// city_rail_junctions.inl: the rail junction planes (switches, diamonds, crossovers, level crossings)
+void RailJunctionsForget();
+tbd::city::RailCuts RailJunctionsPlan();
+void RailJunctionsRebuild(tbd::Renderer& r, tbd::city::MeshOut& out);
+void RailJunctionsDraw(tbd::Renderer& r, const tbd::Mat4& viewProj);
 bool CityRoadsByCell(); // true: the roads draw per cell (CityRoadsDraw) and the whole-network meshes are not made
 // Textures once per renderer; meshes whenever the network changed. Runs before BeginFrame (it creates resources).
 void RoadsSync(tbd::Renderer& r) {
     RoadsInit();
     if (!g_roadGpu.textures) {
         g_roadGpu.textures = true;
+        RailJunctionsForget(); // a new renderer (or the first): the junctions' ids go with the roads'
         for (int m = 0; m < tbd::city::kMatCount; ++m) {
             const char* name = tbd::city::kMatFile[m];
             if (!name) continue;
@@ -1877,7 +1883,9 @@ void RoadsSync(tbd::Renderer& r) {
     if (g_roads.net.version == g_roadGpu.built) return;
     g_roadGpu.built = g_roads.net.version;
     static tbd::city::MeshOut out;
-    tbd::city::BuildNetwork(g_roads.net, RoadsGround, out);
+    const tbd::city::RailCuts railCuts = RailJunctionsPlan(); // junction boxes replace fills and cut the tracks
+    tbd::city::BuildNetwork(g_roads.net, RoadsGround, out, &railCuts);
+    RailJunctionsRebuild(r, out); // the boxes, props; level crossing ramps and markings into the road mesh
     g_roadGpu.triangles = out.Triangles();
     for (int m = 0; m < tbd::city::kMatCount; ++m) {
         if (g_roadGpu.mesh[m] != tbd::kInvalidMesh) r.RetireMesh(g_roadGpu.mesh[m]);
@@ -1971,6 +1979,7 @@ void RoadsWorldLabels() {
 #include "city_zones.inl"
 #include "city_utilities.inl" // utilities: power, water, sewage sources, lines, underground view, notifications
 #include "city_transport.inl" // transport buildings: depots, stations, harbours, airports (hologram, then construction)
+#include "city_rail_junctions.inl" // rail junction planes: switches, diamonds, crossovers, level crossings and their gates
 #include "city_industry.inl" // specialized industry: hubs, drawn work areas, resource heat maps
 #include "city_garbage.inl"  // waste management: garbage produced by lots, collected by landfills, incinerators, recycling
 #include "city_game.inl"     // the city game: new random map, default corridor, game saves
@@ -3150,6 +3159,11 @@ void RenderFrame() {
             const tbd::FrameCounts railMark = r.Counts();
             CityRoadsDraw(r, sceneViewProj, true);
             g_drawCats.Add(kCatRail, railMark, r.Counts());
+        }
+        { // rail junction planes: one draw per layout in use, the props, the gate booms
+            const tbd::FrameCounts jnMark = r.Counts();
+            RailJunctionsDraw(r, sceneViewProj);
+            g_drawCats.Add(kCatRail, jnMark, r.Counts());
         }
         if (g_roads.active && g_roadGpu.arrows != tbd::kInvalidMesh) { // lane direction arrows: road editor only
             r.SetMaterial(g_roadGpu.albedo[(int)tbd::city::Mat::Paint], g_roadGpu.normal[(int)tbd::city::Mat::Paint]);
