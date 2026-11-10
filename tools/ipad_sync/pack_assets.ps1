@@ -26,7 +26,7 @@ Copy-Item "$repo\assets_src\gui\ui_category_select.mp3" "$Out\assets\audio\sfx" 
 
 # [title] The logo of the loading / title screens and the example city that becomes Save 1 (the app carries these too).
 New-Item -ItemType Directory -Force "$Out\assets\branding", "$Out\assets\saves_template" | Out-Null
-New-Item -ItemType Directory -Force "$Out\saves" | Out-Null
+New-Item -ItemType Directory -Force "$Out\bin\saves" | Out-Null
 Copy-Item "$repo\assets_src\branding\optima_engine_1024.png" "$Out\assets\branding" -Force
 Copy-Item "$repo\assets_src\saves_template\bayside.*" "$Out\assets\saves_template" -Force
 
