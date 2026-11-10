@@ -2055,6 +2055,7 @@ float g_guiScaleSel = 1.0f; // the HUD Options menu: interface size multiplier
 // Runs the GUI frame (input queued by GuiMouse since the last frame), the terrain toolbar, and draws it over everything.
 // TBD_GUI_POINTER="x y [down]": a scripted pointer for captures (there is no mouse in a TBD_CAPTURE run); with "down" the
 // button goes down on the 30th GUI frame (once the layout has settled) and stays down, showing the pressed / dragged state.
+// "x y tap": down on the 30th frame, up on the 33rd (a full tap: shows what the button does).
 void DrawGameGui(tbd::Renderer& r, float topInset) {
     static bool terrainPanelOpen = false; // the HUD's Terrain button
     static float terrainSlide = 0.0f;     // 0 hidden .. 1 shown, eased
@@ -2064,7 +2065,7 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         return;
     }
     struct ScriptedPointer {
-        bool on = false, down = false;
+        bool on = false, down = false, tap = false;
         int frames = 0; // the press waits for a settled layout: auto-sized panels take a frame to find their place
         float x = 0.0f, y = 0.0f;
     };
@@ -2074,13 +2075,16 @@ void DrawGameGui(tbd::Renderer& r, float topInset) {
         if (tbd::platform::GetEnvA("TBD_GUI_POINTER", v, sizeof(v)) > 0) {
             const int n = sscanf(v, "%f %f %15s", &p.x, &p.y, word);
             p.on = n >= 2;
-            p.down = n == 3 && strcmp(word, "down") == 0;
+            p.tap = n == 3 && strcmp(word, "tap") == 0;
+            p.down = n == 3 && (strcmp(word, "down") == 0 || p.tap);
         }
         return p;
     }();
     if (pointer.on) {
         g_guiInput.Move(pointer.x, pointer.y);
-        if (pointer.down && ++pointer.frames == 30) g_guiInput.Down(pointer.x, pointer.y);
+        if (pointer.down) ++pointer.frames;
+        if (pointer.down && pointer.frames == 30) g_guiInput.Down(pointer.x, pointer.y);
+        if (pointer.tap && pointer.frames == 33) g_guiInput.Up(pointer.x, pointer.y);
         g_terrainEdit.mouseX = (int)pointer.x, g_terrainEdit.mouseY = (int)pointer.y; // the status line reads the cursor
     }
     { // [safe area] the GUI's own panels (budget, info) keep out of the notch / island / home indicator too

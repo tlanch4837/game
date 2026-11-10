@@ -415,9 +415,12 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
         const float tOpen = std::min(st.catT / 0.28f, 1.0f);
         const float shrink = std::max(st.cat >= 0 ? EaseDock(tOpen) : (st.closing ? 1 - EaseDock(tOpen) : 0), slim);
         const float barH = k.barH + (k.barSm - k.barH) * shrink;
-        const float bx = k.side + SL, bw = W - 2 * k.side - SL, by = H - k.bottom - barH; // [safe area] SL
+        // [dock hide] a category panel is open: the whole bar drops below the screen edge and the panel hugs the bottom
+        // (0 = bar shown, 1 = hidden); the panel's ✕ (or the same category again) brings the bar back
+        const float hide = st.cat >= 0 ? EaseDock(tOpen) : (st.closing ? 1 - EaseDock(tOpen) : 0);
+        const float bx = k.side + SL, bw = W - 2 * k.side - SL, by = H - k.bottom - barH + hide * (barH + k.bottom + m.safe.B() + 24); // [safe area] SL
         const float rad = k.r + (k.rSm - k.r) * shrink;
-        out.bottomH = in.viewH / s - by; // [road ux]
+        out.bottomH = std::max(in.viewH / s - by, in.viewH / s - H); // [road ux] [dock hide] never less than the safe area
 
         // ---- the tool panel (drawn first: it slides out from under the bar)
         const int pc = st.cat >= 0 ? st.cat : (st.closing && st.catT < 0.22f ? st.lastCat : -1);
@@ -465,10 +468,17 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             }
             innerW = std::max(innerW, std::min(tabsW, maxW - 2 * k.panelPadX));
             const float pw = innerW + 2 * k.panelPadX, ph = (tabs ? tabH + 6 : 0) + gridH + 2 * k.panelPadY;
-            const float cx = (W + SL) * 0.5f, cy = H - k.panelBottom - ph * 0.5f + lift; // [safe area] SL
+            const float pBottom = k.panelBottom + (6.0f - k.panelBottom) * hide; // [dock hide] hugs the bottom once the bar is away
+            const float cx = (W + SL) * 0.5f, cy = H - pBottom - ph * 0.5f + lift; // [safe area] SL
             const float px = cx - pw * scale * 0.5f, py = cy - ph * scale * 0.5f;
             P.alpha = a;
             P.Glass(px, py, pw * scale, ph * scale, k.panelR * scale, kPanel, 22, 1.6f, false);
+            // [dock hide] the way back: a round ✕ on the panel's top-right corner. Its tap is read first (a tab under its
+            // edge must not fire with it) and it is drawn last (over the tabs); it blocks the world under its outer half too.
+            const float cb = 30, xbx = std::min(px + pw * scale - cb * 0.6f, W - cb - 2), xby = py - cb * 0.5f; // [safe area] W
+            const bool xOn = !leaving && st.cat >= 0;
+            bool xHeld = false, xTap = false;
+            if (xOn) xTap = T.Tap(R(xbx, xby, cb, cb), &xHeld), g.Block(R(xbx, xby, cb, cb));
             // contents at the scaled origin
             auto X = [&](float lx) { return px + lx * scale; };
             auto Y = [&](float ly) { return py + ly * scale; };
@@ -479,7 +489,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 auto tab = [&](const Group& t, bool on, int which, bool isSub) {
                     const float w = tabW[ti++];
                     const Rect hr = R(X(tx), Y(ty), w * scale, tabH * scale);
-                    if (!leaving && T.Tap(hr)) {
+                    if (!leaving && !xTap && T.Tap(hr)) {
                         sfx(1.2f);
                         if (isSub) st.sub = which; else st.grp = which, st.sub = 0;
                         st.scroll = 0;
@@ -504,7 +514,7 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 if (phoneLayout) lx -= st.scroll; else ly -= st.scroll;
                 const Rect hr = R(X(lx), Y(ly), k.tileW * scale, tileH * scale);
                 bool held = false;
-                if (!leaving && hr.y + hr.h > clip.y && hr.y < clip.y + clip.h && T.Tap(hr, &held) && clip.Contains(in.mouseX, in.mouseY)) {
+                if (!leaving && !xTap && hr.y + hr.h > clip.y && hr.y < clip.y + clip.h && T.Tap(hr, &held) && clip.Contains(in.mouseX, in.mouseY)) {
                     sfx(it.on ? 1.15f : 1.45f);
                     out.pickItem = it.id;
                 }
@@ -517,6 +527,11 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
                 P.Text(it.cost.empty() ? "-" : it.cost, tx0 + tw * 0.5f, ny + (k.tileFont * 0.62f + 2 + k.costFont * 0.62f) * scale, k.costFont * scale, Fade(kBarInk, 0.7f), false, 0.5f);
             }
             P.dl.ClearClip();
+            if (xOn) {
+                P.Box(xbx, xby, cb, cb, cb * 0.5f, xHeld ? Rgba(60, 75, 100, 240) : Rgba(30, 42, 62, 235), 1, Rgba(255, 255, 255, 60));
+                P.Icon("x", xbx + cb * 0.5f, xby + cb * 0.5f, 16, kInk, false); // white, like the news card's close
+                if (xTap) openCat(st.cat); // the same category again: closes it, the bar slides back
+            }
             P.alpha = 1;
         }
 
@@ -556,7 +571,8 @@ inline void Frame(Context& g, State& st, Model& m, const Atlas& atlas, Out& out)
             P.alpha = 1;
         }
 
-        // ---- the bar
+        // ---- the bar ([dock hide] not at all once it is wholly below the screen: no glass, no taps, no blocked strip)
+        if (by >= in.viewH / s) return MenuFrame(g, st, m, atlas, out, false);
         P.dl.Shadow(bx * s, (by + 10) * s, (bx + bw) * s, (by + barH + 10) * s, rad * s, 15 * s, Rgba(0, 0, 0, 68));
         P.Glass(bx, by, bw, barH, rad, kPanel, 22, 1.6f, false);
         const float midY = by + barH * 0.5f;
