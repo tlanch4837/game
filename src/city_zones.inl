@@ -42,6 +42,19 @@ void ZonesCatalog() {
     tbd::Log("Zoning: %zu building models", g_zones.models.size());
 }
 
+// A saved lot's model (G record) as this install has it. Saves hold the absolute path of the machine that wrote them (a
+// PC's C:\...\assets\buildings\..., an iPad's app container, which changes on reinstall): the catalog's model of the same
+// file name wins, so the bundled example city and saves moved between devices still show their buildings.
+std::string ZoneModelResolve(const std::string& saved) {
+    ZonesCatalog();
+    auto fileName = [](const std::string& p) { const size_t c = p.find_last_of("/\\"); return c == std::string::npos ? p : p.substr(c + 1); };
+    static std::unordered_map<std::string, std::string> byName;
+    if (byName.empty())
+        for (const tbd::city::BuildingModel& m : g_zones.models) byName.emplace(fileName(m.path), m.path);
+    const auto it = byName.find(fileName(saved));
+    return it != byName.end() ? it->second : saved;
+}
+
 int ZoneEntityIndex(uint64_t lot) {
     auto it = g_zoneEntity.find(lot);
     if (it == g_zoneEntity.end()) return -1;

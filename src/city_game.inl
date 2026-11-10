@@ -449,7 +449,7 @@ bool LoadCityGame(int slot) {
             float wd[2], pr[2], c[2], fr[2];
             if (!Floats(f[3], wd, 2) || !Floats(f[5], pr, 2) || !Floats(f[6], c, 2) || !Floats(f[7], fr, 2)) break;
             L.id = strtoull(f[1].c_str(), nullptr, 10), L.type = atoi(f[2].c_str()), L.w = (int)wd[0], L.d = (int)wd[1], L.level = atoi(f[4].c_str());
-            L.progress = pr[0], L.duration = pr[1], L.c = {c[0], c[1]}, L.front = {fr[0], fr[1]}, L.y = (float)atof(f[8].c_str()), L.path = f[9];
+            L.progress = pr[0], L.duration = pr[1], L.c = {c[0], c[1]}, L.front = {fr[0], fr[1]}, L.y = (float)atof(f[8].c_str()), L.path = ZoneModelResolve(f[9]); // the model on this install (city_zones.inl)
             for (const std::string& pt : Split(f[10], ';')) {
                 float q[2];
                 if (Floats(pt, q, 2)) pl.cellCentres.push_back({q[0], q[1]});
