@@ -190,7 +190,7 @@ inline Layout Place(const Context& g, const city::RoadTool& t, const State& st, 
     const float s = g.Scale(), W = in.viewW / s, H = in.viewH / s;
     const SafeInsets& sa = st.safe;
     const float left = 12 + sa.L(), right = W - 12 - sa.R(), top = 8 + sa.T();
-    bottom = std::max(bottom, sa.B() + (st.mini && st.compact ? 4.0f : 8.0f));
+    bottom = std::max(bottom, sa.B() + (st.mini && st.compact ? 4.0f : 2.0f));
     Layout L;
     if (st.mini && st.compact) { // [road ui] the compact strips, right on the bottom edge
         const Dims d = MiniDims(st);

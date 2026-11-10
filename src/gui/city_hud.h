@@ -235,7 +235,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
     g.EndPanel();
 
     // ------------------------------------------------------------ toolbar (above the status bar)
-    g.BeginPanel("##hud toolbar", Anchor::BottomCenter, 0.0f, lift + statusH + 4.0f, 0.0f, toolbarH, 6.0f);
+    g.BeginPanel("##hud toolbar", Anchor::BottomCenter, 0.0f, lift + statusH, 0.0f, toolbarH, 6.0f);
     {
         const float size = std::round(48.0f * s), gap = std::round(6.0f * s), sep = std::round(14.0f * s);
         const int groupAfter[] = {2, 7, 14}; // thin rules between: building, city services, management
@@ -342,7 +342,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
     if (h.controlsOpen) { // [controls] the mouse and keyboard rows first; values apply at once, saved when a drag ends
         static tbd::controls::Settings unbound;
         const ControlsPageOut co = ControlsPageFrame(g, h.controlsPage, h.controls ? *h.controls : unbound, nullptr, SimPanelPlace::Side,
-                                                     lift + statusH + toolbarH + 14.0f, 0.0f, 1.0f, 0.0f, false);
+                                                     lift + statusH + toolbarH + 6.0f, 0.0f, 1.0f, 0.0f, false);
         if (co.save) h.controlsSave = true;
         if (co.closed) h.controlsOpen = false;
     }
@@ -359,14 +359,14 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
 
     // ------------------------------------------------------------ Budget (the city sim's economy)
     if (h.budget) DrawBudgetPanel(g, h);
-    SimPhasePanelsFrame(g, h.simPanels, SimPanelPlace::Side, lift + statusH + toolbarH + 14.0f); // the phases' panels (none yet)
+    SimPhasePanelsFrame(g, h.simPanels, SimPanelPlace::Side, lift + statusH + toolbarH + 6.0f); // the phases' panels (none yet)
     if (h.bannerAlpha > 0.0f) DrawMilestoneBanner(g, h.banner.c_str(), h.bannerSub.c_str(), h.bannerAlpha);
 
     // ------------------------------------------------------------ "not completed" panel, above the toolbar
     const int info = CityInfoPanel(g, h.notDoneName, h.stats); // the real panels where the sim has the numbers
     if (info == 2) h.Dismiss(), h.notDone = -1;
     if (h.notDoneName && info == 0) {
-        g.BeginPanel("##hud notdone", Anchor::BottomCenter, 0.0f, lift + statusH + toolbarH + 14.0f, 440.0f, 0.0f, 12.0f);
+        g.BeginPanel("##hud notdone", Anchor::BottomCenter, 0.0f, lift + statusH + toolbarH + 6.0f, 440.0f, 0.0f, 12.0f);
         g.Text(TextStyle::Bright, "%s", h.notDoneName);
         g.Text(TextStyle::Muted, "%s", h.notDoneBlurb ? h.notDoneBlurb : "");
         g.Spacing(2.0f);
@@ -415,7 +415,7 @@ inline float CityHudFrame(Context& g, CityHud& h, GameClock& clock, float lift) 
     }
 
     if (tip.on) g.Chip(tip.x, tip.y, tip.text);
-    return statusH + toolbarH + 8.0f;
+    return statusH + toolbarH + 2.0f;
 }
 
 // The City News feed, top right: the latest headlines (what the radio is talking about), newest first.
