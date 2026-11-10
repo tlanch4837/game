@@ -11,7 +11,7 @@ const oc = new OrbitControls(cam, R.domElement); oc.maxPolarAngle = Math.PI * 0.
 scene.add(new THREE.HemisphereLight(0xdfeaff, 0x58603f, 1.1));
 const sun = new THREE.DirectionalLight(0xfff2d8, 2.2); sun.position.set(-40, 80, 30); scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({color: 0x5d6b41}));
-ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.22; scene.add(ground); // terrain = node level, track base - 0.22
 
 // ---------------------------------------------------------------- procedural textures (stand-ins for the game's set)
 function canvasTex(w, h, draw, repeat = true) {
@@ -48,6 +48,7 @@ const TEX = {
 const MAT = {}, WIRE = new THREE.MeshBasicMaterial({color: 0x102030, wireframe: true});
 function makeMats(useTex) {
   for (const k of MATS) {
+    if (k === 'Road') { MAT[k] = new THREE.MeshLambertMaterial({color: 0x3a3b3e, side: THREE.DoubleSide}); continue; }
     const vc = k === 'Ballast' || k === 'Steel' || k === 'Paint';
     MAT[k] = new THREE.MeshLambertMaterial({vertexColors: vc, map: useTex && k !== 'Paint' ? TEX[k] : null, color: !useTex && !vc ? (k === 'Tie' ? 0x5b4a3a : 0xbbbbbb) : 0xffffff,
       side: k === 'Prop' ? THREE.DoubleSide : THREE.FrontSide, /* windings are consistent: culling keeps every face */ alphaTest: k === 'Prop' ? 0.5 : 0, transparent: false,
@@ -93,9 +94,9 @@ function bounds(m) {
 function contextRoad(m, g) {
   const p = m.params; if (p.type !== 'LevelCrossing') return;
   const a = p.angleDeg * Math.PI / 180, road = new THREE.Mesh(new THREE.PlaneGeometry(90, p.roadWidth), new THREE.MeshLambertMaterial({color: 0x3a3b3e}));
-  road.rotation.x = -Math.PI / 2; road.rotation.z = -a; road.position.y = 0.01; g.add(road);
+  road.rotation.x = -Math.PI / 2; road.rotation.z = -a; road.position.y = -0.10; g.add(road); // the road surface: track base - 0.10
   const ln = new THREE.Mesh(new THREE.PlaneGeometry(90, 0.15), new THREE.MeshBasicMaterial({color: 0xe8c040}));
-  ln.rotation.x = -Math.PI / 2; ln.rotation.z = -a; ln.position.y = 0.02; g.add(ln);
+  ln.rotation.x = -Math.PI / 2; ln.rotation.z = -a; ln.position.y = -0.09; g.add(ln);
 }
 export {group, labels, addJunction, clear, label, placeLabels, NAMES, bounds, contextRoad};
 

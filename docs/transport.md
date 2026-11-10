@@ -81,9 +81,26 @@ switches keep 10 m apart. `CheckCrossings` vets a new curve's same-level crossin
 crossing at least 30 deg and 8 m from road junctions), `FindLevelCrossings` lists rail x road crossings,
 `BuildCrossover` adds a crossover or scissors between parallel single tracks 3.8..12 m apart.
 
-Models: `BuildJunctionMesh(JunctionParams)` (gauge, angle, radius, stem / tail, spacing, road width, LOD 0 / 1), five
-materials (Ballast, Tie, Steel, Prop atlas, Paint), at most five draws. Preview: `docs/rail_junction_preview.html`
-(three.js port, `rail_junction_gen.js`). Not drawn in the game yet. Tests: `tests\rail_junction_test.bat`.
+Engine path (`rail_junction_plane.h`): like the plain track, a junction is one flat SPOM box (10 triangles) drawn by
+the track's parallax shader with a baked junction picture instead of the 4.4 x 0.6 m track tile. `JunctionLayouts()` is
+the small set of canonical layouts (turnout 8 / 12 / 20 deg, wye 8, 3-way 12, diamond 30 / 90, single slip 15,
+crossover and scissors 10, level crossing 90 / 60 / 45); left-handed junctions mirror the right-handed picture and other
+angles use the nearest layout (`NearestLayout`). Every route is a whole number of sleeper pitches (0.6 m) long, so plain
+track continues in phase. Only what sticks up is geometry (`JunctionProps`): point machines, and at level crossings the
+ramps (road asphalt, `JMat::Road`, uv = metres / 4 as `Mat::Asphalt`), markings (`JMat::Paint`), gate masts and booms
+(`gate` 0 down .. 1 up), cantilevers on 2+ lane roads, a centre gate past 7.5 m half width, the relay cabinet.
+
+Textures: `tools\rail_junction_tex\dump_layouts.bat` writes the layouts from the C++ (routes, `TieStations`,
+`PlanFrogs`, rect, size) to `obj/rail_junction_layouts.json`; `python tools/rail_junction_tex/gen_junction_tex.py`
+bakes `assets/rail/junction/tex/<id>_{albedo.jpg,height.png,normal.png}` in the plain track's frame (`gen_track.py`:
+height 0 = rail head, -0.55 = formation; height byte 0 = hole) at ~2 cm per texel (long side <= 2048): plain parts are
+stamped from the plain track tile, switch zones get long concrete bearers, gaps between close tracks get ballast, level
+crossings a deck in the road's asphalt with flangeways. 13 layouts: 53 MB as RGBA8 with mips, 13 MB ASTC 4x4, 6 MB
+ASTC 6x6. Preview: `docs/rail_junction_spom.html` (GLSL port of TrackPS, plain track at every open end).
+
+The per-triangle models (`BuildJunctionMesh`, gauge / angle / radius / stem / tail / spacing / road width, LOD 0 / 1)
+stay for reference and tests (`docs/rail_junction_preview.html`). Not drawn in the game yet. Tests:
+`tests\rail_junction_test.bat`.
 
 ## Captures
 

@@ -3,11 +3,11 @@
 export const K = {
   gauge: 1.435, minRadius: 45, turnoutMin: 4, turnoutMax: 35, diamondMin: 10, slipMax: 20, levelMin: 30,
   spacingMin: 3.8, spacingMax: 12,
-  bedTop: 0.25, bedTopHalf: 1.6, bedFootHalf: 2.2, tieTop: 0.33, tieHalfLen: 1.3, tieWidth: 0.26, tieStep: 0.65,
+  bedTop: 0.25, bedTopHalf: 1.6, bedFootHalf: 2.2, tieTop: 0.33, tieHalfLen: 1.3, tieWidth: 0.25, tieStep: 0.6,
   railTop: 0.5, railHead: 0.075, longTie: 2.4, checkGap: 0.11,
   cellMachine: 0, cellMast: 0.25, cellBoom: 0.5, cellDeck: 0.75,
 };
-export const MATS = ['Ballast', 'Tie', 'Steel', 'Prop', 'Paint'];
+export const MATS = ['Ballast', 'Tie', 'Steel', 'Prop', 'Paint', 'Spom', 'Road'];
 const rad = d => d * 0.0174532925, deg = r => r * 57.2957795;
 const v = (x, z) => ({x, z});
 const add = (a, b) => v(a.x + b.x, a.z + b.z), sub = (a, b) => v(a.x - b.x, a.z - b.z), mul = (a, s) => v(a.x * s, a.z * s);
@@ -59,7 +59,8 @@ function arc(r, a, f, R, angleDeg, side, lod) {
   for (let i = 1; i <= n; i++) { const t = ang * i / n;
     r.push({c: add(add(a, mul(f, R * Math.sin(t))), mul(nrm, R * (1 - Math.cos(t)))), f: norm(add(mul(f, Math.cos(t)), mul(nrm, Math.sin(t)))), s: s0 + R * t}); }
 }
-function tail(r, L) { if (L > 0.01) { const b = r[r.length - 1]; straight(r, b.c, b.f, L); } }
+export const pitched = L => Math.ceil(L / K.tieStep - 1e-3) * K.tieStep; // whole sleeper pitches (rail_junction_mesh.h Pitched)
+function tail(r, L) { const b = r[r.length - 1], add = pitched(b.s + Math.max(0, L)) - b.s; if (add > 0.01) straight(r, b.c, b.f, add); }
 const offset = (p, d) => add(p.c, mul(rightOf(p.f), d));
 function distTo(r, q) { // {d, f}: beside the route only (not beyond its ends)
   let best = 1e30, bf = v(1, 0);
@@ -164,31 +165,83 @@ function frogs(m, routes, virt, gauge) {
   return hits.length;
 }
 function pointMachine(m, p, f, side) { box(m.by.Prop, add(add(p, mul(f, 0.9)), mul(rightOf(f), side * 1.9)), f, 1.0, 0.45, 0.12, 0.4, [0.55, 0.57, 0.52], K.cellMachine); }
-function levelCrossingProps(m, r, w, lod) {
-  const prop = m.by.Prop, paint = m.by.Paint, nr = rightOf(r), half = w * 0.5, deckHalf = K.bedTopHalf + 0.2, sinA = Math.max(0.2, Math.abs(cross(v(1, 0), r)));
-  const edgeX = (e, z) => (e - z * nr.z) / nr.x, yD = K.railTop + 0.005;
-  if (Math.abs(nr.x) > 1e-3) quad(prop, P3(v(edgeX(-half, -deckHalf), -deckHalf), yD), P3(v(edgeX(half, -deckHalf), -deckHalf), yD), P3(v(edgeX(half, deckHalf), deckHalf), yD),
-    P3(v(edgeX(-half, deckHalf), deckHalf), yD), [0.34, 0.34, 0.35], [K.cellDeck, 0, K.cellDeck + 0.25, 0, K.cellDeck + 0.25, 1, K.cellDeck, 1]);
-  const clear = deckHalf / sinA, z8 = [0, 0, 0, 0, 0, 0, 0, 0], yP = 0.02;
-  for (const sg of [1, -1]) {
-    const d = mul(r, sg), right = rightOf(d), back = mul(d, -1);
-    const sc = mul(back, clear + 3.5), a = add(sc, mul(right, 0.2)), b = add(sc, mul(right, half - 0.2)), bw = mul(d, 0.4);
-    quad(paint, P3(a, yP), P3(b, yP), P3(add(b, bw), yP), P3(add(a, bw), yP), COL.paint, z8);
-    if (!lod) { const xc = add(mul(back, clear + 12), mul(right, half * 0.5));
-      for (const k of [-1, 1]) { const u = mul(norm(add(d, mul(right, k))), 2.6), t = mul(rightOf(norm(u)), 0.2);
-        quad(paint, P3(sub(sub(xc, u), t), yP), P3(sub(add(xc, u), t), yP), P3(add(add(xc, u), t), yP), P3(add(sub(xc, u), t), yP), COL.paint, z8); } }
-    const mast = add(mul(back, clear + 2.5), mul(right, half + 0.7)), ax = mul(d, 0.45), az = mul(right, 0.45);
-    card(prop, sub(mast, az), add(mast, az), 0, 4.2, K.cellMast);
-    if (!lod) card(prop, sub(mast, ax), add(mast, ax), 0, 4.2, K.cellMast);
-    card(prop, add(mast, mul(right, -0.3)), add(mast, mul(right, -0.3 - half)), 1.0, 1.18, K.cellBoom);
-  }
-  if (!lod) box(prop, v(half / sinA + 4, -(K.bedFootHalf + 1.2)), v(1, 0), 1.4, 1.0, 0, 1.6, [0.62, 0.63, 0.60], K.cellMachine);
+// ---------------------------------------------------------------- level crossing (rail_junction_mesh.h, keep in step)
+const LX = {roadY: -0.10, rampLen: 6, deckHalf: 2.4, flange: 0.075};
+export function crossingFrame(p) {
+  const r = v(Math.cos(rad(p.angleDeg)), Math.sin(rad(p.angleDeg))), nr = rightOf(r), half = p.roadWidth * 0.5;
+  return {r, nr, half, outer: half + p.sidewalk, sinA: Math.max(0.2, Math.abs(r.z)), at: (e, z) => v((e - z * nr.z) / nr.x, z)};
 }
+const rampZ = F => LX.deckHalf + LX.rampLen * F.sinA;
+function triW(o, a, b, c, col, u, w, hint) {
+  const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+  if (n[0] * hint[0] + n[1] * hint[1] + n[2] * hint[2] < 0) { [b, c] = [c, b]; n = n.map(x => -x); }
+  const l = Math.hypot(...n) || 1; n = n.map(x => x / l);
+  for (const p of [a, b, c]) { o.p.push(p[0], p[1], p[2]); o.n.push(n[0], n[1], n[2]); o.c.push(col[0], col[1], col[2]); o.uv.push(u, w); }
+}
+export function crossingDeck(o, p) {
+  const F = crossingFrame(p), rin = p.gauge * 0.5 - LX.flange, rout = p.gauge * 0.5 + K.railHead, D = LX.deckHalf;
+  const bands = p.lod ? [[-D, D]] : [[-D, -rout], [-rin, rin], [rout, D]];
+  const U = e => K.cellDeck + 0.25 * (e + F.outer) / (2 * F.outer), V = z => 0.5 * (z + D) / (2 * D);
+  for (const [z0, z1] of bands) quad(o, P3(F.at(-F.outer, z0), K.railTop), P3(F.at(F.outer, z0), K.railTop), P3(F.at(F.outer, z1), K.railTop), P3(F.at(-F.outer, z1), K.railTop),
+    [0.34, 0.34, 0.35], [U(-F.outer), V(z0), U(F.outer), V(z0), U(F.outer), V(z1), U(-F.outer), V(z1)]);
+}
+function crossingRamps(o, p) {
+  const F = crossingFrame(p), zr = rampZ(F), lo = LX.roadY + 0.01, ua = K.cellDeck + 0.125, A = [1, 1, 1], D = LX.deckHalf;
+  for (const s of [-1, 1]) { const z0 = s * D, z1 = s * zr;
+    const q = [F.at(-F.outer, z0), F.at(F.outer, z0), F.at(F.outer, z1), F.at(-F.outer, z1)];
+    quad(o, P3(q[0], K.railTop), P3(q[1], K.railTop), P3(q[2], lo), P3(q[3], lo), A, q.flatMap(c => [c.x / 4, c.z / 4])); }
+  if (p.lod) return;
+  for (const e of [-F.outer, F.outer]) { const sg = e > 0 ? 1 : -1, out = [F.nr.x * sg, 0, F.nr.z * sg], uv = [ua, .75, ua, .75, ua, .75, ua, .75];
+    quad(o, P3(F.at(e, -D), K.railTop), P3(F.at(e, D), K.railTop), P3(F.at(e, D), lo), P3(F.at(e, -D), lo), A, uv, out);
+    for (const s of [-1, 1]) triW(o, P3(F.at(e, s * D), K.railTop), P3(F.at(e, s * zr), lo), P3(F.at(e, s * D), lo), A, ua, 0.75, out); }
+}
+function cardBox(o, c, across, a, b, y0, y1, u0, u1, v0, v1, facing) {
+  quad(o, P3(add(c, mul(across, a)), y1), P3(add(c, mul(across, b)), y1), P3(add(c, mul(across, b)), y0), P3(add(c, mul(across, a)), y0), COL.prop, [u0, v0, u1, v0, u1, v1, u0, v1], [facing.x, 0, facing.z]);
+}
+export const crossingLanes = w => clamp(Math.round(w * 0.5 / 3.6), 1, 3);
+function boom(o, d, right, s, l0, dir, L, gate) {
+  const ph = rad(88) * clamp(gate, 0, 1), y0 = LX.roadY + 1, t = 0.09, Dl = dir * Math.cos(ph), Dy = Math.sin(ph), Pl = -Dy * dir, Py = Math.cos(ph);
+  const at = (l, y) => { const q = add(mul(right, l), mul(d, s)); return [q.x, y, q.z]; };
+  quad(o, at(l0 + Pl * t, y0 + Py * t), at(l0 + Dl * L + Pl * t, y0 + Dy * L + Py * t), at(l0 + Dl * L - Pl * t, y0 + Dy * L - Py * t), at(l0 - Pl * t, y0 - Py * t),
+    COL.prop, [K.cellBoom, 0, K.cellBoom + 0.25, 0, K.cellBoom + 0.25, 1, K.cellBoom, 1], [-d.x, 0, -d.z]);
+}
+function mast(o, P, d, right, lod) {
+  cardBox(o, P, right, -0.5, 0.5, LX.roadY, LX.roadY + 4.4, K.cellMast, K.cellMast + 0.25, 0, 1, mul(d, -1));
+  if (!lod) cardBox(o, P, d, -0.08, 0.08, LX.roadY, LX.roadY + 4.4, K.cellMast + 0.25 * 0.46, K.cellMast + 0.25 * 0.54, 0, 1, right);
+}
+function levelCrossingProps(m, p) {
+  const prop = m.by.Prop, paint = m.by.Paint, F = crossingFrame(p);
+  if (!p.spom) crossingDeck(prop, p);
+  crossingRamps(m.by.Road, p);
+  const lanes = crossingLanes(p.roadWidth), lw = F.half / lanes, lg = F.outer + 0.6, zr = rampZ(F), yP = LX.roadY + 0.02, z8 = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const sg of [1, -1]) {
+    const d = mul(F.r, sg), right = rightOf(d), sz = d.z > 0 ? 1 : -1;
+    const sAt = (l, z) => (-sz * z - mul(right, l).z) / d.z, Pt = (l, s) => add(mul(right, l), mul(d, s));
+    const sGate = Math.min(sAt(0, LX.deckHalf), sAt(lg, LX.deckHalf)) - 1;
+    const sStop = Math.min(Math.min(sAt(0, zr), sAt(F.outer, zr)) - 1, sGate - 2.5);
+    quad(paint, P3(Pt(0.25, sStop - 0.45), yP), P3(Pt(F.half - 0.15, sStop - 0.45), yP), P3(Pt(F.half - 0.15, sStop), yP), P3(Pt(0.25, sStop), yP), COL.paint, z8);
+    if (!p.lod) for (let j = 0; j < lanes; j++) { const lc = (j + 0.5) * lw, hw = Math.max(0.6, lw * 0.5 - 0.5), sc = sStop - 6, t = 0.18;
+      for (const k of [-1, 1]) { const p0 = Pt(lc - k * hw, sc - 3), p1 = Pt(lc + k * hw, sc + 3), n = mul(rightOf(norm(sub(p1, p0))), t);
+        quad(paint, P3(sub(p0, n), yP), P3(sub(p1, n), yP), P3(add(p1, n), yP), P3(add(p0, n), yP), COL.paint, z8); } }
+    mast(prop, Pt(lg, sGate), d, right, p.lod);
+    const median = F.half > 7.5;
+    boom(prop, d, right, sGate - 0.12, lg - 0.35, -1, (lg - 0.35) - (median ? F.half * 0.5 : 0.2), p.gate);
+    if (median) { mast(prop, Pt(0.45, sGate), d, right, p.lod); boom(prop, d, right, sGate - 0.12, 0.8, 1, F.half * 0.5 - 0.7, p.gate); }
+    if (lanes >= 2 && !p.lod) {
+      cardBox(prop, Pt(0, sGate), right, lw * 0.5, lg, LX.roadY + 5.6, LX.roadY + 5.85, K.cellMachine, K.cellMachine + 0.25, 0.5, 1, mul(d, -1));
+      for (let j = 0; j < lanes; j++) cardBox(prop, Pt((j + 0.5) * lw, sGate - 0.05), right, -0.45, 0.45, LX.roadY + 4.95, LX.roadY + 5.45,
+        K.cellMast + 0.25 * 0.12, K.cellMast + 0.25 * 0.88, 0.31, 0.42, mul(d, -1));
+    }
+  }
+  if (!p.lod) { const zc = -(K.bedFootHalf + 1.6); box(prop, v(Math.max(F.at(-F.outer, zc).x, F.at(F.outer, zc).x) + 2.5, zc), v(1, 0), 1.4, 1.0, LX.roadY, 1.6, [0.62, 0.63, 0.60], K.cellMachine); }
+}
+export {LX};
 export function adjustParams(p) {
   const q = {...p}; q.radius = Math.max(q.radius, K.minRadius); q.gauge = clamp(q.gauge, 0.6, 1.7);
   if (q.type === 'Diamond') q.angleDeg = clamp(q.angleDeg, K.diamondMin, 90);
   else if (q.type === 'SingleSlip') q.angleDeg = clamp(q.angleDeg, K.diamondMin, K.slipMax);
-  else if (q.type === 'LevelCrossing') { q.angleDeg = clamp(q.angleDeg, K.levelMin, 90); q.roadWidth = clamp(q.roadWidth, 4, 30); }
+  else if (q.type === 'LevelCrossing') { q.angleDeg = clamp(q.angleDeg, K.levelMin, 90); q.roadWidth = clamp(q.roadWidth, 4, 30); q.sidewalk = clamp(q.sidewalk, 0, 4); q.gate = clamp(q.gate, 0, 1); }
   else if (q.type === 'Crossover' || q.type === 'Scissors') { q.spacing = clamp(q.spacing, K.spacingMin, K.spacingMax);
     q.angleDeg = clamp(q.angleDeg, K.turnoutMin, Math.min(K.turnoutMax, crossoverMaxAngle(q.spacing, q.radius))); }
   else q.angleDeg = clamp(q.angleDeg, K.turnoutMin, K.turnoutMax);
@@ -202,31 +255,32 @@ export function adjustParams(p) {
 export function junctionRoutes(p) {
   const R = [], virt = [], s = p.hand === 'Left' ? -1 : 1, a = p.angleDeg, Rr = p.radius, O = v(0, 0), X = v(1, 0);
   const put = (r, isV = false) => { R.push(r); virt.push(isV); };
-  const stem = () => { const r = []; straight(r, v(-p.stem, 0), X, p.stem); put(r); };
+  const stemL = pitched(p.stem), stem = () => { const r = []; straight(r, v(-stemL, 0), X, stemL); put(r); };
   const lead = turnoutLead(a, Rr);
   const t = p.type;
-  if (t === 'Turnout') { stem(); const st = [], dv = []; straight(st, O, X, lead + p.tail); put(st); arc(dv, O, X, Rr, a, s, p.lod); tail(dv, p.tail); put(dv); }
-  else if (t === 'Wye' || t === 'ThreeWay') { stem(); const st = [], l = [], r = []; straight(st, O, X, lead + p.tail); put(st, t === 'Wye');
+  if (t === 'Turnout') { stem(); const st = [], dv = []; straight(st, O, X, pitched(lead + p.tail)); put(st); arc(dv, O, X, Rr, a, s, p.lod); tail(dv, p.tail); put(dv); }
+  else if (t === 'Wye' || t === 'ThreeWay') { stem(); const st = [], l = [], r = []; straight(st, O, X, pitched(lead + p.tail)); put(st, t === 'Wye');
     arc(l, O, X, Rr, a, -1, p.lod); tail(l, p.tail); put(l); arc(r, O, X, Rr, a, 1, p.lod); tail(r, p.tail); put(r); }
   else if (t === 'Diamond' || t === 'SingleSlip') {
     const th = rad(a), T = t === 'SingleSlip' ? Rr * Math.tan(th * 0.5) : 0, H = Math.max(8 + 1.6 / Math.sin(th), T + 5), b = v(Math.cos(th), s * Math.sin(th));
-    const A = [], B = []; straight(A, v(-H, 0), X, 2 * H); put(A); straight(B, mul(b, -H), b, 2 * H); put(B);
+    const Hp = pitched(2 * H) * 0.5, A = [], B = []; straight(A, v(-Hp, 0), X, 2 * Hp); put(A); straight(B, mul(b, -Hp), b, 2 * Hp); put(B);
     if (t === 'SingleSlip') { const sl = []; arc(sl, v(-T, 0), X, Rr, a, s, p.lod); put(sl); } }
   else if (t === 'Crossover' || t === 'Scissors') {
     const run = crossoverRun(p.spacing, a, Rr), o = turnoutOffset(a, Rr), D = Math.max(0, p.spacing - 2 * o) / Math.sin(rad(a));
-    const A = [], B = [], x = []; straight(A, v(-p.stem, 0), X, run + 2 * p.stem); put(A); straight(B, v(-p.stem, s * p.spacing), X, run + 2 * p.stem); put(B);
-    arc(x, O, X, Rr, a, s, p.lod); tail(x, D); arc(x, O, X, Rr, a, -s, p.lod); put(x);
-    if (t === 'Scissors') { const y = []; arc(y, v(0, s * p.spacing), X, Rr, a, -s, p.lod); tail(y, D); arc(y, O, X, Rr, a, s, p.lod); put(y); } }
-  else if (t === 'LevelCrossing') { const th = rad(a), H = (p.roadWidth * 0.5) / Math.sin(th) + 1.8 / Math.tan(th) + 10, A = []; straight(A, v(-H, 0), X, 2 * H); put(A); }
+    const A = [], B = [], x = []; const AL = pitched(run + 2 * p.stem); straight(A, v(-p.stem, 0), X, AL); put(A); straight(B, v(-p.stem, s * p.spacing), X, AL); put(B);
+    const mid = r => { if (D > 0.01) straight(r, r[r.length - 1].c, r[r.length - 1].f, D); };
+    arc(x, O, X, Rr, a, s, p.lod); mid(x); arc(x, O, X, Rr, a, -s, p.lod); put(x);
+    if (t === 'Scissors') { const y = []; arc(y, v(0, s * p.spacing), X, Rr, a, -s, p.lod); mid(y); arc(y, O, X, Rr, a, s, p.lod); put(y); } }
+  else if (t === 'LevelCrossing') { const F = crossingFrame(p), zr = rampZ(F); let H = 0; for (const e of [-F.outer, F.outer]) for (const z of [-zr, zr]) H = Math.max(H, Math.abs(F.at(e, z).x)); H += 8; const Hp = pitched(2 * H) * 0.5, A = []; straight(A, v(-Hp, 0), X, 2 * Hp); put(A); }
   return {routes: R, virt};
 }
-export const DEFAULTS = {type: 'Turnout', hand: 'Right', angleDeg: 12, radius: 150, gauge: K.gauge, stem: 4, tail: 6, spacing: 5, roadWidth: 9, lod: 0};
+export const DEFAULTS = {type: 'Turnout', hand: 'Right', angleDeg: 12, radius: 150, gauge: K.gauge, stem: 4, tail: 6, spacing: 5, roadWidth: 9, sidewalk: 2, gate: 0, spom: false, lod: 0};
 export function buildJunction(want) {
   const p = adjustParams({...DEFAULTS, ...want}), m = newMesh();
   m.params = p;
   const {routes, virt} = junctionRoutes(p);
   routes.forEach((r, k) => { if (!virt[k]) bed(m, r, p.lod); });
-  const level = p.type === 'LevelCrossing', road = v(Math.cos(rad(p.angleDeg)), Math.sin(rad(p.angleDeg))), roadHalf = p.roadWidth * 0.5 + 0.3;
+  const level = p.type === 'LevelCrossing', road = v(Math.cos(rad(p.angleDeg)), Math.sin(rad(p.angleDeg))), roadHalf = p.roadWidth * 0.5 + p.sidewalk + 0.2;
   const under = q => level && Math.abs(dot(q, rightOf(road))) < roadHalf;
   if (!p.lod) ties(m, routes, virt, p.gauge, under);
   routes.forEach((r, k) => { if (!virt[k]) rails(m, r, p.gauge, p.lod); });
@@ -241,7 +295,7 @@ export function buildJunction(want) {
       pointMachine(m, O, X, -s); pointMachine(m, v(run, s * p.spacing), nX, -s);
       if (p.type === 'Scissors') { pointMachine(m, v(0, s * p.spacing), X, s); pointMachine(m, v(run, 0), nX, s); } }
   }
-  if (level) levelCrossingProps(m, road, p.roadWidth, p.lod);
+  if (level) levelCrossingProps(m, p);
   m.routes = routes; m.virt = virt;
   m.tris = k => k ? m.by[k].p.length / 9 : MATS.reduce((n, q) => n + m.by[q].p.length / 9, 0);
   m.draws = MATS.filter(q => m.by[q].p.length).length;

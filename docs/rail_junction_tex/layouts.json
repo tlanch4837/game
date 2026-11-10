@@ -1,0 +1,228 @@
+{
+ "texel": 0.02,
+ "pitch": 0.6,
+ "formation": -0.55,
+ "layouts": [
+  {
+   "id": "turnout_08",
+   "type": "Turnout",
+   "angle": 8.0,
+   "radius": 150.0,
+   "rect": [
+    -4.2,
+    -2.2,
+    27.1793,
+    4.4812
+   ],
+   "tex": [
+    1572,
+    336
+   ],
+   "holes": 0.263
+  },
+  {
+   "id": "turnout_12",
+   "type": "Turnout",
+   "angle": 12.0,
+   "radius": 150.0,
+   "rect": [
+    -4.2,
+    -2.2,
+    37.8887,
+    6.7571
+   ],
+   "tex": [
+    2048,
+    436
+   ],
+   "holes": 0.374
+  },
+  {
+   "id": "turnout_20",
+   "type": "Turnout",
+   "angle": 20.0,
+   "radius": 90.0,
+   "rect": [
+    -4.2,
+    -2.2,
+    37.5333,
+    9.6785
+   ],
+   "tex": [
+    2048,
+    584
+   ],
+   "holes": 0.47
+  },
+  {
+   "id": "wye_08",
+   "type": "Wye",
+   "angle": 8.0,
+   "radius": 150.0,
+   "rect": [
+    -4.2,
+    -4.4812,
+    27.1793,
+    4.4812
+   ],
+   "tex": [
+    1572,
+    452
+   ],
+   "holes": 0.374
+  },
+  {
+   "id": "threeway_12",
+   "type": "3-way",
+   "angle": 12.0,
+   "radius": 150.0,
+   "rect": [
+    -4.2,
+    -6.7571,
+    37.8887,
+    6.7571
+   ],
+   "tex": [
+    2048,
+    660
+   ],
+   "holes": 0.481
+  },
+  {
+   "id": "diamond_30",
+   "type": "Diamond",
+   "angle": 30.0,
+   "radius": 150.0,
+   "rect": [
+    -11.4,
+    -7.6053,
+    11.4,
+    7.6053
+   ],
+   "tex": [
+    1144,
+    764
+   ],
+   "holes": 0.53
+  },
+  {
+   "id": "diamond_90",
+   "type": "Diamond",
+   "angle": 90.0,
+   "radius": 150.0,
+   "rect": [
+    -9.6,
+    -9.6,
+    9.6,
+    9.6
+   ],
+   "tex": [
+    964,
+    964
+   ],
+   "holes": 0.6
+  },
+  {
+   "id": "slip_15",
+   "type": "Single slip",
+   "angle": 15.0,
+   "radius": 150.0,
+   "rect": [
+    -24.9,
+    -8.5696,
+    24.9,
+    8.5696
+   ],
+   "tex": [
+    2048,
+    708
+   ],
+   "holes": 0.553
+  },
+  {
+   "id": "crossover_10",
+   "type": "Crossover",
+   "angle": 10.0,
+   "radius": 150.0,
+   "rect": [
+    -4.0,
+    -2.2,
+    59.0,
+    7.2
+   ],
+   "tex": [
+    2048,
+    308
+   ],
+   "holes": 0.013
+  },
+  {
+   "id": "scissors_10",
+   "type": "Scissors crossover",
+   "angle": 10.0,
+   "radius": 150.0,
+   "rect": [
+    -4.0,
+    -2.2,
+    59.0,
+    7.2
+   ],
+   "tex": [
+    2048,
+    308
+   ],
+   "holes": 0.014
+  },
+  {
+   "id": "level_90",
+   "type": "Level crossing",
+   "angle": 90.0,
+   "radius": 150.0,
+   "rect": [
+    -14.7,
+    -2.4,
+    14.7,
+    2.4
+   ],
+   "tex": [
+    1472,
+    244
+   ],
+   "holes": 0.061
+  },
+  {
+   "id": "level_60",
+   "type": "Level crossing",
+   "angle": 60.0,
+   "radius": 150.0,
+   "rect": [
+    -20.1,
+    -2.4,
+    20.1,
+    2.4
+   ],
+   "tex": [
+    2012,
+    244
+   ],
+   "holes": 0.068
+  },
+  {
+   "id": "level_45",
+   "type": "Level crossing",
+   "angle": 45.0,
+   "radius": 150.0,
+   "rect": [
+    -24.0,
+    -2.4,
+    24.0,
+    2.4
+   ],
+   "tex": [
+    2048,
+    208
+   ],
+   "holes": 0.067
+  }
+ ]
+}

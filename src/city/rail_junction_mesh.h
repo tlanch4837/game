@@ -23,7 +23,10 @@
 namespace tbd {
 namespace city {
 
-enum class JMat : int { Ballast, Tie, Steel, Prop, Paint, Count };
+// Spom: the plane path (rail_junction_plane.h), one SPOM box per junction drawn like the plain track (TrackPS).
+// Road: the crossing's ramps, with the road network's own asphalt (uv = metres / 4, as Mat::Asphalt) so they carry the
+// road on without a seam; in the game they join the road mesh's asphalt draw, as Paint joins its markings.
+enum class JMat : int { Ballast, Tie, Steel, Prop, Paint, Spom, Road, Count };
 
 struct JunctionParams {
     JType type = JType::Turnout;
@@ -35,6 +38,9 @@ struct JunctionParams {
     float tail = 6.0f;       // straight track after the curve
     float spacing = 5.0f;    // crossover / scissors: track centres
     float roadWidth = 9.0f;  // level crossing: carriageway width
+    float sidewalk = 2.0f;   // level crossing: sidewalk each side (the deck covers it too)
+    float gate = 0.0f;       // level crossing: 0 gates down (a train near), 1 up (open)
+    bool spom = false;       // ballast, ties and the crossing deck baked into one SPOM pad (rail_junction_spom.h)
     int lod = 0;
 };
 
@@ -59,7 +65,7 @@ struct JunctionMesh {
 namespace jmesh {
 // heights above the track base
 constexpr float kBedTop = 0.25f, kBedTopHalf = 1.6f, kBedFootHalf = 2.2f;
-constexpr float kTieTop = 0.33f, kTieHalfLen = 1.3f, kTieWidth = 0.26f, kTieStep = 0.65f;
+constexpr float kTieTop = 0.33f, kTieHalfLen = 1.3f, kTieWidth = 0.25f, kTieStep = 0.60f; // = the plain track's sleepers (tools/vehicle_gen/gen_track.py)
 constexpr float kRailTop = 0.50f, kRailHead = 0.075f;
 constexpr float kLongTie = 2.4f;   // a route's centre this close to an earlier route's: the earlier route's long timbers carry it
 constexpr float kCheckGap = 0.11f; // check rail inside the running rail
@@ -96,7 +102,7 @@ inline void Straight(Route& r, V2 a, V2 f, float len) {
 inline void Arc(Route& r, V2 a, V2 f, float R, float angleDeg, float side, int lod) {
     if (r.empty()) r.push_back({a, f, 0.0f});
     a = r.back().c, f = r.back().f;
-    const float s0 = r.back().s, ang = Rad(angleDeg), step = lod ? 6.0f : 3.0f, maxLen = lod ? 24.0f : 12.0f; // a 3 deg chord sags 5 cm at R 150
+    const float s0 = r.back().s, ang = Rad(angleDeg), step = lod == 2 ? 0.5f : lod ? 6.0f : 3.0f, maxLen = lod == 2 ? 1.0f : lod ? 24.0f : 12.0f; // lod 2: fine, for baking; a 3 deg chord sags 5 cm at R 150
     const int n = std::max(1, std::max((int)std::ceil(angleDeg / step), (int)std::ceil(R * ang / maxLen)));
     const V2 nrm = RightOf(f) * side;
     for (int i = 1; i <= n; ++i) {
@@ -104,8 +110,12 @@ inline void Arc(Route& r, V2 a, V2 f, float R, float angleDeg, float side, int l
         r.push_back({a + f * (R * std::sin(t)) + nrm * (R * (1 - std::cos(t))), Norm(f * std::cos(t) + nrm * std::sin(t)), s0 + R * t});
     }
 }
+// Pitch-snapped length: a whole number of sleeper pitches, so a junction's ends meet plain track in sleeper phase.
+inline float Pitched(float len) { return std::ceil(len / kTieStep - 1e-3f) * kTieStep; }
+// Straight on to at least len more, the route's total length snapped to whole sleeper pitches.
 inline void Tail(Route& r, float len) {
-    if (len > 0.01f) Straight(r, r.back().c, r.back().f, len);
+    const float add = Pitched(r.back().s + std::max(0.0f, len)) - r.back().s;
+    if (add > 0.01f) Straight(r, r.back().c, r.back().f, add);
 }
 inline V2 Offset(const RPt& p, float d) { return p.c + RightOf(p.f) * d; }
 
@@ -231,15 +241,59 @@ inline void TieRun(std::vector<Vertex>& o, const Route& r, float s0, float s1, f
     }
 }
 
-// Ties of every route, all in one vertex list (a single draw). Under a switch, each tie is its own quad (long timbers:
-// an earlier route's tie is lengthened to carry the rails of any later route whose centre crosses it within kLongTie,
-// and the later route's own ties are skipped there). Plain track between is a TieRun strip. virt[k]: route k has no
-// rails of its own (a wye's centre line), only timbers under the routes crossing it. `skip(q)`: no tie (a level
-// crossing's deck).
+// One tie position (every kTieStep along a route, the first half a step in): what lies there. Shared by the tie mesh
+// (Ties) and the SPOM layout baker (tools/rail_junction_tex), so both put sleepers and timbers in the same places.
+enum class TieState : int { None, Plain, Long, Covered, Skipped };
+struct TieStation {
+    float s = 0;           // metres along the route (the tie's centre)
+    V2 c{}, f{1, 0};       // centre, forward
+    TieState state = TieState::None;
+    float lo = 0, hi = 0;  // Plain / Long: the tie from c + n*lo to c + n*hi (n = RightOf(f))
+};
+// Under a switch an earlier route's tie is lengthened (Long) to carry the rails of any later route whose centre crosses
+// it within kLongTie, and the later route's own ties there are Covered. virt[k]: route k has no rails of its own (a
+// wye's centre line), only timbers under the routes crossing it. skip(q): no tie (a level crossing's deck).
+template <class Skip>
+inline std::vector<std::vector<TieStation>> TieStations(const std::vector<Route>& routes, const std::vector<char>& virt, float gauge, Skip&& skip) {
+    const float halfStd = gauge * 0.5f + (kTieHalfLen - kRailGauge * 0.5f);
+    std::vector<std::vector<TieStation>> out(routes.size());
+    for (size_t k = 0; k < routes.size(); ++k) {
+        const Route& r = routes[k];
+        const float L = r.back().s;
+        for (float s = kTieStep * 0.5f; s < L; s += kTieStep) {
+            TieStation t;
+            t.s = s;
+            RouteAt(r, s, t.c, t.f);
+            const V2 n = RightOf(t.f);
+            if (skip(t.c)) { t.state = TieState::Skipped, out[k].push_back(t); continue; }
+            bool covered = false;
+            for (size_t j = 0; j < k && !covered; ++j) {
+                V2 fj;
+                const float d = DistTo(routes[j], t.c, &fj);
+                covered = d < (std::fabs(Dot2(fj, t.f)) < 0.5f ? halfStd : kLongTie);
+            }
+            if (covered) { t.state = TieState::Covered, out[k].push_back(t); continue; }
+            float lo = virt[k] ? 1e9f : -halfStd, hi = virt[k] ? -1e9f : halfStd;
+            bool longTie = false;
+            for (size_t j = k + 1; j < routes.size(); ++j) {
+                float u;
+                if (!virt[j] && CrossAt(routes[j], t.c, n, kLongTie, u)) lo = std::min(lo, u - halfStd), hi = std::max(hi, u + halfStd), longTie = true;
+            }
+            t.lo = lo, t.hi = hi;
+            t.state = hi < lo ? TieState::None : longTie ? TieState::Long : TieState::Plain;
+            out[k].push_back(t);
+        }
+    }
+    return out;
+}
+
+// Ties of every route, all in one vertex list (a single draw): each Long timber its own quad, Plain runs as TieRun
+// strips (TieStations says which).
 template <class Skip>
 inline void Ties(JunctionMesh& m, const std::vector<Route>& routes, const std::vector<char>& virt, float gauge, Skip&& skip) {
     auto& o = m.byMat[(int)JMat::Tie];
     const float halfStd = gauge * 0.5f + (kTieHalfLen - kRailGauge * 0.5f);
+    const auto st = TieStations(routes, virt, gauge, skip);
     for (size_t k = 0; k < routes.size(); ++k) {
         const Route& r = routes[k];
         const float L = r.back().s;
@@ -248,33 +302,17 @@ inline void Ties(JunctionMesh& m, const std::vector<Route>& routes, const std::v
             if (runA >= 0) TieRun(o, r, runA, runB, halfStd);
             runA = -1;
         };
-        for (float s = kTieStep * 0.5f; s < L; s += kTieStep) {
-            V2 c, f;
-            RouteAt(r, s, c, f);
-            const V2 n = RightOf(f);
-            bool covered = skip(c);
-            for (size_t j = 0; j < k && !covered; ++j) {
-                V2 fj;
-                const float d = DistTo(routes[j], c, &fj);
-                covered = d < (std::fabs(Dot2(fj, f)) < 0.5f ? halfStd : kLongTie);
-            }
-            if (covered) { flush(); continue; }
-            float lo = virt[k] ? 1e9f : -halfStd, hi = virt[k] ? -1e9f : halfStd;
-            bool longTie = false;
-            for (size_t j = k + 1; j < routes.size(); ++j) {
-                float u;
-                if (!virt[j] && CrossAt(routes[j], c, n, kLongTie, u)) lo = std::min(lo, u - halfStd), hi = std::max(hi, u + halfStd), longTie = true;
-            }
-            if (hi < lo) { flush(); continue; }
-            if (!longTie) { // plain: extend the run
-                if (runA < 0) runA = std::max(0.0f, s - kTieStep * 0.5f);
-                runB = std::min(L, s + kTieStep * 0.5f);
+        for (const TieStation& t : st[k]) {
+            if (t.state == TieState::Plain) { // extend the run
+                if (runA < 0) runA = std::max(0.0f, t.s - kTieStep * 0.5f);
+                runB = std::min(L, t.s + kTieStep * 0.5f);
                 continue;
             }
             flush();
-            const V2 w = f * (kTieWidth * 0.5f);
-            const Vec3 p0 = P3(c + n * lo - w, kTieTop), p1 = P3(c + n * hi - w, kTieTop), p2 = P3(c + n * hi + w, kTieTop), p3 = P3(c + n * lo + w, kTieTop);
-            const float ul = (hi - lo) / (2 * halfStd), v0 = 0.3f, v1 = 0.7f, uv[8] = {0, v0, ul, v0, ul, v1, 0, v1};
+            if (t.state != TieState::Long) continue;
+            const V2 n = RightOf(t.f), w = t.f * (kTieWidth * 0.5f);
+            const Vec3 p0 = P3(t.c + n * t.lo - w, kTieTop), p1 = P3(t.c + n * t.hi - w, kTieTop), p2 = P3(t.c + n * t.hi + w, kTieTop), p3 = P3(t.c + n * t.lo + w, kTieTop);
+            const float ul = (t.hi - t.lo) / (2 * halfStd), v0 = 0.3f, v1 = 0.7f, uv[8] = {0, v0, ul, v0, ul, v1, 0, v1};
             Q(o, p0, p1, p2, p3, kTieCol, uv);
         }
         flush();
@@ -286,19 +324,21 @@ inline void RailLine(const Route& r, float gauge, float side, std::vector<V2>& p
     pts.clear(), fs.clear();
     for (const RPt& p : r) pts.push_back(Offset(p, side * (gauge + kRailHead) * 0.5f)), fs.push_back(p.f);
 }
-// Frogs where rails of two routes cross (not where they start together at the points), and a check rail inside the
-// opposite running rail of each route there. Returns the frog count.
-inline int Frogs(JunctionMesh& m, const std::vector<Route>& routes, const std::vector<char>& virt, float gauge) {
-    struct Hit {
-        V2 p, fa, fb;
-        int ra, rb;
-        float sa, sb;
-    };
-    std::vector<Hit> hits;
+// Where rails of two routes cross (not where they start together at the points): a frog each, and a check rail inside
+// the opposite running rail of each route there (deduplicated). Shared by the mesh (Frogs) and the SPOM baker.
+struct FrogPlan {
+    struct Frog { V2 p, dir; };   // centre, along the bisector of the two rails
+    struct Check { V2 c, f; };    // check rail centre (already inside the running rail) and direction, 3.2 m long
+    std::vector<Frog> frogs;
+    std::vector<Check> checks;
+};
+inline FrogPlan PlanFrogs(const std::vector<Route>& routes, const std::vector<char>& virt, float gauge) {
+    FrogPlan F;
     std::vector<V2> pa, fa, pb, fb;
+    std::vector<std::pair<int, V2>> seen; // (route * 2 + side, where)
     for (size_t i = 0; i < routes.size(); ++i)
-        for (size_t j = i + 1; j < routes.size(); ++j)
-            if (!virt[i] && !virt[j])
+        for (size_t j = i + 1; j < routes.size(); ++j) {
+            if (virt[i] || virt[j]) continue;
             for (float si : {-1.0f, 1.0f})
                 for (float sj : {-1.0f, 1.0f}) {
                     RailLine(routes[i], gauge, si, pa, fa), RailLine(routes[j], gauge, sj, pb, fb);
@@ -311,30 +351,29 @@ inline int Frogs(JunctionMesh& m, const std::vector<Route>& routes, const std::v
                             if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
                             const V2 P = pa[x - 1] + r * u;
                             if (Len(P - pa[0]) < 1.0f || Len(P - pb[0]) < 1.0f) continue; // the points, not a frog
-                            hits.push_back({P, Norm(r), Norm(q), (int)i, (int)j, si, sj});
+                            F.frogs.push_back({P, Norm(Norm(r) + Norm(q))});
+                            for (int k = 0; k < 2; ++k) {
+                                const int ri = k ? (int)j : (int)i;
+                                const float side = -(k ? sj : si);
+                                V2 f;
+                                DistTo(routes[ri], P, &f);
+                                const V2 c = P + RightOf(f) * (side * (gauge + kRailHead)); // the opposite rail, level with the frog
+                                bool dup = false;
+                                for (const auto& ck : seen) dup = dup || (ck.first == ri * 2 + (side > 0) && Len(ck.second - c) < 1.5f);
+                                if (dup) continue;
+                                seen.push_back({ri * 2 + (side > 0), c});
+                                F.checks.push_back({c + RightOf(f) * (-side * kCheckGap), f});
+                            }
                         }
                 }
-    auto& steel = m.byMat[(int)JMat::Steel];
-    std::vector<std::pair<int, V2>> checks; // (route * 2 + side, where): deduplicated check rails
-    for (const Hit& h : hits) {
-        const V2 bis = Norm(h.fa + h.fb);
-        Box(steel, h.p, bis, 1.4f, 0.22f, kTieTop, kRailTop - kTieTop, kSteelCol, 0.0f);
-        for (int w = 0; w < 2; ++w) {
-            const int ri = w ? h.rb : h.ra;
-            const float side = -(w ? h.sb : h.sa);
-            V2 f;
-            DistTo(routes[ri], h.p, &f);
-            // the opposite rail, level with the frog
-            const V2 c = h.p + RightOf(f) * (side * (gauge + kRailHead));
-            bool dup = false;
-            for (const auto& ck : checks) dup = dup || (ck.first == ri * 2 + (side > 0) && Len(ck.second - c) < 1.5f);
-            if (dup) continue;
-            checks.push_back({ri * 2 + (side > 0), c});
-            const V2 in = RightOf(f) * (-side * kCheckGap);
-            RailStrip(m, {c + in - f * 1.6f, c + in + f * 1.6f}, {f, f}, 0, kRailTop - 0.02f);
         }
-    }
-    return (int)hits.size();
+    return F;
+}
+inline int Frogs(JunctionMesh& m, const std::vector<Route>& routes, const std::vector<char>& virt, float gauge) {
+    const FrogPlan F = PlanFrogs(routes, virt, gauge);
+    for (const auto& f : F.frogs) Box(m.byMat[(int)JMat::Steel], f.p, f.dir, 1.4f, 0.22f, kTieTop, kRailTop - kTieTop, kSteelCol, 0.0f);
+    for (const auto& c : F.checks) RailStrip(m, {c.c - c.f * 1.6f, c.c + c.f * 1.6f}, {c.f, c.f}, 0, kRailTop - 0.02f);
+    return (int)F.frogs.size();
 }
 
 // A point machine beside the points at p (forward f), on `side` of the track.
@@ -342,47 +381,143 @@ inline void PointMachine(JunctionMesh& m, V2 p, V2 f, float side) {
     Box(m.byMat[(int)JMat::Prop], p + f * 0.9f + RightOf(f) * (side * 1.9f), f, 1.0f, 0.45f, 0.12f, 0.4f, {0.55f, 0.57f, 0.52f}, kCellMachine);
 }
 
-// Level crossing furniture: the rail runs along x through the origin, the road along r (angle from x), w wide.
-// Deck between the road's edges over the bed, a stop line and an RR mark on each approach lane, a gate mast (crossbuck
-// and lights baked on crossed cards) on the right kerb of each approach with its boom over the lane, a relay cabinet.
-inline void LevelCrossingProps(JunctionMesh& m, V2 r, float w, int lod) {
+// ---------------------------------------------------------------------------------------------------- level crossing
+// American style. The rail runs along x through the origin, the road along r = (cos a, sin a): a carriageway roadWidth
+// wide and a sidewalk each side. The road surface lies kRoadY under the track base (road_network.h: a road at node +
+// kRoadLift, the track base at node + kRoadLift + 0.1), so the road climbs a kRampLen ramp on each side to a deck flush
+// with the rail head, across the whole road and sidewalks, with open flangeways inside the rails.
+constexpr float kRoadY = -0.10f, kRampLen = 6.0f, kDeckHalf = 2.4f, kFlange = 0.075f;
+struct CrossingFrame {
+    V2 r, nr;                 // road forward, across the road
+    float half, outer, sinA;  // half carriageway, half road incl. sidewalks, |sin| of the crossing angle
+    // The point on the road line `e` across (along nr) where the track offset (z) is z.
+    V2 At(float e, float z) const { return {(e - z * nr.z) / nr.x, z}; }
+};
+inline CrossingFrame CrossFrame(const JunctionParams& p) {
+    CrossingFrame F;
+    F.r = {std::cos(Rad(p.angleDeg)), std::sin(Rad(p.angleDeg))}, F.nr = RightOf(F.r);
+    F.half = p.roadWidth * 0.5f, F.outer = F.half + p.sidewalk, F.sinA = std::max(0.2f, std::fabs(F.r.z));
+    return F;
+}
+inline float RampZ(const CrossingFrame& F) { return kDeckHalf + kRampLen * F.sinA; }
+// A triangle wound counter-clockwise seen from hint's side, all three corners at one atlas point (u, v).
+inline void T(std::vector<Vertex>& o, Vec3 a, Vec3 b, Vec3 c, Vec3 col, float u, float v, Vec3 hint) {
+    Vec3 n = Cross(b - a, c - a);
+    if (Dot(n, hint) < 0) std::swap(b, c), n = n * -1.0f;
+    mesh::Tri(o, a, b, c, Normalize(n), col, u, v, u, v, u, v);
+}
+// The deck (Prop atlas deck cell, top half): lod 0 three panels leaving the flangeways open, lod 1 one slab.
+inline void CrossingDeck(std::vector<Vertex>& o, const JunctionParams& p) {
+    const CrossingFrame F = CrossFrame(p);
+    const float rin = p.gauge * 0.5f - kFlange, rout = p.gauge * 0.5f + kRailHead;
+    std::vector<std::pair<float, float>> bands;
+    if (p.lod) bands = {{-kDeckHalf, kDeckHalf}};
+    else bands = {{-kDeckHalf, -rout}, {-rin, rin}, {rout, kDeckHalf}};
+    auto U = [&](float e) { return kCellDeck + 0.25f * (e + F.outer) / (2 * F.outer); };
+    auto Vv = [&](float z) { return 0.5f * (z + kDeckHalf) / (2 * kDeckHalf); };
+    for (const auto& b : bands) {
+        const float uv[8] = {U(-F.outer), Vv(b.first), U(F.outer), Vv(b.first), U(F.outer), Vv(b.second), U(-F.outer), Vv(b.second)};
+        Q(o, P3(F.At(-F.outer, b.first), kRailTop), P3(F.At(F.outer, b.first), kRailTop), P3(F.At(F.outer, b.second), kRailTop),
+          P3(F.At(-F.outer, b.second), kRailTop), {0.34f, 0.34f, 0.35f}, uv);
+    }
+}
+// Ramps (asphalt: the deck cell's lower half) from the deck edge down to the road, and at lod 0 the sides of the
+// raised section (deck skirts and ramp wedges) along both outer edges.
+inline void CrossingRamps(std::vector<Vertex>& o, const JunctionParams& p) { // o: the Road list
+    const CrossingFrame F = CrossFrame(p);
+    const float zr = RampZ(F), lo = kRoadY + 0.01f, ua = kCellDeck + 0.125f;
+    const Vec3 asphalt{1, 1, 1}, up{0, 1, 0};
+    for (float s : {-1.0f, 1.0f}) {
+        const float z0 = s * kDeckHalf, z1 = s * zr;
+        const V2 q[4] = {F.At(-F.outer, z0), F.At(F.outer, z0), F.At(F.outer, z1), F.At(-F.outer, z1)};
+        const float uv[8] = {q[0].x / 4, q[0].z / 4, q[1].x / 4, q[1].z / 4, q[2].x / 4, q[2].z / 4, q[3].x / 4, q[3].z / 4};
+        Q(o, P3(q[0], kRailTop), P3(q[1], kRailTop), P3(q[2], lo), P3(q[3], lo), asphalt, uv, up);
+    }
+    if (p.lod) return;
+    for (float e : {-F.outer, F.outer}) {
+        const Vec3 out = P3(F.nr * (e > 0 ? 1.0f : -1.0f), 0);
+        const float uv[8] = {ua, 0.75f, ua, 0.75f, ua, 0.75f, ua, 0.75f};
+        Q(o, P3(F.At(e, -kDeckHalf), kRailTop), P3(F.At(e, kDeckHalf), kRailTop), P3(F.At(e, kDeckHalf), lo), P3(F.At(e, -kDeckHalf), lo), asphalt, uv, out);
+        for (float s : {-1.0f, 1.0f})
+            T(o, P3(F.At(e, s * kDeckHalf), kRailTop), P3(F.At(e, s * zr), lo), P3(F.At(e, s * kDeckHalf), lo), asphalt, ua, 0.75f, out);
+    }
+}
+// A vertical card in the plane of `across` and up, centred at c: from a to b along across (metres), y0..y1, atlas uv box.
+inline void CardBox(std::vector<Vertex>& o, V2 c, V2 across, float a, float b, float y0, float y1, float u0, float u1, float v0, float v1, V2 facing) {
+    const float uv[8] = {u0, v0, u1, v0, u1, v1, u0, v1};
+    Q(o, P3(c + across * a, y1), P3(c + across * b, y1), P3(c + across * b, y0), P3(c + across * a, y0), kPropCol, uv, P3(facing, 0));
+}
+// Lanes per direction on a carriageway (3.6 m lanes, 1..3).
+inline int CrossingLanes(float roadWidth) { return std::clamp((int)std::lround(roadWidth * 0.5f / 3.6f), 1, 3); }
+// A gate boom: a striped card in the road's cross plane at s along d, pivot `l0` across (right), pointing `dir` (-1:
+// towards the centre line, +1 outwards), length L. gate 0 = down across the lanes, 1 = up (88 deg).
+inline void Boom(std::vector<Vertex>& o, V2 d, V2 right, float s, float l0, float dir, float L, float gate) {
+    const float ph = Rad(88.0f) * std::clamp(gate, 0.0f, 1.0f), y0 = kRoadY + 1.0f, t = 0.09f;
+    const float Dl = dir * std::cos(ph), Dy = std::sin(ph), Pl = -Dy * dir, Py = std::cos(ph); // along the arm, across it
+    auto at = [&](float l, float y) { return Vec3{(right * l + d * s).x, y, (right * l + d * s).z}; };
+    const float uv[8] = {kCellBoom, 0, kCellBoom + 0.25f, 0, kCellBoom + 0.25f, 1, kCellBoom, 1};
+    Q(o, at(l0 + Pl * t, y0 + Py * t), at(l0 + Dl * L + Pl * t, y0 + Dy * L + Py * t), at(l0 + Dl * L - Pl * t, y0 + Dy * L - Py * t),
+      at(l0 - Pl * t, y0 - Py * t), kPropCol, uv, P3(d * -1.0f, 0));
+}
+// A signal mast at P: the face card (crossbuck over two flashing lights, baked) square to the road, facing the traffic
+// coming along d; at lod 0 a narrow card along d so the pole reads from the side too.
+inline void Mast(std::vector<Vertex>& o, V2 P, V2 d, V2 right, int lod) {
+    CardBox(o, P, right, -0.5f, 0.5f, kRoadY, kRoadY + 4.4f, kCellMast, kCellMast + 0.25f, 0, 1, d * -1.0f);
+    if (!lod) CardBox(o, P, d, -0.08f, 0.08f, kRoadY, kRoadY + 4.4f, kCellMast + 0.25f * 0.46f, kCellMast + 0.25f * 0.54f, 0, 1, right);
+}
+
+// Everything of a level crossing but the track: deck (unless baked into the SPOM pad), ramps, and per approach (the
+// right-hand half of the road, traffic along d): an RXR mark in each lane, a stop line square to the road, the gate
+// mast on the verge beyond the sidewalk with its boom across the approach lanes to the centre line (a second gate on
+// the centre line when a half is wider than 7.5 m), a cantilever with a light over each lane when there are two or
+// more lanes; and a relay cabinet beside the track. Everything square to the road, set back from the deck edge
+// wherever it is nearest (skewed crossings).
+inline void LevelCrossingProps(JunctionMesh& m, const JunctionParams& p) {
     auto& prop = m.byMat[(int)JMat::Prop];
     auto& paint = m.byMat[(int)JMat::Paint];
-    const V2 nr = RightOf(r);
-    const float half = w * 0.5f, deckHalf = kBedTopHalf + 0.2f, sinA = std::max(0.2f, std::fabs(Cross2(V2{1, 0}, r)));
-    // deck: the parallelogram where the road (|dot(q, nr)| <= half) covers the bed (|z| <= deckHalf)
-    auto edgeX = [&](float e, float z) { return (e - z * nr.z) / nr.x; };
-    if (std::fabs(nr.x) > 1e-3f) {
-        const V2 q0{edgeX(-half, -deckHalf), -deckHalf}, q1{edgeX(half, -deckHalf), -deckHalf}, q2{edgeX(half, deckHalf), deckHalf}, q3{edgeX(-half, deckHalf), deckHalf};
-        const float uv[8] = {kCellDeck, 0, kCellDeck + 0.25f, 0, kCellDeck + 0.25f, 1, kCellDeck, 1};
-        Q(prop, P3(q0, kRailTop + 0.005f), P3(q1, kRailTop + 0.005f), P3(q2, kRailTop + 0.005f), P3(q3, kRailTop + 0.005f), {0.34f, 0.34f, 0.35f}, uv);
-    }
-    const float clear = deckHalf / sinA; // along the road from the track centre to the deck's edge
-    for (float dirSign : {1.0f, -1.0f}) {
-        const V2 d = r * dirSign, right = RightOf(d); // traffic approaching along d, on its right half
-        const V2 back = d * -1.0f;
-        const float yP = 0.02f, uv0[8] = {};
-        // stop line across the approach lane
-        const V2 sc = back * (clear + 3.5f);
-        const V2 a = sc + right * 0.2f, b = sc + right * (half - 0.2f), bw = d * 0.4f;
-        Q(paint, P3(a, yP), P3(b, yP), P3(b + bw, yP), P3(a + bw, yP), kPaintCol, uv0);
-        if (!lod) { // an X across the lane before the stop line
-            const V2 xc = back * (clear + 12.0f) + right * (half * 0.5f);
-            for (float k : {-1.0f, 1.0f}) {
-                const V2 u = Norm(d + right * k) * 2.6f, t = RightOf(Norm(u)) * 0.2f;
-                Q(paint, P3(xc - u - t, yP), P3(xc + u - t, yP), P3(xc + u + t, yP), P3(xc - u + t, yP), kPaintCol, uv0);
-            }
+    const CrossingFrame F = CrossFrame(p);
+    if (!p.spom) CrossingDeck(prop, p);
+    CrossingRamps(m.byMat[(int)JMat::Road], p);
+    const int lanes = CrossingLanes(p.roadWidth);
+    const float lw = F.half / lanes, lg = F.outer + 0.6f, zr = RampZ(F), yP = kRoadY + 0.02f;
+    for (float sg : {1.0f, -1.0f}) {
+        const V2 d = F.r * sg, right = RightOf(d);
+        const float sz = d.z > 0 ? 1.0f : -1.0f;
+        auto sAt = [&](float l, float z) { return (-sz * z - (right * l).z) / d.z; }; // s (along d) where lateral l meets track offset z
+        auto Pt = [&](float l, float s) { return right * l + d * s; };
+        const float sGate = std::min(sAt(0, kDeckHalf), sAt(lg, kDeckHalf)) - 1.0f;
+        const float sStop = std::min(std::min(sAt(0, zr), sAt(F.outer, zr)) - 1.0f, sGate - 2.5f);
+        const float uv0[8] = {};
+        { // stop line across the approach lanes
+            const V2 a = Pt(0.25f, sStop - 0.45f), b = Pt(F.half - 0.15f, sStop - 0.45f), c = Pt(F.half - 0.15f, sStop), e = Pt(0.25f, sStop);
+            Q(paint, P3(a, yP), P3(b, yP), P3(c, yP), P3(e, yP), kPaintCol, uv0);
         }
-        // gate: mast on the right kerb 1 m before the stop line, boom over the lane to the centre line
-        const V2 mast = back * (clear + 2.5f) + right * (half + 0.7f);
-        const V2 ax = d * 0.45f, az = right * 0.45f;
-        Card(prop, mast - az, mast + az, 0, 4.2f, kCellMast);
-        if (!lod) Card(prop, mast - ax, mast + ax, 0, 4.2f, kCellMast);
-        Card(prop, mast + right * -0.3f, mast + right * (-0.3f - half), 1.0f, 1.18f, kCellBoom);
+        if (!p.lod)
+            for (int j = 0; j < lanes; ++j) { // RXR: an X 6 m long across each lane, before the stop line
+                const float lc = (j + 0.5f) * lw, hw = std::max(0.6f, lw * 0.5f - 0.5f), sc = sStop - 6.0f, t = 0.18f;
+                for (float k : {-1.0f, 1.0f}) {
+                    const V2 p0 = Pt(lc - k * hw, sc - 3.0f), p1 = Pt(lc + k * hw, sc + 3.0f), n = RightOf(Norm(p1 - p0)) * t;
+                    Q(paint, P3(p0 - n, yP), P3(p1 - n, yP), P3(p1 + n, yP), P3(p0 + n, yP), kPaintCol, uv0);
+                }
+            }
+        Mast(prop, Pt(lg, sGate), d, right, p.lod);
+        const bool median = F.half > 7.5f;
+        Boom(prop, d, right, sGate - 0.12f, lg - 0.35f, -1.0f, (lg - 0.35f) - (median ? F.half * 0.5f : 0.2f), p.gate);
+        if (median) {
+            Mast(prop, Pt(0.45f, sGate), d, right, p.lod);
+            Boom(prop, d, right, sGate - 0.12f, 0.8f, 1.0f, F.half * 0.5f - 0.7f, p.gate);
+        }
+        if (lanes >= 2 && !p.lod) { // cantilever arm and a light head over each lane
+            CardBox(prop, Pt(0, sGate), right, lw * 0.5f, lg, kRoadY + 5.6f, kRoadY + 5.85f, kCellMachine, kCellMachine + 0.25f, 0.5f, 1, d * -1.0f);
+            for (int j = 0; j < lanes; ++j)
+                CardBox(prop, Pt((j + 0.5f) * lw, sGate - 0.05f), right, -0.45f, 0.45f, kRoadY + 4.95f, kRoadY + 5.45f,
+                        kCellMast + 0.25f * 0.12f, kCellMast + 0.25f * 0.88f, 0.31f, 0.42f, d * -1.0f);
+        }
     }
-    if (!lod) { // relay cabinet beside the track, off the road
-        const V2 cab{half / sinA + 4.0f, -(kBedFootHalf + 1.2f)};
-        Box(prop, cab, {1, 0}, 1.4f, 1.0f, 0, 1.6f, {0.62f, 0.63f, 0.60f}, kCellMachine);
+    if (!p.lod) { // relay cabinet beside the track, clear of the road, ramps and sidewalk
+        const float zc = -(kBedFootHalf + 1.6f);
+        const V2 cab{std::max(F.At(-F.outer, zc).x, F.At(F.outer, zc).x) + 2.5f, zc};
+        Box(prop, cab, {1, 0}, 1.4f, 1.0f, kRoadY, 1.6f, {0.62f, 0.63f, 0.60f}, kCellMachine);
     }
 }
 } // namespace jmesh
@@ -395,7 +530,9 @@ inline JunctionParams AdjustParams(JunctionParams p, bool* adjusted = nullptr, s
     switch (p.type) {
     case JType::Diamond: p.angleDeg = std::clamp(p.angleDeg, kDiamondMinDeg, 90.0f); break;
     case JType::SingleSlip: p.angleDeg = std::clamp(p.angleDeg, kDiamondMinDeg, kSlipMaxDeg); break;
-    case JType::LevelCrossing: p.angleDeg = std::clamp(p.angleDeg, kLevelCrossMinDeg, 90.0f), p.roadWidth = std::clamp(p.roadWidth, 4.0f, 30.0f); break;
+    case JType::LevelCrossing: p.angleDeg = std::clamp(p.angleDeg, kLevelCrossMinDeg, 90.0f), p.roadWidth = std::clamp(p.roadWidth, 4.0f, 30.0f);
+        p.sidewalk = std::clamp(p.sidewalk, 0.0f, 4.0f), p.gate = std::clamp(p.gate, 0.0f, 1.0f);
+        break;
     case JType::Crossover:
     case JType::Scissors:
         p.spacing = std::clamp(p.spacing, kCrossoverMinSpacing, kCrossoverMaxSpacing);
@@ -417,26 +554,27 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
     const float s = p.hand == Hand::Left ? -1.0f : 1.0f, a = p.angleDeg, Rr = p.radius;
     const V2 O{0, 0}, X{1, 0};
     auto add = [&](Route r, bool isVirt = false) { R.push_back(std::move(r)), v.push_back(isVirt); };
-    auto stem = [&] { Route r; Straight(r, {-p.stem, 0}, X, p.stem); add(r); };
+    const float stemL = jmesh::Pitched(p.stem);
+    auto stem = [&] { Route r; Straight(r, {-stemL, 0}, X, stemL); add(r); };
     const float lead = TurnoutLead(a, Rr);
     switch (p.type) {
     case JType::Turnout: {
         stem();
         Route st, dv;
-        Straight(st, O, X, lead + p.tail), add(st);
+        Straight(st, O, X, jmesh::Pitched(lead + p.tail)), add(st);
         Arc(dv, O, X, Rr, a, s, p.lod), Tail(dv, p.tail), add(dv);
     } break;
     case JType::Wye: {
         stem();
         Route ax, l, r;
-        Straight(ax, O, X, lead + p.tail), add(ax, true);
+        Straight(ax, O, X, jmesh::Pitched(lead + p.tail)), add(ax, true);
         Arc(l, O, X, Rr, a, -1, p.lod), Tail(l, p.tail), add(l);
         Arc(r, O, X, Rr, a, 1, p.lod), Tail(r, p.tail), add(r);
     } break;
     case JType::ThreeWay: {
         stem();
         Route st, l, r;
-        Straight(st, O, X, lead + p.tail), add(st);
+        Straight(st, O, X, jmesh::Pitched(lead + p.tail)), add(st);
         Arc(l, O, X, Rr, a, -1, p.lod), Tail(l, p.tail), add(l);
         Arc(r, O, X, Rr, a, 1, p.lod), Tail(r, p.tail), add(r);
     } break;
@@ -446,8 +584,9 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
         const float H = std::max(8.0f + 1.6f / std::sin(th), T + 5.0f);
         const V2 b{std::cos(th), s * std::sin(th)};
         Route A, B;
-        Straight(A, {-H, 0}, X, 2 * H), add(A);
-        Straight(B, b * -H, b, 2 * H), add(B);
+        const float Hp = jmesh::Pitched(2 * H) * 0.5f;
+        Straight(A, {-Hp, 0}, X, 2 * Hp), add(A);
+        Straight(B, b * -Hp, b, 2 * Hp), add(B);
         if (p.type == JType::SingleSlip) { Route sl; Arc(sl, {-T, 0}, X, Rr, a, s, p.lod), add(sl); }
     } break;
     case JType::Crossover:
@@ -455,15 +594,23 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
         const float run = CrossoverRun(p.spacing, a, Rr), o = TurnoutOffset(a, Rr);
         const float D = std::max(0.0f, p.spacing - 2 * o) / std::sin(Rad(a));
         Route A, B, x;
-        Straight(A, {-p.stem, 0}, X, run + 2 * p.stem), add(A);
-        Straight(B, {-p.stem, s * p.spacing}, X, run + 2 * p.stem), add(B);
-        Arc(x, O, X, Rr, a, s, p.lod), Tail(x, D), Arc(x, O, X, Rr, a, -s, p.lod), add(x);
-        if (p.type == JType::Scissors) { Route y; Arc(y, {0, s * p.spacing}, X, Rr, a, -s, p.lod), Tail(y, D), Arc(y, O, X, Rr, a, s, p.lod), add(y); }
+        const float AL = jmesh::Pitched(run + 2 * p.stem);
+        Straight(A, {-p.stem, 0}, X, AL), add(A);
+        Straight(B, {-p.stem, s * p.spacing}, X, AL), add(B);
+        auto mid = [&](Route& r) { if (D > 0.01f) Straight(r, r.back().c, r.back().f, D); }; // exact: no pitch snap inside
+        Arc(x, O, X, Rr, a, s, p.lod), mid(x), Arc(x, O, X, Rr, a, -s, p.lod), add(x);
+        if (p.type == JType::Scissors) { Route y; Arc(y, {0, s * p.spacing}, X, Rr, a, -s, p.lod), mid(y), Arc(y, O, X, Rr, a, s, p.lod), add(y); }
     } break;
     case JType::LevelCrossing: {
-        const float th = Rad(a), H = (p.roadWidth * 0.5f) / std::sin(th) + 1.8f / std::tan(th) + 10.0f;
+        const jmesh::CrossingFrame F = jmesh::CrossFrame(p);
+        const float zr = jmesh::RampZ(F);
+        float H = 0;
+        for (float e : {-F.outer, F.outer})
+            for (float z : {-zr, zr}) H = std::max(H, std::fabs(F.At(e, z).x));
+        H += 8.0f; // track beyond the ramps and the relay cabinet
         Route A;
-        Straight(A, {-H, 0}, X, 2 * H), add(A);
+        const float Hp = jmesh::Pitched(2 * H) * 0.5f;
+        Straight(A, {-Hp, 0}, X, 2 * Hp), add(A);
     } break;
     default: break;
     }
@@ -472,6 +619,7 @@ inline std::vector<jmesh::Route> JunctionRoutes(const JunctionParams& p, std::ve
 }
 
 // The model of one junction variant. Deterministic: the same parameters give the same vertices.
+inline void JunctionProps(JunctionMesh& m, const JunctionParams& p);
 inline JunctionMesh BuildJunctionMesh(const JunctionParams& want) {
     using namespace jmesh;
     JunctionMesh m;
@@ -484,12 +632,20 @@ inline JunctionMesh BuildJunctionMesh(const JunctionParams& want) {
         if (!virt[k]) Bed(m, routes[k], p.lod);
     const bool level = p.type == JType::LevelCrossing;
     const V2 road{std::cos(Rad(p.angleDeg)), std::sin(Rad(p.angleDeg))};
-    const float roadHalf = p.roadWidth * 0.5f + 0.3f;
+    const float roadHalf = p.roadWidth * 0.5f + p.sidewalk + 0.2f; // under the deck: no ties
     auto underRoad = [&](V2 q) { return level && std::fabs(Dot2(q, RightOf(road))) < roadHalf; };
     if (!p.lod) Ties(m, routes, virt, p.gauge, underRoad);
     for (size_t k = 0; k < routes.size(); ++k)
         if (!virt[k]) Rails(m, routes[k], p.gauge, p.lod);
     if (!p.lod && !level) Frogs(m, routes, virt, p.gauge);
+    JunctionProps(m, p);
+    return m;
+}
+
+// What sticks up out of the track bed (shared by both paths): point machines (lod 0), and for a level crossing its
+// ramps, markings, gates, signals and cabinet (and the deck unless p.spom bakes it).
+inline void JunctionProps(JunctionMesh& m, const JunctionParams& p) {
+    using namespace jmesh;
     const float s = p.hand == Hand::Left ? -1.0f : 1.0f;
     const V2 O{0, 0}, X{1, 0}, nX{-1, 0};
     if (!p.lod) switch (p.type) {
@@ -505,8 +661,7 @@ inline JunctionMesh BuildJunctionMesh(const JunctionParams& want) {
         } break;
         default: break;
         }
-    if (level) LevelCrossingProps(m, road, p.roadWidth, p.lod);
-    return m;
+    if (p.type == JType::LevelCrossing) LevelCrossingProps(m, p);
 }
 
 // Every variant the game ships (both hands where it matters, LOD 0 and 1): for the tests and the preview's table.

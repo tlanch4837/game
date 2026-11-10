@@ -13,7 +13,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "city/rail_junction_mesh.h"
+#include "city/rail_junction_plane.h"
 #include "city/rail_yard.h"
 
 using namespace tbd::city;
@@ -276,13 +276,14 @@ static void TestMeshes() {
         std::printf("%-20s %-6s %6.1f %4d | %6zu %4d %5zu %5zu %5zu %5zu | %5zu  %5zu\n", JTypeName(cat[i].type), hand, m0.angleDeg, 0, m0.Tris(), m0.Draws(),
                     m0.TrisOf(JMat::Ballast), m0.TrisOf(JMat::Tie), m0.TrisOf(JMat::Steel), m0.TrisOf(JMat::Prop), m0.TrisOf(JMat::Paint), m1.Tris());
         CHECK(m0.Tris() > 50 && m1.Tris() > 0 && m1.Tris() * 2 < m0.Tris());
-        CHECK(m0.Draws() <= 5 && m1.Draws() <= 5 && m0.TrisOf(JMat::Tie) > 0 && m1.TrisOf(JMat::Tie) == 0);
+        // level crossings add Road (ramps) and Paint, which join the road mesh's own draws in the game
+        CHECK(m0.Draws() <= 6 && m1.Draws() <= 6 && m0.TrisOf(JMat::Tie) > 0 && m1.TrisOf(JMat::Tie) == 0);
         CHECK(m0.Tris() <= 1200); // a junction stays under a station's budget
         CHECK(SameMesh(m0, BuildJunctionMesh(cat[i])));
         for (const auto& v : m0.byMat)
             for (size_t t = 0; t + 2 < v.size(); t += 3) { // counter-clockwise around the normal: back-face culling keeps it
                 const tbd::Vertex &A = v[t], &B = v[t + 1], &C = v[t + 2];
-                CHECK(std::isfinite(A.px) && std::isfinite(A.pz) && A.py >= -0.01f && A.py < 4.5f);
+                CHECK(std::isfinite(A.px) && std::isfinite(A.pz) && A.py >= jmesh::kRoadY - 0.01f && A.py < 6.5f);
                 const float ux = B.px - A.px, uy = B.py - A.py, uz = B.pz - A.pz, wx = C.px - A.px, wy = C.py - A.py, wz = C.pz - A.pz;
                 const float nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
                 if (nx * nx + ny * ny + nz * nz > 1e-10f) CHECK(nx * A.nx + ny * A.ny + nz * A.nz > 0);
@@ -315,14 +316,109 @@ static void TestMeshes() {
     t.hand = Hand::Left;
     const std::vector<jmesh::Route> R = JunctionRoutes(t);
     const V2 end = R[2].back().c;
-    CHECK(std::fabs(end.x - (TurnoutLead(12, 150) + std::cos(Rad(12)) * t.tail)) < 0.05f);
-    CHECK(end.z < 0 && std::fabs(-end.z - (TurnoutOffset(12, 150) + std::sin(Rad(12)) * t.tail)) < 0.05f);
+    const V2 arcEnd{TurnoutLead(12, 150), -TurnoutOffset(12, 150)}, tailV = end - arcEnd;
+    CHECK(end.z < 0 && Len(tailV) >= t.tail - 0.01f && std::fabs(Cross2(Norm(tailV), V2{std::cos(Rad(12)), -std::sin(Rad(12))})) < 1e-3f);
+    // every route ends a whole number of sleeper pitches from its start (plain track meets it in phase)
+    for (const auto& r : R) CHECK(std::fabs(r.back().s / jmesh::kTieStep - std::round(r.back().s / jmesh::kTieStep)) < 1e-3f);
     // a crossover's diagonal lands on the other track, parallel
     JunctionParams c;
     c.type = JType::Crossover, c.angleDeg = 10;
     const std::vector<jmesh::Route> C = JunctionRoutes(c);
     CHECK(std::fabs(C[2].back().c.z - c.spacing) < 0.02f && std::fabs(C[2].back().f.z) < 1e-3f);
     CHECK(std::fabs(C[2].back().c.x - CrossoverRun(5, 10, 150)) < 0.05f);
+}
+
+static void TestLevelCrossing() {
+    using namespace jmesh;
+    for (float ang : {90.0f, 60.0f, 45.0f})
+        for (float road : {4.0f, 9.0f, 14.0f, 24.0f}) {
+            JunctionParams p;
+            p.type = JType::LevelCrossing, p.angleDeg = ang, p.roadWidth = road;
+            const JunctionMesh m = BuildJunctionMesh(p);
+            const CrossingFrame F = CrossFrame(p);
+            // deck flush with the rail head, ramps down to the road surface
+            float deckY = -1, rampLo = 9;
+            std::vector<tbd::Vertex> deck;
+            CrossingDeck(deck, p);
+            for (const tbd::Vertex& v : deck) {
+                deckY = std::max(deckY, v.py);
+                CHECK(std::fabs(v.py - kRailTop) < 1e-5f);
+            }
+            for (const tbd::Vertex& v : m.byMat[(int)JMat::Road]) rampLo = std::min(rampLo, v.py);
+            CHECK(deckY == kRailTop && std::fabs(rampLo - (kRoadY + 0.01f)) < 1e-4f);
+            // every prop (masts, booms, cabinet) stays off the deck and its ramps' crest: outside the rail corridor
+            for (const tbd::Vertex& v : m.byMat[(int)JMat::Prop]) CHECK(std::fabs(v.pz) > kDeckHalf - 1e-3f || std::fabs(v.px) > 1.0f);
+            // markings square to the road: every paint quad edge either along or across the road
+            const auto& pt = m.byMat[(int)JMat::Paint];
+            int square = 0;
+            for (size_t t = 0; t + 2 < pt.size(); t += 6) {
+                const V2 e{pt[t + 1].px - pt[t].px, pt[t + 1].pz - pt[t].pz};
+                square += std::fabs(Dot2(Norm(e), F.r)) < 1e-3f || std::fabs(Cross2(Norm(e), F.r)) < 1e-3f;
+            }
+            CHECK(square >= 2); // the two stop lines (the RXR bars are diagonal)
+            for (const tbd::Vertex& v : pt) CHECK(std::fabs(v.py - (kRoadY + 0.02f)) < 1e-4f);
+            // wider roads: more lanes, a cantilever (2+ lanes) and a centre gate (half wider than 7.5 m)
+            JunctionParams q = p;
+            q.roadWidth = 9;
+            if (road > 9) CHECK(m.TrisOf(JMat::Prop) > BuildJunctionMesh(q).TrisOf(JMat::Prop));
+            // gates up: the booms stand
+            JunctionParams up = p;
+            up.gate = 1;
+            float topDown = 0, topUp = 0;
+            for (const tbd::Vertex& v : m.byMat[(int)JMat::Prop]) topDown = std::max(topDown, v.py);
+            const JunctionMesh mu = BuildJunctionMesh(up); // a named mesh: a range-for over a temporary's member dangles
+            for (const tbd::Vertex& v : mu.byMat[(int)JMat::Prop]) topUp = std::max(topUp, v.py);
+            CHECK(topUp > topDown + 0.5f); // a 4 m road: a 4 m boom stands just over the 4.3 m mast
+        }
+    CHECK(CrossingLanes(9) == 1 && CrossingLanes(14) == 2 && CrossingLanes(24) == 3);
+}
+
+static void TestPlanes() {
+    // every junction type has a canonical layout; the box is 10 triangles; the texture fits an iPad
+    for (int t = (int)JType::Turnout; t <= (int)JType::LevelCrossing; ++t) {
+        JunctionParams p;
+        p.type = (JType)t, p.angleDeg = t == (int)JType::LevelCrossing ? 70.0f : 13.0f, p.hand = Hand::Left;
+        const JunctionPlane J = BuildJunctionPlane(p);
+        CHECK(J.layout >= 0 && J.mesh.TrisOf(JMat::Spom) == 10);
+        if (J.layout < 0) continue;
+        const JunctionParams& lp = JunctionLayouts()[J.layout].p;
+        CHECK(lp.type == p.type);
+        const PlaneRect r = JunctionPlaneRect(lp);
+        int nA, nX;
+        LayoutTexSize(r, nA, nX);
+        CHECK(nA <= 2048 && nX <= 2048 && nA % 4 == 0 && nX % 4 == 0 && r.L() / nA < 0.035f && r.W() / nX < 0.035f);
+        // mirrored for Left (handed types): the rect flips across
+        CHECK(J.mirror); // asked left-handed
+        CHECK(std::fabs(J.rect.z0 + r.z1) < 1e-4f && std::fabs(J.rect.z1 + r.z0) < 1e-4f);
+        // every rail-carrying route's bed lies inside the rect, and every route is whole sleeper pitches long
+        std::vector<char> virt;
+        const auto routes = JunctionRoutes(lp, &virt);
+        const bool inner = lp.type == JType::Crossover || lp.type == JType::Scissors || lp.type == JType::SingleSlip;
+        for (size_t k = 0; k < routes.size(); ++k) {
+            const auto& rt = routes[k];
+            if (!inner || k < 2) // the routes that meet plain track (a crossover's diagonals and a slip's curve end on its own tracks)
+                CHECK(std::fabs(rt.back().s / jmesh::kTieStep - std::round(rt.back().s / jmesh::kTieStep)) < 1e-3f);
+            for (const auto& q : rt) CHECK(q.c.x >= r.x0 - 1e-3f && q.c.x <= r.x1 + 1e-3f && q.c.z >= r.z0 - 1e-3f && q.c.z <= r.z1 + 1e-3f);
+        }
+        // box faces wound outward (CCW from outside), as the plain track box
+        const auto& b = J.mesh.byMat[(int)JMat::Spom];
+        const float cx = 0.5f * (J.rect.x0 + J.rect.x1), cz = 0.5f * (J.rect.z0 + J.rect.z1), cy = jmesh::kRailTop - 0.3f;
+        for (size_t k = 0; k + 2 < b.size(); k += 3) {
+            const float ux = b[k + 1].px - b[k].px, uy = b[k + 1].py - b[k].py, uz = b[k + 1].pz - b[k].pz;
+            const float wx = b[k + 2].px - b[k].px, wy = b[k + 2].py - b[k].py, wz = b[k + 2].pz - b[k].pz;
+            const float nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+            const float ox = (b[k].px + b[k + 1].px + b[k + 2].px) / 3 - cx, oy = (b[k].py + b[k + 1].py + b[k + 2].py) / 3 - cy, oz = (b[k].pz + b[k + 1].pz + b[k + 2].pz) / 3 - cz;
+            CHECK(nx * ox + ny * oy + nz * oz > 0);
+            CHECK(b[k].a == kJunctionSpomAlpha && b[k].nx == 1.0f);
+        }
+        CHECK(J.mesh.Draws() <= 4);
+    }
+    // the nearest canonical angle
+    JunctionParams p;
+    p.angleDeg = 10.5f;
+    CHECK(JunctionLayouts()[NearestLayout(p)].id == "turnout_12");
+    p.angleDeg = 17;
+    CHECK(JunctionLayouts()[NearestLayout(p)].id == "turnout_20");
 }
 
 int main() {
@@ -332,6 +428,8 @@ int main() {
     TestCrossovers();
     TestCrossings();
     TestMeshes();
+    TestLevelCrossing();
+    TestPlanes();
     if (failures) {
         std::printf("\nrail_junction_test: %d FAILED\n", failures);
         return 1;
