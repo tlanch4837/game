@@ -95,7 +95,7 @@ int main() {
     const int yi = w.Place(yp, depot);
     CHECK(yi == 0);
     w.items[0].state = BState::Done, w.items[0].progress = 1;
-    const Placed& yard = w.items[0];
+    const Placed yard = w.items[0]; // a copy: placing the station below grows w.items and would leave a reference dangling
     std::vector<RailPort> ports = TransportWorld::PortsOf(&t.net, yard);
     CHECK(ports.size() == 14);
     t.ports = ports;
@@ -217,7 +217,7 @@ int main() {
     // ------------------------------------------------------------------ cut the rail: the trains are recalled
     t.net.RemoveSeg(t.net.nodes[(size_t)n2].segs.front());
     rw.Tick(t.net, w, 1.0f);
-    CHECK(rw.trains.empty() && rw.StatusOf(yard.id)->Message().find("rail") != std::string::npos);
+    CHECK(rw.trains.empty() && rw.StatusOf(yard.id) && rw.StatusOf(yard.id)->Message().find("rail") != std::string::npos);
 
     std::printf(failures ? "%d FAILED\n" : "all passed\n", failures);
     return failures ? 1 : 0;

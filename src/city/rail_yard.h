@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "rail_junction.h"
 #include "transport.h"
 
 namespace tbd {
@@ -39,7 +40,8 @@ inline int TrainsPerYard(const BuildingDef& d) { return std::clamp(d.vehicles / 
 
 // ---------------------------------------------------------------------------------------------------- the route search
 // The shortest way along railways from startNode, leaving it along startDir, to a segment `goal` accepts (it gives the
-// stopping point's parameter on it). A train goes on through a node only to a segment within 60 deg of straight on.
+// stopping point's parameter on it). A train goes on through a node as RailCanPass allows (rail_junction.h): either route
+// of a switch (within 35 deg), straight on over a diamond, 60 deg at nodes that are no proper junction.
 inline bool RailPathTo(const Network& net, int startNode, V2 startDir, const std::function<bool(int seg, float& t)>& goal,
                        std::vector<V2>& pts, std::vector<float>& ys) {
     const size_t S = net.segs.size();
@@ -69,9 +71,8 @@ inline bool RailPathTo(const Network& net, int startNode, V2 startDir, const std
             if (d + along < best) best = d + along, bestSt = st, bestT = t;
         }
         const int exitN = fwd ? net.segs[s].b : net.segs[s].a;
-        const V2 arrive = net.OutDir(s, exitN) * -1.0f;
-        for (int s2 : net.nodes[exitN].segs) {
-            if (s2 == s || !net.segs[s2].alive || !net.IsRailSeg(s2) || Dot2(net.OutDir(s2, exitN), arrive) < 0.5f) continue;
+        for (int s2 : net.nodes[exitN].segs) { // through switches by either route, straight over diamonds (rail_junction.h)
+            if (s2 == s || !net.segs[s2].alive || !net.IsRailSeg(s2) || !RailCanPass(net, exitN, s, s2)) continue;
             const int st2 = s2 * 2 + (net.segs[s2].a == exitN ? 0 : 1);
             if (d + len[s] < g[st2]) g[st2] = d + len[s], prev[st2] = st, pq.push({g[st2], st2});
         }
